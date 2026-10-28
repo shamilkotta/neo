@@ -1,0 +1,22 @@
+{
+  "name": "@neo/cf",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.4.0",
+    "@neo/kernel": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "^4.152.0",
+    "@neo/web": "workspace:*"
+  },
+  "scripts": {
+    "build": "bun run --filter @neo/web build",
+    "dev": "bun run build && wrangler dev",
+    "deploy": "bun run build && wrangler deploy",
+    "types": "wrangler types --strict-vars=false"
+  }
+}

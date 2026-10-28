@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["bun"]
+  },
+  // The Cloudflare package checks against its generated Workers types (its own tsconfig).
+  "exclude": ["node_modules", "**/node_modules", "hosts/cf", "apps/web/src", "apps/web/vite.config.ts", "**/dist"]
+}

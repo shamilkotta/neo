@@ -1,0 +1,28 @@
+{
+  "name": "neo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "kernel",
+    "hosts/*",
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "neo": "bun run build:web && bun run hosts/bun/src/cli.ts",
+    "build:web": "bun run --filter @neo/web build",
+    "dev:web": "bun run --filter @neo/web dev",
+    "dev:cf": "bun run --filter @neo/cf dev",
+    "deploy:cf": "bun run --filter @neo/cf deploy",
+    "types:cf": "bun run --filter @neo/cf types",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p hosts/cf && tsc --noEmit -p apps/web",
+    "test": "bun run build:web && bun test e2e",
+    "test:cf": "NEO_CF_URL=http://localhost:8799 bun test e2e"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "5",
+    "@neo/bun": "workspace:*",
+    "@neo/client": "workspace:*"
+  }
+}
