@@ -163,46 +163,157 @@ describe("memory", () => {
   });
 });
 
-describe("time", () => {
-  test("a wake-up the agent schedules comes back as a message and runs a turn", async () => {
+describe("schedules", () => {
+  const schedules = async () => (await neo.call("GET", "/v1/schedules")).schedules as any[];
+  const heartbeat = async () => (await schedules()).find((s) => s.system === "heartbeat");
+  const runs = async (id: string) => (await neo.call("GET", `/v1/schedules/${id}/runs`)).runs as any[];
+  const due = (id: string, ago = 1) => neo.call("POST", `/v1/test/schedules/${id}/due?ago=${ago}`);
+  const wake = () => neo.call("POST", "/v1/test/wake");
+
+  test("a reminder the agent creates comes back as a message, once", async () => {
     await script([
-      { tool: "schedule_wakeup", args: { note: "check the oven", inMinutes: 0.005 } },
+      { tool: "create_schedule", args: { prompt: "check the oven", inMinutes: 0.005 } },
       { text: "will check" },
       { recall: "checked the oven" },
     ]);
     await send("remind yourself to check the oven");
     await idle(neo);
-    const pending = (await neo.call("GET", "/v1/wakeups")).wakeups;
-    expect(pending.map((w: any) => [w.note, w.createdBy])).toEqual([["check the oven", "agent"]]);
+    const reminder = (await schedules()).find((s) => s.prompt === "check the oven");
+    expect(reminder).toMatchObject({ createdBy: "agent", spec: { kind: "once" } });
     await Bun.sleep(400);
-    await neo.call("POST", "/v1/test/wake");
+    await wake();
     await idle(neo);
     expect(await answers(neo)).toEqual(["will check", "checked the oven"]);
     const last = (await transcript(neo)).filter((i) => i.type === "input").at(-1);
-    expect(last.messages[0]).toMatchObject({ source: "wakeup", text: "check the oven" });
-    expect((await neo.call("GET", "/v1/wakeups")).wakeups).toEqual([]);
+    expect(last.messages[0]).toMatchObject({ source: "schedule", text: "check the oven" });
+    const after = (await schedules()).find((s) => s.id === reminder.id);
+    expect(after).toMatchObject({ nextAt: null, enabled: false, runCount: 1 });
   });
 
-  test("the alarm fires a due wake-up by itself", async () => {
+  test("the alarm fires a due schedule by itself", async () => {
     await script([{ text: "woke up" }]);
-    await neo.call("POST", "/v1/wakeups", { note: "ping", inMinutes: 0.01 });
-    await until(async () => (await answers(neo)).includes("woke up") || undefined, 8000, "the wake-up turn");
+    await neo.call("POST", "/v1/schedules", { prompt: "ping", inMinutes: 0.01 });
+    await until(async () => (await answers(neo)).includes("woke up") || undefined, 8000, "the scheduled turn");
   });
 
-  test("a heartbeat with nothing to say is quiet; one with news shows", async () => {
-    await neo.call("PATCH", "/v1/agent", { heartbeat: { enabled: true, everyMinutes: 30 } });
-    await script([{ text: "HEARTBEAT_OK" }]);
-    await neo.call("POST", "/v1/test/heartbeat-due");
-    await neo.call("POST", "/v1/test/wake");
+  test("every agent has a heartbeat; quiet when nothing, shown when news", async () => {
+    const hb = await heartbeat();
+    expect(hb).toMatchObject({ enabled: true, quiet: true, whenBusy: "skip", spec: { kind: "every", minutes: 60 } });
+    // Any time of day, so the test does not depend on the clock.
+    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { window: null });
+    await script([{ text: "QUIET_OK" }]);
+    await due(hb.id);
+    await wake();
     await idle(neo);
     expect(await transcript(neo)).toEqual([]);
     await script([{ text: "Your 3pm meeting moved" }]);
-    await neo.call("POST", "/v1/test/heartbeat-due");
-    await neo.call("POST", "/v1/test/wake");
+    await due(hb.id);
+    await wake();
     await idle(neo);
     expect(await answers(neo)).toEqual(["Your 3pm meeting moved"]);
-    const agent = (await neo.call("GET", "/v1/agent")).agent;
-    expect(agent.heartbeatNextAt).toBeGreaterThan(Date.now() + 25 * 60_000);
+    expect((await heartbeat()).nextAt).toBeGreaterThan(Date.now() + 55 * 60_000);
+    expect((await runs(hb.id)).map((r) => r.status)).toEqual(["sent", "sent"]);
+    // Built in: it can be turned off, not deleted.
+    expect(neo.call("DELETE", `/v1/schedules/${hb.id}`)).rejects.toThrow(/built in/);
+    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { enabled: false });
+    expect((await heartbeat()).nextAt).toBeNull();
+  });
+
+  test("the agent can change its own heartbeat and create a routine", async () => {
+    const hb = await heartbeat();
+    await script([
+      { tool: "update_schedule", args: { scheduleId: hb.id, everyMinutes: 15 } },
+      { tool: "create_schedule", args: { name: "Weekly review", prompt: "review the week", cron: "0 9 * * 1" } },
+      { text: "done" },
+    ]);
+    await send("check on me every 15 minutes, and review the week every Monday");
+    await idle(neo);
+    expect((await heartbeat()).spec).toEqual({ kind: "every", minutes: 15 });
+    const weekly = (await schedules()).find((s) => s.name === "Weekly review");
+    expect(weekly.spec).toEqual({ kind: "cron", expr: "0 9 * * 1" });
+    expect(weekly.nextAt).toBeGreaterThan(Date.now());
+  });
+
+  test("a routine repeats; one occurrence fires once however often the alarm rings", async () => {
+    await script([{ text: "first" }]);
+    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "routine", everyMinutes: 30 });
+    await due(schedule.id);
+    await Promise.all([wake(), wake(), wake()]);
+    await idle(neo);
+    await wake();
+    await idle(neo);
+    expect(await answers(neo)).toEqual(["first"]);
+    const after = (await schedules()).find((s) => s.id === schedule.id);
+    expect(after.runCount).toBe(1);
+    expect(after.nextAt).toBeGreaterThan(Date.now() + 25 * 60_000);
+  });
+
+  test("busy and backlog: the heartbeat skips, a routine does not pile up", async () => {
+    const hb = await heartbeat();
+    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { window: null });
+    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "routine", everyMinutes: 30 });
+    await neo.call("POST", "/v1/pause");
+    await due(hb.id);
+    await due(schedule.id, 2000);
+    await wake();
+    await due(schedule.id, 1000);
+    await wake();
+    expect((await runs(hb.id)).map((r) => r.reason)).toEqual(["busy"]);
+    expect((await runs(schedule.id)).map((r) => [r.status, r.reason])).toEqual([
+      ["skipped", "previous_pending"],
+      ["sent", null],
+    ]);
+    expect((await neo.call("GET", "/v1/queue")).queue).toHaveLength(1);
+  });
+
+  test("after downtime: missed skip skips, missed run runs once late", async () => {
+    await script([{ recall: "ran late" }]);
+    const skip = (await neo.call("POST", "/v1/schedules", { prompt: "skip me", everyMinutes: 30, missed: "skip" })).schedule;
+    const run = (await neo.call("POST", "/v1/schedules", { prompt: "run me", everyMinutes: 30 })).schedule;
+    const day = 24 * 60 * 60_000;
+    await due(skip.id, day);
+    await due(run.id, day);
+    await wake();
+    await idle(neo);
+    expect((await runs(skip.id)).map((r) => r.reason)).toEqual(["missed"]);
+    expect((await runs(run.id)).map((r) => r.status)).toEqual(["sent"]);
+    // One message for a day of missed half-hours, and the model is told it is late.
+    const inputs = (await transcript(neo)).filter((i) => i.type === "input");
+    expect(inputs).toHaveLength(1);
+    expect((await neo.call("GET", "/v1/test/seen")).seen.at(-1)).toContain("was due");
+    for (const s of [skip, run]) expect((await schedules()).find((x) => x.id === s.id).nextAt).toBeGreaterThan(Date.now());
+  });
+
+  test("bad schedules are refused with a reason", async () => {
+    const bad = (input: unknown) => neo.call("POST", "/v1/schedules", input);
+    expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(/at most every 5 minutes/);
+    expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(/at least 5/);
+    expect(bad({ prompt: "x", at: "2020-01-01T09:00" })).rejects.toThrow(/passed/);
+    expect(bad({ prompt: "x" })).rejects.toThrow(/Say when/);
+    expect(bad({ prompt: "x", inMinutes: 5, cron: "0 9 * * *" })).rejects.toThrow(/one of/);
+  });
+
+  test("a cron follows the person's timezone when it changes", async () => {
+    await neo.call("PUT", "/v1/settings", { timezone: "UTC" });
+    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "x", cron: "0 9 * * *" });
+    expect(new Date(schedule.nextAt).getUTCHours()).toBe(9);
+    await neo.call("PUT", "/v1/settings", { timezone: "Asia/Kolkata" });
+    const moved = (await schedules()).find((s) => s.id === schedule.id);
+    expect(new Date(moved.nextAt).getUTCHours()).toBe(3); // 09:00 IST
+    expect(new Date(moved.nextAt).getUTCMinutes()).toBe(30);
+  });
+
+  test("schedules survive a restart and still fire", async () => {
+    if (!neo.restart) return;
+    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "after restart", everyMinutes: 30 });
+    await neo.restart();
+    expect((await schedules()).find((s) => s.id === schedule.id).nextAt).toBe(schedule.nextAt);
+    await script([{ text: "fired after restart" }]);
+    await due(schedule.id);
+    await wake();
+    await idle(neo);
+    expect(await answers(neo)).toEqual(["fired after restart"]);
+    expect((await schedules()).filter((s) => s.system === "heartbeat")).toHaveLength(1);
   });
 });
 

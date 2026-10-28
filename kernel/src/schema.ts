@@ -1,6 +1,6 @@
 import { AGENTS_SCHEMA } from "./agent/agents";
 import { MAILBOX_SCHEMA } from "./agent/mailbox";
-import { WAKEUPS_SCHEMA } from "./agent/wakeups";
+import { SCHEDULES_SCHEMA } from "./agent/schedules";
 import { EVENTS_SCHEMA } from "./services/events";
 import { HISTORY_SCHEMA } from "./services/history";
 import { MEMORY_SCHEMA } from "./services/memory";
@@ -31,7 +31,7 @@ const TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   EVENTS_SCHEMA,
   AGENTS_SCHEMA,
   MAILBOX_SCHEMA,
-  WAKEUPS_SCHEMA,
+  SCHEDULES_SCHEMA,
   MEMORY_SCHEMA,
   HISTORY_SCHEMA,
   VFS_SCHEMA,

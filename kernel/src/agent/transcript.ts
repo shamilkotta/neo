@@ -9,7 +9,7 @@ const context = BACKGROUND_CONTEXT;
 
 /**
  * A page of the transcript, oldest first, ending before `before` (an entry id) or at the newest.
- * Each item carries the turn it belongs to; quiet turns (a heartbeat with nothing to say) are left
+ * Each item carries the turn it belongs to; quiet turns (a quiet schedule with nothing to say) are left
  * out, as are system entries.
  */
 export async function readTranscript(

@@ -10,20 +10,6 @@ export interface ModelRef {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-/**
- * The proactive heartbeat: every `everyMinutes`, within `activeHours` of the person's timezone, the
- * agent gets a heartbeat message and decides whether anything needs doing. A turn that has nothing
- * to say ends quiet and is hidden from the chat.
- */
-export interface HeartbeatConfig {
-  enabled: boolean;
-  everyMinutes: number;
-  /** "HH:MM" in the person's timezone; start > end spans midnight. Absent: all day. */
-  activeHours?: { start: string; end: string };
-  /** What the agent is asked; absent: the built-in checklist. */
-  prompt?: string;
-}
-
 export interface AgentRecord {
   id: string;
   name: string;
@@ -32,8 +18,6 @@ export interface AgentRecord {
   thinking: ThinkingLevel | null;
   conversationId: number | null;
   paused: boolean;
-  heartbeat: HeartbeatConfig;
-  heartbeatNextAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -43,12 +27,11 @@ export interface AgentChange {
   instructions?: string;
   model?: ModelRef | null;
   thinking?: ThinkingLevel | null;
-  heartbeat?: Partial<HeartbeatConfig>;
 }
 
 // ---- mailbox and turns ----
 
-export type MessageSource = "user" | "wakeup" | "heartbeat" | "system";
+export type MessageSource = "user" | "schedule" | "system";
 export type MessageStatus =
   | "queued"
   | "starting"
@@ -152,18 +135,81 @@ export interface Memory {
   updatedAt: number;
 }
 
-// ---- wake-ups ----
+// ---- schedules ----
 
-export interface Wakeup {
+/**
+ * When a schedule fires. `once` is an instant; `every` repeats from its anchor; `cron` is a
+ * five-field cron expression in the schedule's timezone.
+ */
+export type ScheduleSpec =
+  | { kind: "once"; at: number }
+  | { kind: "every"; minutes: number }
+  | { kind: "cron"; expr: string };
+
+/**
+ * One thing that wakes the agent on a clock: a reminder, a routine, the heartbeat. They are all
+ * the same row, fired by the same code; they differ only in their settings.
+ */
+export interface Schedule {
   id: string;
   agentId: string;
-  at: number;
-  note: string;
-  status: "pending" | "fired" | "cancelled";
-  createdBy: "agent" | "person";
-  messageId: string | null;
+  name: string;
+  /** The message the agent gets each time. */
+  prompt: string;
+  spec: ScheduleSpec;
+  /** IANA timezone for cron and the window; null: the person's timezone (follows it). */
+  timezone: string | null;
+  /** Fire only inside these local hours ("HH:MM"; start > end spans midnight). */
+  window: { start: string; end: string } | null;
+  /** When the agent is busy or paused: wait in the queue, or skip this time. */
+  whenBusy: "queue" | "skip";
+  /** When the host was down past the due time: run once late, or skip to the next time. */
+  missed: "run" | "skip";
+  /** The agent may answer QUIET_OK and the turn is hidden from the chat. */
+  quiet: boolean;
+  enabled: boolean;
+  /** A built-in schedule ("heartbeat"): it can be changed or turned off, not deleted. */
+  system: string | null;
+  createdBy: "agent" | "person" | "system";
+  /** null: nothing more to fire (done, ended, or disabled). */
+  nextAt: number | null;
+  lastAt: number | null;
+  runCount: number;
+  maxRuns: number | null;
+  endsAt: number | null;
   createdAt: number;
-  firedAt: number | null;
+  updatedAt: number;
+}
+
+/** How a schedule is written by a person, the agent, or an app. Times are local unless they have an offset. */
+export interface ScheduleInput {
+  name?: string;
+  prompt?: string;
+  /** One time: "2026-10-29T09:00" (local) or ISO with an offset. */
+  at?: string;
+  inMinutes?: number;
+  everyMinutes?: number;
+  cron?: string;
+  timezone?: string | null;
+  window?: { start: string; end: string } | null;
+  whenBusy?: "queue" | "skip";
+  missed?: "run" | "skip";
+  quiet?: boolean;
+  enabled?: boolean;
+  maxRuns?: number | null;
+  /** Stop after this time (same formats as `at`). */
+  endsAt?: string | null;
+}
+
+export interface ScheduleRun {
+  id: string;
+  scheduleId: string;
+  dueAt: number;
+  firedAt: number;
+  status: "sent" | "skipped" | "failed";
+  /** Why it was skipped or failed: busy, outside_window, missed, previous_pending, no_model, or an error. */
+  reason: string | null;
+  messageId: string | null;
 }
 
 // ---- settings and models ----
@@ -173,7 +219,7 @@ export interface SettingsShape {
   memoryLimit: number;
   /** What a message sent while a turn runs does by default: wait in the queue, or join the turn. */
   busyMessageMode: "queue" | "steer";
-  /** The person's timezone: message times, wake-ups and heartbeat hours use it. */
+  /** The person's timezone: message times and schedules use it. */
   timezone: string;
 }
 

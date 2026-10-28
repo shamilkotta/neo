@@ -8,8 +8,8 @@ import { useNeo } from "./useNeo";
 /** Which panel each durable event type refreshes. */
 const PANEL_EVENTS: Record<string, Tab[]> = {
   "memory.changed": ["Memory"],
-  "wakeup.changed": ["Wake-ups"],
-  "wakeup.fired": ["Wake-ups"],
+  "schedule.changed": ["Schedules"],
+  "schedule.fired": ["Schedules"],
   "agent.changed": ["Agent"],
   "providers.changed": ["Providers", "Agent"],
   "settings.changed": ["Settings"],

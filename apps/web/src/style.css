@@ -28,7 +28,7 @@ header h1 { font-size:16px; margin:0; }
 .meta { font-size:11px; color:var(--dim); margin-bottom:2px; display:flex; gap:8px; align-items:center; }
 .chip { font-size:11px; padding:0 6px; border-radius:8px; border:1px solid var(--line); }
 .chip.failed { color:var(--bad); border-color:var(--bad); } .chip.interrupted { color:var(--warn); border-color:var(--warn); }
-.from-wakeup .bubble, .from-heartbeat .bubble, .from-system .bubble { background:transparent; border:1px dashed var(--line); color:var(--dim); }
+.from-schedule .bubble, .from-system .bubble { background:transparent; border:1px dashed var(--line); color:var(--dim); }
 details.tool { margin:4px 0; font-size:12px; color:var(--dim); border-left:2px solid var(--line); padding-left:8px; }
 details.tool summary { cursor:pointer; }
 details.tool pre, pre.file { white-space:pre-wrap; max-height:300px; overflow:auto; background:var(--panel); padding:6px; border-radius:6px; color:var(--text); }

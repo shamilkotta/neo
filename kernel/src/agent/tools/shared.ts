@@ -3,14 +3,16 @@ import type { History } from "../../services/history";
 import type { Memories } from "../../services/memory";
 import type { Settings } from "../../services/settings";
 import type { Mailbox } from "../mailbox";
-import type { Wakeups } from "../wakeups";
+import type { Schedules } from "../schedules";
 
 /** What the agent's own tools reach. Tools find their agent from the calling conversation. */
 export interface ToolServices {
   memories: Memories;
   history: History;
   mailbox: Mailbox;
-  wakeups: Wakeups;
+  schedules: Schedules;
+  /** A schedule changed: arm the alarm again and tell clients. */
+  changed(agentId: string): Promise<void>;
   settings: Settings;
   /** The agent whose conversation this is. */
   agentOf(conversationId: number): Promise<string>;
