@@ -3,7 +3,7 @@ import { watchEvents } from "@earendil-works/pi-durable";
 import { type AgentChange, DEFAULT_AGENT_ID } from "./agent/agents";
 import { MailboxError } from "./agent/mailbox";
 import { readTranscript } from "./agent/transcript";
-import { WakeupError, wakeupTime } from "./agent/wakeups";
+import { ScheduleError, type ScheduleInput } from "./agent/schedules";
 import { timingSafeEqual } from "./crypto";
 import { type Neo, NEO_VERSION, SetupError, StateError } from "./neo";
 import { MemoryError, type MemoryKind } from "./services/memory";
@@ -70,7 +70,7 @@ async function respond(neo: Neo, request: Request): Promise<Response> {
     if (error instanceof HttpError) return json({ error: error.message }, error.status);
     if (error instanceof StateError) return json({ error: error.message, state: error.state }, 409);
     if (error instanceof SetupError) return json({ error: error.message, setup: true }, 409);
-    if (error instanceof MailboxError || error instanceof WakeupError || error instanceof MemoryError)
+    if (error instanceof MailboxError || error instanceof ScheduleError || error instanceof MemoryError)
       return json({ error: error.message }, 400);
     if (error instanceof VfsError)
       return json({ error: error.message, code: error.code }, error.code === "not_found" ? 404 : 400);
@@ -223,40 +223,44 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ removed: m[1] });
   }
 
-  // ---- wake-ups ----
-  if (is("GET", "/v1/wakeups")) {
-    const status = (url.searchParams.get("status") ?? "pending") as "pending" | "all";
-    return json({ wakeups: await live.wakeups.list(agentId, status) });
+  // ---- schedules (reminders, routines, the heartbeat) ----
+  if (is("GET", "/v1/schedules")) return json({ schedules: await live.schedules.list(agentId) });
+  if (is("POST", "/v1/schedules")) {
+    const input = await body<ScheduleInput>(request);
+    const schedule = await live.schedules.create(agentId, input, "person", await live.settings.get("timezone"));
+    await neo.schedulesChanged(agentId);
+    return json({ schedule }, 201);
   }
-  if (is("POST", "/v1/wakeups")) {
-    const input = await body<{ note?: string; at?: string; inMinutes?: number }>(request);
-    const at = wakeupTime(input, neo.now(), await live.settings.get("timezone"));
-    const wakeup = await live.wakeups.add(agentId, at, input.note ?? "", "person");
-    await neo.arm();
-    await neo.events.emit("wakeup.changed", { added: wakeup.id }, agentId);
-    return json({ wakeup }, 201);
+  if ((m = match("PATCH", /^\/v1\/schedules\/([\w-]+)$/))) {
+    const change = await body<ScheduleInput>(request);
+    const schedule = await live.schedules.update(agentId, m[1]!, change, await live.settings.get("timezone"));
+    if (!schedule) throw new HttpError(404, "No such schedule");
+    await neo.schedulesChanged(agentId);
+    return json({ schedule });
   }
-  if ((m = match("DELETE", /^\/v1\/wakeups\/([\w-]+)$/))) {
-    if (!(await live.wakeups.cancel(agentId, m[1]!))) throw new HttpError(404, "No pending wake-up has that id");
-    await neo.arm();
-    await neo.events.emit("wakeup.changed", { cancelled: m[1] }, agentId);
-    return json({ cancelled: m[1] });
+  if ((m = match("DELETE", /^\/v1\/schedules\/([\w-]+)$/))) {
+    if (!(await live.schedules.remove(agentId, m[1]!))) throw new HttpError(404, "No such schedule");
+    await neo.schedulesChanged(agentId);
+    return json({ removed: m[1] });
+  }
+  if ((m = match("GET", /^\/v1\/schedules\/([\w-]+)\/runs$/))) {
+    if (!(await live.schedules.get(agentId, m[1]!))) throw new HttpError(404, "No such schedule");
+    return json({ runs: await live.schedules.runs(m[1]!) });
   }
 
   // ---- agent and settings ----
   if (is("GET", "/v1/agent")) return json({ agent: await live.agents.get(agentId) });
   if (is("PATCH", "/v1/agent")) {
     const change = await body<AgentChange>(request);
-    const before = await live.agents.get(agentId);
-    const agent = await live.agents.update(agentId, change);
-    if (JSON.stringify(before.heartbeat) !== JSON.stringify(agent.heartbeat))
-      await neo.rescheduleHeartbeat(agentId);
+    await live.agents.update(agentId, change);
     await neo.events.emit("agent.changed", {}, agentId);
     return json({ agent: await live.agents.get(agentId) });
   }
   if (is("GET", "/v1/settings")) return json({ settings: await live.settings.all() });
   if (is("PUT", "/v1/settings")) {
+    const before = await live.settings.get("timezone");
     const settings = await live.settings.update(await body<Partial<SettingsShape>>(request));
+    if (settings.timezone !== before) await neo.timezoneChanged();
     await neo.events.emit("settings.changed", {});
     return json({ settings });
   }
@@ -314,10 +318,12 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ released: input.gate });
   }
   if (neo.host.test && is("GET", "/v1/test/seen")) return json({ seen: neo.host.test.seen });
-  if (neo.host.test && is("POST", "/v1/test/heartbeat-due")) {
-    // The heartbeat is due now; the next wake sends it.
-    await live.agents.setHeartbeatNext(agentId, neo.now() - 1);
-    return json({ due: true });
+  if (neo.host.test && (m = match("POST", /^\/v1\/test\/schedules\/([\w-]+)\/due$/))) {
+    // Due now; the next wake fires it. "heartbeat" names the built-in one.
+    const id = m[1] === "heartbeat" ? (await live.schedules.system(agentId, "heartbeat"))?.id : m[1];
+    const ago = Number(url.searchParams.get("ago") ?? 1);
+    if (!id || !(await live.schedules.dueNow(agentId, id, ago))) throw new HttpError(404, "No such schedule");
+    return json({ due: id });
   }
   if (neo.host.test && is("POST", "/v1/test/wake")) {
     await neo.wake();

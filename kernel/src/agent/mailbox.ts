@@ -7,6 +7,7 @@ import type {
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
 import { ulid } from "../ids";
+import { QUIET_REPLY } from "./schedules";
 import type { Events } from "../services/events";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 import type { MessageSource, MessageStatus, TurnStatus, MailboxMessage, Turn, InputMessage } from "@neo/client";
@@ -17,7 +18,7 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(`CREATE TABLE neo_mailbox (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('user', 'wakeup', 'heartbeat', 'system')),
+    source TEXT NOT NULL CHECK (source IN ('user', 'schedule', 'system')),
     text TEXT NOT NULL,
     meta TEXT NOT NULL DEFAULT '{}',
     client_id TEXT UNIQUE,
@@ -60,8 +61,6 @@ export interface InputEntryData {
 
 export const INPUT_ENTRY = "neo.input";
 
-/** An answer that is exactly this ends a heartbeat turn quietly: nothing shows in the chat. */
-export const QUIET_REPLY = "HEARTBEAT_OK";
 
 export interface SendInput {
   text: string;
@@ -190,7 +189,7 @@ export class Mailbox {
     return rows.map(toMessage);
   }
 
-  /** Quiet turns (a heartbeat with nothing to say) are hidden from the transcript. */
+  /** Quiet turns (a quiet schedule with nothing to say) are hidden from the transcript. */
   async quietTurns(ids: string[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
     const rows = await this.db.all<{ id: string }>(
@@ -495,7 +494,7 @@ export class Mailbox {
     const messages = await this.turnMessages(turnId);
     const quiet =
       status === "completed" &&
-      messages.every((m) => m.source === "heartbeat") &&
+      messages.every((m) => m.source === "schedule" && m.meta.quiet === true) &&
       (answer ?? "").trim() === QUIET_REPLY;
     const time = this.now();
     await this.db.transaction(async (tx) => {
@@ -595,14 +594,24 @@ export class MailboxError extends Error {}
 
 const SOURCE_LABEL: Record<MessageSource, string> = {
   user: "Message from the person",
-  wakeup: "A wake-up you scheduled",
-  heartbeat: "Heartbeat",
+  schedule: "Your schedule",
   system: "System notice",
 };
 
 function header(message: MailboxMessage, timezone: string): string {
   const at = formatTime(message.createdAt, timezone);
-  return `[${SOURCE_LABEL[message.source]} · ${at}]`;
+  if (message.source !== "schedule") return `[${SOURCE_LABEL[message.source]} · ${at}]`;
+  const { name, scheduleId, dueAt, late, quiet } = message.meta as {
+    name?: string;
+    scheduleId?: string;
+    dueAt?: number;
+    late?: number;
+    quiet?: boolean;
+  };
+  const lines = [`[Your schedule "${name ?? "?"}" (${scheduleId ?? "?"}) · ${at}]`];
+  if (late && dueAt) lines.push(`[It was due ${formatTime(dueAt, timezone)}; the host was not running then.]`);
+  if (quiet) lines.push(`[If there is nothing worth telling the person, answer exactly ${QUIET_REPLY} and nothing else; it is not shown.]`);
+  return lines.join("\n");
 }
 
 export function formatTime(at: number, timezone: string): string {

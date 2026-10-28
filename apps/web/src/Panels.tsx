@@ -7,12 +7,12 @@ import type {
   ProviderConfig,
   ProviderInfo,
   SettingsShape,
+  Schedule,
   Status,
-  Wakeup,
 } from "@neo/client";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 
-export const TABS = ["Memory", "Wake-ups", "Agent", "Providers", "Settings", "Files"] as const;
+export const TABS = ["Memory", "Schedules", "Agent", "Providers", "Settings", "Files"] as const;
 export type Tab = (typeof TABS)[number];
 
 interface PanelProps {
@@ -68,8 +68,8 @@ export function Panel({ tab, ...props }: PanelProps & { tab: Tab }) {
   switch (tab) {
     case "Memory":
       return <MemoryPanel {...props} />;
-    case "Wake-ups":
-      return <WakeupsPanel {...props} />;
+    case "Schedules":
+      return <SchedulesPanel {...props} />;
     case "Agent":
       return <AgentPanel {...props} />;
     case "Providers":
@@ -126,29 +126,90 @@ function MemoryPanel({ client, version }: PanelProps) {
   );
 }
 
-function WakeupsPanel({ client, version }: PanelProps) {
-  const [wakeups, reload, error] = useLoad(() => client.wakeups(), [client, version]);
+function describe(s: Schedule): string {
+  if (s.spec.kind === "once") return `once, ${new Date(s.spec.at).toLocaleString()}`;
+  if (s.spec.kind === "every") return `every ${s.spec.minutes} min`;
+  return `cron ${s.spec.expr}`;
+}
+
+function SchedulesPanel({ client, version }: PanelProps) {
+  const [schedules, reload, error] = useLoad(() => client.schedules(), [client, version]);
+  const [repeat, setRepeat] = useState<"once" | "every" | "cron">("once");
   return (
     <>
-      <p className="muted">Times Neo wakes itself up with a note. Neo schedules these itself; you can too.</p>
+      <p className="muted">
+        Everything Neo does on its own time: reminders, routines and the heartbeat. Neo creates these itself; you can too.
+      </p>
       {error && <p className="err">{error}</p>}
-      {wakeups?.length === 0 && <p className="muted">None pending.</p>}
-      {wakeups?.map((w: Wakeup) => (
-        <div className="row" key={w.id}>
-          <b>{new Date(w.at).toLocaleString()}</b> · {w.createdBy}
-          <div>{w.note}</div>
+      {schedules?.length === 0 && <p className="muted">None.</p>}
+      {schedules?.map((s: Schedule) => (
+        <div className="row" key={s.id}>
+          <b>{s.name}</b> · {describe(s)}
+          {s.window && ` · ${s.window.start}–${s.window.end}`} · {s.createdBy}
+          <div className="muted">
+            {s.nextAt ? `next ${new Date(s.nextAt).toLocaleString()}` : s.enabled ? "done" : "off"} · ran {s.runCount}
+            {s.quiet && " · quiet"}
+            {s.whenBusy === "skip" && " · skips when busy"}
+          </div>
+          <div>{s.prompt.length > 200 ? `${s.prompt.slice(0, 200)}…` : s.prompt}</div>
           <div className="actions">
-            <button className="small" onClick={() => attempt(() => client.cancelWakeup(w.id), reload)}>
-              Cancel
+            <button className="small" onClick={() => attempt(() => client.updateSchedule(s.id, { enabled: !s.enabled }), reload)}>
+              {s.enabled ? "Turn off" : "Turn on"}
             </button>
+            {s.spec.kind === "every" && (
+              <button
+                className="small"
+                onClick={() => {
+                  const every = prompt("Every how many minutes?", String(s.spec.kind === "every" ? s.spec.minutes : 60));
+                  if (every) void attempt(() => client.updateSchedule(s.id, { everyMinutes: Number(every) }), reload);
+                }}
+              >
+                Interval
+              </button>
+            )}
+            {!s.system && (
+              <button className="small" onClick={() => attempt(() => client.removeSchedule(s.id), reload)}>
+                Delete
+              </button>
+            )}
           </div>
         </div>
       ))}
-      <Form onSubmit={(f) => client.addWakeup({ note: String(f.get("note")), inMinutes: Number(f.get("in")) }).then(reload)}>
-        <label>Note</label>
-        <textarea name="note" rows={2} required />
-        <label>In minutes</label>
-        <input name="in" type="number" min={1} defaultValue={60} />
+      <Form
+        onSubmit={(f) => {
+          const when = String(f.get("when"));
+          const start = String(f.get("start") ?? "");
+          const end = String(f.get("end") ?? "");
+          return client
+            .addSchedule({
+              name: String(f.get("name") ?? "") || undefined,
+              prompt: String(f.get("prompt")),
+              ...(repeat === "once" ? { inMinutes: Number(when) } : repeat === "every" ? { everyMinutes: Number(when) } : { cron: when }),
+              ...(start && end ? { window: { start, end } } : {}),
+              quiet: f.get("quiet") === "on",
+            })
+            .then(reload);
+        }}
+      >
+        <label>New schedule</label>
+        <input name="name" placeholder="Name (optional)" />
+        <textarea name="prompt" rows={2} placeholder="What should Neo do then?" required />
+        <div className="pair">
+          <select value={repeat} onChange={(e) => setRepeat(e.target.value as typeof repeat)}>
+            <option value="once">Once, in minutes</option>
+            <option value="every">Every N minutes</option>
+            <option value="cron">Cron (local time)</option>
+          </select>
+          <input key={repeat} name="when" required defaultValue={repeat === "cron" ? "0 9 * * 1-5" : "60"} />
+        </div>
+        <label>Only between (blank = any time)</label>
+        <div className="pair">
+          <input name="start" placeholder="08:00" />
+          <input name="end" placeholder="22:00" />
+        </div>
+        <label className="check">
+          <input type="checkbox" name="quiet" /> Quiet when there is nothing to report
+        </label>
         <button className="primary">Schedule</button>
       </Form>
     </>
@@ -165,7 +226,6 @@ function AgentPanel({ client, version }: PanelProps) {
   if (error) return <p className="err">{error}</p>;
   if (!data) return null;
   const { agent, models } = data as { agent: AgentRecord; models: { models: AvailableModel[]; default: ModelRef | null } };
-  const hb = agent.heartbeat;
   return (
     <form
       key={agent.updatedAt}
@@ -174,8 +234,6 @@ function AgentPanel({ client, version }: PanelProps) {
         const f = new FormData(e.currentTarget);
         const model = String(f.get("model") ?? "");
         const slash = model.indexOf("/");
-        const start = String(f.get("start") ?? "");
-        const end = String(f.get("end") ?? "");
         void attempt(
           () =>
             client.updateAgent({
@@ -183,12 +241,6 @@ function AgentPanel({ client, version }: PanelProps) {
               instructions: String(f.get("instructions")),
               model: model ? { provider: model.slice(0, slash), modelId: model.slice(slash + 1) } : null,
               thinking: (String(f.get("thinking")) || null) as AgentRecord["thinking"],
-              heartbeat: {
-                enabled: f.get("hb") === "on",
-                everyMinutes: Number(f.get("every")),
-                activeHours: start && end ? { start, end } : undefined,
-                prompt: String(f.get("prompt") ?? "") || undefined,
-              },
             }),
           reload,
         );
@@ -215,22 +267,8 @@ function AgentPanel({ client, version }: PanelProps) {
           </option>
         ))}
       </select>
-      <h3>Heartbeat</h3>
-      <p className="muted">Every N minutes Neo checks whether anything needs doing. Quiet when there is nothing.</p>
-      <label className="check">
-        <input type="checkbox" name="hb" defaultChecked={hb.enabled} /> Enabled
-      </label>
-      <label>Every (minutes)</label>
-      <input name="every" type="number" min={5} defaultValue={hb.everyMinutes} />
-      <label>Active hours (blank = all day)</label>
-      <div className="pair">
-        <input name="start" placeholder="08:00" defaultValue={hb.activeHours?.start ?? ""} />
-        <input name="end" placeholder="22:00" defaultValue={hb.activeHours?.end ?? ""} />
-      </div>
-      <label>Heartbeat prompt (blank = built-in)</label>
-      <textarea name="prompt" rows={3} defaultValue={hb.prompt ?? ""} />
+      <p className="muted">The heartbeat is in Schedules.</p>
       <button className="primary">Save</button>
-      {agent.heartbeatNextAt && <p className="muted">Next heartbeat: {new Date(agent.heartbeatNextAt).toLocaleString()}</p>}
     </form>
   );
 }

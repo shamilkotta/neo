@@ -14,7 +14,9 @@ import type {
   Status,
   TranscriptPage,
   Turn,
-  Wakeup,
+  Schedule,
+  ScheduleInput,
+  ScheduleRun,
 } from "./types";
 
 export class NeoApiError extends Error {
@@ -91,12 +93,15 @@ export class NeoClient {
     this.call<{ memory: Memory }>("PATCH", `/v1/memories/${id}`, change).then((r) => r.memory);
   removeMemory = (id: string) => this.call<{ removed: string }>("DELETE", `/v1/memories/${id}`);
 
-  // ---- wake-ups ----
-  wakeups = (status: "pending" | "all" = "pending") =>
-    this.call<{ wakeups: Wakeup[] }>("GET", `/v1/wakeups${query({ status })}`).then((r) => r.wakeups);
-  addWakeup = (input: { note: string; at?: string; inMinutes?: number }) =>
-    this.call<{ wakeup: Wakeup }>("POST", "/v1/wakeups", input).then((r) => r.wakeup);
-  cancelWakeup = (id: string) => this.call<{ cancelled: string }>("DELETE", `/v1/wakeups/${id}`);
+  // ---- schedules ----
+  schedules = () => this.call<{ schedules: Schedule[] }>("GET", "/v1/schedules").then((r) => r.schedules);
+  addSchedule = (input: ScheduleInput) =>
+    this.call<{ schedule: Schedule }>("POST", "/v1/schedules", input).then((r) => r.schedule);
+  updateSchedule = (id: string, change: ScheduleInput) =>
+    this.call<{ schedule: Schedule }>("PATCH", `/v1/schedules/${id}`, change).then((r) => r.schedule);
+  removeSchedule = (id: string) => this.call<{ removed: string }>("DELETE", `/v1/schedules/${id}`);
+  scheduleRuns = (id: string) =>
+    this.call<{ runs: ScheduleRun[] }>("GET", `/v1/schedules/${id}/runs`).then((r) => r.runs);
 
   // ---- agent, settings, models ----
   agent = () => this.call<{ agent: AgentRecord }>("GET", "/v1/agent").then((r) => r.agent);

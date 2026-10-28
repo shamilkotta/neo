@@ -22,8 +22,8 @@ import { promptSections } from "./agent/prompt";
 import { historyTools } from "./agent/tools/history";
 import { memoryTools } from "./agent/tools/memory";
 import type { ToolServices } from "./agent/tools/shared";
-import { wakeupTools } from "./agent/tools/wakeups";
-import { HEARTBEAT_PROMPT, inActiveHours, nextHeartbeat, Wakeups } from "./agent/wakeups";
+import { scheduleTools } from "./agent/tools/schedules";
+import { HEARTBEAT, Schedules } from "./agent/schedules";
 import { handleApi } from "./api";
 import type { HostPorts } from "./host";
 import { createSchema, getMeta, hasTable, setMeta } from "./schema";
@@ -61,7 +61,7 @@ export interface Live {
   memories: Memories;
   history: History;
   mailbox: Mailbox;
-  wakeups: Wakeups;
+  schedules: Schedules;
   watches: AgentEventStream[];
 }
 
@@ -140,8 +140,8 @@ export class Neo {
 
   /**
    * Sets the host's alarm to the earliest thing that needs a process: Pi's next sleep, a recovery
-   * ring while work runs, the next wake-up, the next heartbeat. Calls are serialized; an unchanged
-   * time is not set again.
+   * ring while work runs, and the next schedule (reminders, routines and the heartbeat are all
+   * schedules). Calls are serialized; an unchanged time is not set again.
    */
   arm(extra?: Wake): Promise<void> {
     this.arming = this.arming
@@ -155,10 +155,8 @@ export class Neo {
         if (wake.active || extra?.active || running) times.push(this.now() + RECOVERY_MS);
         if (wake.at !== undefined) times.push(wake.at);
         if (extra?.at !== undefined) times.push(extra.at);
-        const wakeup = await live.wakeups.next();
-        if (wakeup !== undefined) times.push(wakeup);
-        for (const agent of await live.agents.list())
-          if (agent.heartbeat.enabled && agent.heartbeatNextAt !== null) times.push(agent.heartbeatNextAt);
+        const scheduled = await live.schedules.next();
+        if (scheduled !== undefined) times.push(scheduled);
         await this.setAlarm(times.length ? Math.max(Math.min(...times), this.now()) : undefined);
       });
     return this.arming;
@@ -170,7 +168,7 @@ export class Neo {
     await this.host.alarm.set(at);
   }
 
-  /** The host's alarm rang: resume Pi, deliver due wake-ups and heartbeats, then arm again. */
+  /** The host's alarm rang: resume Pi, fire what is due, then arm again. */
   wake(): Promise<void> {
     this.waking ??= (async () => {
       try {
@@ -180,8 +178,7 @@ export class Neo {
         this.armed = null;
         await this.host.alarm.set(this.now() + RECOVERY_MS);
         live.harness.resume();
-        await this.fireWakeups(live);
-        await this.heartbeats(live);
+        await this.fireSchedules(live);
       } finally {
         this.waking = undefined;
         this.armed = null;
@@ -191,47 +188,38 @@ export class Neo {
     return this.waking;
   }
 
-  private async fireWakeups(live: Live): Promise<void> {
-    for (const wakeup of await live.wakeups.due()) {
-      const message = await live.mailbox.send(wakeup.agentId, {
-        source: "wakeup",
-        text: wakeup.note,
-        meta: { wakeupId: wakeup.id, scheduledFor: wakeup.at },
-        // The wake-up's own id: delivering it twice (a ring cut off part way) sends one message.
-        clientId: `wakeup:${wakeup.id}`,
+  private async fireSchedules(live: Live): Promise<void> {
+    for (let pass = 0; pass < 10; pass++) {
+      const { runs, more } = await live.schedules.fire({
+        send: (agentId, input) => this.send(agentId, input),
+        idle: async (agentId) =>
+          !(await live.agents.get(agentId)).paused &&
+          !(await live.mailbox.currentTurn(agentId)) &&
+          (await live.mailbox.queue(agentId)).length === 0,
+        waiting: async (messageId) => (await live.mailbox.message(messageId))?.status === "queued",
+        timezone: () => live.settings.get("timezone"),
       });
-      await live.wakeups.markFired(wakeup.id, message.id);
-      await this.events.emit("wakeup.fired", { wakeupId: wakeup.id, messageId: message.id }, wakeup.agentId);
+      for (const run of runs)
+        await this.events.emit(
+          "schedule.fired",
+          { scheduleId: run.scheduleId, status: run.status, reason: run.reason, messageId: run.messageId },
+          run.agentId,
+        );
+      if (!more) return;
     }
   }
 
-  private async heartbeats(live: Live): Promise<void> {
-    const timezone = await live.settings.get("timezone");
-    for (const agent of await live.agents.list()) {
-      const config = agent.heartbeat;
-      if (!config.enabled) continue;
-      const now = this.now();
-      if (agent.heartbeatNextAt === null) {
-        await live.agents.setHeartbeatNext(agent.id, nextHeartbeat(config, now, timezone));
-        continue;
-      }
-      if (agent.heartbeatNextAt > now) continue;
-      await live.agents.setHeartbeatNext(agent.id, nextHeartbeat(config, now, timezone));
-      // Only when it would not interrupt anything: idle, nothing queued, not paused, in hours.
-      const idle =
-        !agent.paused &&
-        !(await live.mailbox.currentTurn(agent.id)) &&
-        (await live.mailbox.queue(agent.id)).length === 0;
-      if (!idle || !inActiveHours(config, now, timezone)) {
-        await this.events.emit("heartbeat.skipped", { reason: idle ? "outside_hours" : "busy" }, agent.id);
-        continue;
-      }
-      await live.mailbox.send(agent.id, {
-        source: "heartbeat",
-        text: config.prompt ?? HEARTBEAT_PROMPT,
-        clientId: `heartbeat:${agent.id}:${agent.heartbeatNextAt}`,
-      });
-    }
+  /** A schedule changed: the alarm follows, and clients reload. */
+  async schedulesChanged(agentId: string): Promise<void> {
+    await this.arm();
+    await this.events.emit("schedule.changed", {}, agentId);
+  }
+
+  /** The person's timezone changed: wall-clock schedules move with it. */
+  async timezoneChanged(): Promise<void> {
+    const live = this.services();
+    await live.schedules.retime(await live.settings.get("timezone"));
+    await this.arm();
   }
 
   // ---- agent ---------------------------------------------------------------------------------
@@ -311,17 +299,6 @@ export class Neo {
     await this.services().mailbox.drain(agentId);
   }
 
-  /** Starts or restarts the heartbeat schedule after its settings change. */
-  async rescheduleHeartbeat(agentId: string): Promise<void> {
-    const live = this.services();
-    const agent = await live.agents.get(agentId);
-    const next = agent.heartbeat.enabled
-      ? nextHeartbeat(agent.heartbeat, this.now(), await live.settings.get("timezone"))
-      : null;
-    await live.agents.setHeartbeatNext(agentId, next);
-    await this.arm();
-  }
-
   async close(): Promise<void> {
     await this.stop();
   }
@@ -348,7 +325,7 @@ export class Neo {
     const agents = new Agents(db, this.now);
     await agents.ensure();
     const memories = new Memories(db, this.now, () => settings.get("memoryLimit"));
-    const wakeups = new Wakeups(db, this.now);
+    const schedules = new Schedules(db, this.now);
     const history = new History(db);
 
     // Pi closes its storage's database on close; Neo owns the database, so Pi's handle does not.
@@ -399,13 +376,14 @@ export class Neo {
       },
       this.now,
     );
-    this.live = { harness, vfs, secrets, providers, settings, agents, memories, history, mailbox, wakeups, watches: [] };
+    this.live = { harness, vfs, secrets, providers, settings, agents, memories, history, mailbox, schedules, watches: [] };
 
     const tools: ToolServices = {
       memories,
       history,
       mailbox,
-      wakeups,
+      schedules,
+      changed: (agentId) => this.schedulesChanged(agentId),
       settings,
       agentOf: (id) => this.agentOf(id),
       conversation: (agentId) => this.conversation(agentId),
@@ -421,7 +399,7 @@ export class Neo {
       defineExtension({
         name: "neo",
         sections: promptSections({ agents, memories, settings, agentOf: (id) => this.agentOf(id) }),
-        tools: [...memoryTools(tools), ...historyTools(tools), ...wakeupTools(tools)],
+        tools: [...memoryTools(tools), ...historyTools(tools), ...scheduleTools(tools)],
       }),
     );
     if (this.host.test) registry.install(this.host.test.extension);
@@ -429,7 +407,7 @@ export class Neo {
     for (const agent of await agents.list()) {
       await this.watch(agent.id);
       await mailbox.recover(agent.id);
-      if (agent.heartbeat.enabled && agent.heartbeatNextAt === null) await this.rescheduleHeartbeat(agent.id);
+      await schedules.ensureSystem(agent.id, "heartbeat", HEARTBEAT, await settings.get("timezone"));
     }
     harness.resume();
     await this.arm();
