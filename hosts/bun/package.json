@@ -1,0 +1,16 @@
+{
+  "name": "@neo/bun",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "neo": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.4.0",
+    "@neo/kernel": "workspace:*",
+    "@neo/web": "workspace:*"
+  }
+}

@@ -1,0 +1,476 @@
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import {
+  type AgentEventStream,
+  type Conversation,
+  createRegistry,
+  defineExtension,
+  Harness,
+  type ModelRef,
+  type Wake,
+  watchEvents,
+} from "@earendil-works/pi-durable";
+import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-durable/tools";
+import { type AgentRecord, Agents, DEFAULT_AGENT_ID } from "./agent/agents";
+import { Mailbox, type MailboxMessage, type Turn } from "./agent/mailbox";
+import { promptSections } from "./agent/prompt";
+import { historyTools } from "./agent/tools/history";
+import { memoryTools } from "./agent/tools/memory";
+import type { ToolServices } from "./agent/tools/shared";
+import { wakeupTools } from "./agent/tools/wakeups";
+import { HEARTBEAT_PROMPT, inActiveHours, nextHeartbeat, Wakeups } from "./agent/wakeups";
+import { handleApi } from "./api";
+import type { HostPorts } from "./host";
+import { createSchema, getMeta, hasTable, setMeta } from "./schema";
+import { Events } from "./services/events";
+import { Memories } from "./services/memory";
+import { Providers } from "./services/providers";
+import { Secrets } from "./services/secrets";
+import { Settings } from "./services/settings";
+import type { SqliteDatabase } from "./sql";
+import { VfsShell } from "./vfs/bash";
+import { VfsExecutionEnv } from "./vfs/env";
+import { Vfs } from "./vfs/vfs";
+
+export const NEO_VERSION = "0.1.0";
+/** Pi's tables share the instance database under this prefix. */
+export const PI_PREFIX = "pi_";
+/** While work runs, the alarm rings at least this often, so a host that dies mid-turn is woken to resume it. */
+export const RECOVERY_MS = 60_000;
+
+/**
+ * The lifecycle of an instance on a host. Only `active` runs. `sealed` and `moved` are for moving
+ * an instance between hosts (next phase); `empty` is a host waiting for an import.
+ */
+export type InstanceState = "empty" | "active" | "sealed" | "moved";
+
+/** The running services of an active instance. */
+export interface Live {
+  harness: Harness;
+  vfs: Vfs;
+  secrets: Secrets;
+  providers: Providers;
+  settings: Settings;
+  agents: Agents;
+  memories: Memories;
+  mailbox: Mailbox;
+  wakeups: Wakeups;
+  watches: AgentEventStream[];
+}
+
+/**
+ * One Neo instance on one host. Everything durable is in the host's database (and blob store);
+ * this object only holds connections and caches, so the same instance continues on any host that
+ * opens its data.
+ */
+export class Neo {
+  readonly events: Events;
+  readonly now: () => number;
+  private live: Live | undefined;
+  private state_: InstanceState = "empty";
+  private instanceId_: string | undefined;
+  private readonly context: Context = BACKGROUND_CONTEXT;
+  /** The alarm time last set, so an unchanged time is not written again (a DO write each time). */
+  private armed: number | undefined | null = null;
+  private arming: Promise<void> = Promise.resolve();
+  private waking: Promise<void> | undefined;
+  /** What each agent's conversation was last configured with. */
+  private readonly configured = new Map<string, string>();
+  private readonly conversationAgents = new Map<number, string>();
+
+  private constructor(readonly host: HostPorts) {
+    this.now = host.now ?? Date.now;
+    this.events = new Events(host.db, this.now);
+  }
+
+  static async open(host: HostPorts): Promise<Neo> {
+    const neo = new Neo(host);
+    if (await hasTable(host.db, "neo_meta")) {
+      neo.instanceId_ = await getMeta(host.db, "instance_id");
+      neo.state_ = ((await getMeta(host.db, "state")) as InstanceState | undefined) ?? "empty";
+    } else {
+      // A new host: a new instance. (A host that waits for an import will skip this.)
+      await neo.init();
+      return neo;
+    }
+    if (neo.state_ === "active") await neo.start();
+    return neo;
+  }
+
+  get state(): InstanceState {
+    return this.state_;
+  }
+
+  get instanceId(): string | undefined {
+    return this.instanceId_;
+  }
+
+  /** The running services; throws unless the instance is active. */
+  services(): Live {
+    if (!this.live) throw new StateError(this.state_, `The instance is ${this.state_}`);
+    return this.live;
+  }
+
+  fetch(request: Request): Promise<Response> {
+    return handleApi(this, request);
+  }
+
+  /** Creates a new instance in an empty database. */
+  async init(): Promise<void> {
+    if (this.state_ !== "empty") throw new StateError(this.state_, "This host already holds an instance");
+    await createSchema(this.host.db);
+    this.instanceId_ = crypto.randomUUID();
+    await setMeta(this.host.db, "instance_id", this.instanceId_);
+    await setMeta(this.host.db, "created_at", String(this.now()));
+    await setMeta(this.host.db, "epoch", "1");
+    if (this.host.timezone)
+      await new Settings(this.host.db).update({ timezone: this.host.timezone });
+    await this.setState("active");
+    await this.start();
+  }
+
+  // ---- time ------------------------------------------------------------------------------------
+
+  /**
+   * Sets the host's alarm to the earliest thing that needs a process: Pi's next sleep, a recovery
+   * ring while work runs, the next wake-up, the next heartbeat. Calls are serialized; an unchanged
+   * time is not set again.
+   */
+  arm(extra?: Wake): Promise<void> {
+    this.arming = this.arming
+      .catch(() => {})
+      .then(async () => {
+        const live = this.live;
+        if (!live) return this.setAlarm(undefined);
+        const wake = live.harness.wake();
+        const running = await this.host.db.get(`SELECT 1 FROM neo_turns WHERE status = 'running' LIMIT 1`);
+        const times: number[] = [];
+        if (wake.active || extra?.active || running) times.push(this.now() + RECOVERY_MS);
+        if (wake.at !== undefined) times.push(wake.at);
+        if (extra?.at !== undefined) times.push(extra.at);
+        const wakeup = await live.wakeups.next();
+        if (wakeup !== undefined) times.push(wakeup);
+        for (const agent of await live.agents.list())
+          if (agent.heartbeat.enabled && agent.heartbeatNextAt !== null) times.push(agent.heartbeatNextAt);
+        await this.setAlarm(times.length ? Math.max(Math.min(...times), this.now()) : undefined);
+      });
+    return this.arming;
+  }
+
+  private async setAlarm(at: number | undefined): Promise<void> {
+    if (this.armed !== null && this.armed === at) return;
+    this.armed = at;
+    await this.host.alarm.set(at);
+  }
+
+  /** The host's alarm rang: resume Pi, deliver due wake-ups and heartbeats, then arm again. */
+  wake(): Promise<void> {
+    this.waking ??= (async () => {
+      try {
+        const live = this.live;
+        if (!live) return;
+        // A recovery ring first, in case this wake is cut off (a Durable Object can be evicted).
+        this.armed = null;
+        await this.host.alarm.set(this.now() + RECOVERY_MS);
+        live.harness.resume();
+        await this.fireWakeups(live);
+        await this.heartbeats(live);
+      } finally {
+        this.waking = undefined;
+        this.armed = null;
+        await this.arm();
+      }
+    })();
+    return this.waking;
+  }
+
+  private async fireWakeups(live: Live): Promise<void> {
+    for (const wakeup of await live.wakeups.due()) {
+      const message = await live.mailbox.send(wakeup.agentId, {
+        source: "wakeup",
+        text: wakeup.note,
+        meta: { wakeupId: wakeup.id, scheduledFor: wakeup.at },
+        // The wake-up's own id: delivering it twice (a ring cut off part way) sends one message.
+        clientId: `wakeup:${wakeup.id}`,
+      });
+      await live.wakeups.markFired(wakeup.id, message.id);
+      await this.events.emit("wakeup.fired", { wakeupId: wakeup.id, messageId: message.id }, wakeup.agentId);
+    }
+  }
+
+  private async heartbeats(live: Live): Promise<void> {
+    const timezone = await live.settings.get("timezone");
+    for (const agent of await live.agents.list()) {
+      const config = agent.heartbeat;
+      if (!config.enabled) continue;
+      const now = this.now();
+      if (agent.heartbeatNextAt === null) {
+        await live.agents.setHeartbeatNext(agent.id, nextHeartbeat(config, now, timezone));
+        continue;
+      }
+      if (agent.heartbeatNextAt > now) continue;
+      await live.agents.setHeartbeatNext(agent.id, nextHeartbeat(config, now, timezone));
+      // Only when it would not interrupt anything: idle, nothing queued, not paused, in hours.
+      const idle =
+        !agent.paused &&
+        !(await live.mailbox.currentTurn(agent.id)) &&
+        (await live.mailbox.queue(agent.id)).length === 0;
+      if (!idle || !inActiveHours(config, now, timezone)) {
+        await this.events.emit("heartbeat.skipped", { reason: idle ? "outside_hours" : "busy" }, agent.id);
+        continue;
+      }
+      await live.mailbox.send(agent.id, {
+        source: "heartbeat",
+        text: config.prompt ?? HEARTBEAT_PROMPT,
+        clientId: `heartbeat:${agent.id}:${agent.heartbeatNextAt}`,
+      });
+    }
+  }
+
+  // ---- agent ---------------------------------------------------------------------------------
+
+  /** The agent's conversation, configured with its current model, thinking level and instructions. */
+  async conversation(agentId: string): Promise<Conversation> {
+    const live = this.services();
+    const agent = await live.agents.get(agentId);
+    let conversation: Conversation | undefined;
+    if (agent.conversationId !== null)
+      conversation = await live.harness.conversation(agent.conversationId as never, this.context);
+    if (!conversation) {
+      // The default agent's chat is Pi's root conversation.
+      conversation = await live.harness.root(this.context);
+      await live.agents.setConversation(agentId, conversation.id as unknown as number);
+    }
+    this.conversationAgents.set(conversation.id as unknown as number, agentId);
+    const model = agent.model ?? (await this.defaultModel());
+    const config = JSON.stringify([model, agent.thinking, agent.instructions]);
+    if (this.configured.get(agentId) !== config) {
+      await conversation.configure(
+        {
+          model: model ?? null,
+          thinkingLevel: agent.thinking ?? null,
+          instructions: agent.instructions.trim() || null,
+          cwd: "/",
+        },
+        this.context,
+      );
+      this.configured.set(agentId, config);
+    }
+    return conversation;
+  }
+
+  /** The model an agent without its own uses: the first available one. */
+  async defaultModel(): Promise<ModelRef | undefined> {
+    const live = this.services();
+    if (this.host.test) return { provider: "faux", modelId: "m" };
+    const available = await live.providers.available();
+    const first = available[0];
+    return first ? { provider: first.provider, modelId: first.id } : undefined;
+  }
+
+  async agentOf(conversationId: number): Promise<string> {
+    const known = this.conversationAgents.get(conversationId);
+    if (known) return known;
+    const row = await this.host.db.get<{ id: string }>(
+      `SELECT id FROM neo_agents WHERE conversation_id = ?`,
+      conversationId,
+    );
+    if (!row) throw new Error("This conversation belongs to no agent");
+    this.conversationAgents.set(conversationId, row.id);
+    return row.id;
+  }
+
+  async agent(id = DEFAULT_AGENT_ID): Promise<AgentRecord> {
+    return this.services().agents.get(id);
+  }
+
+  /** Sends a message to the agent, after checking it has a model. */
+  async send(agentId: string, input: Parameters<Mailbox["send"]>[1]): Promise<MailboxMessage> {
+    const live = this.services();
+    const agent = await live.agents.get(agentId);
+    if (!agent.model && !(await this.defaultModel()))
+      throw new SetupError("Add a model provider first (Settings → Providers)");
+    return live.mailbox.send(agentId, input);
+  }
+
+  async pause(agentId: string): Promise<void> {
+    await this.services().agents.setPaused(agentId, true);
+    await this.events.emit("agent.paused", {}, agentId);
+  }
+
+  async resume(agentId: string): Promise<void> {
+    await this.services().agents.setPaused(agentId, false);
+    await this.events.emit("agent.resumed", {}, agentId);
+    await this.services().mailbox.drain(agentId);
+  }
+
+  /** Starts or restarts the heartbeat schedule after its settings change. */
+  async rescheduleHeartbeat(agentId: string): Promise<void> {
+    const live = this.services();
+    const agent = await live.agents.get(agentId);
+    const next = agent.heartbeat.enabled
+      ? nextHeartbeat(agent.heartbeat, this.now(), await live.settings.get("timezone"))
+      : null;
+    await live.agents.setHeartbeatNext(agentId, next);
+    await this.arm();
+  }
+
+  async close(): Promise<void> {
+    await this.stop();
+  }
+
+  // ---- internals -----------------------------------------------------------------------------
+
+  private async setState(state: InstanceState): Promise<void> {
+    this.state_ = state;
+    await setMeta(this.host.db, "state", state);
+  }
+
+  private async start(): Promise<void> {
+    if (this.live) return;
+    const { db } = this.host;
+    const vfs = new Vfs(db, this.host.blobs, this.now);
+    await vfs.repair();
+    const shell = new VfsShell(vfs);
+    const secrets = new Secrets(db, this.host.masterKey, this.now);
+    await secrets.init();
+    const providers = new Providers(db, secrets, this.now);
+    if (this.host.test) providers.addHostProvider(this.host.test.provider);
+    await providers.rebuild();
+    const settings = new Settings(db);
+    const agents = new Agents(db, this.now);
+    await agents.ensure();
+    const memories = new Memories(db, this.now, () => settings.get("memoryLimit"));
+    const wakeups = new Wakeups(db, this.now);
+
+    // Pi closes its storage's database on close; Neo owns the database, so Pi's handle does not.
+    const piDb: SqliteDatabase = {
+      exec: (sql) => db.exec(sql),
+      run: (sql, ...p) => db.run(sql, ...p),
+      get: (sql, ...p) => db.get(sql, ...p),
+      all: (sql, ...p) => db.all(sql, ...p),
+      transaction: (cb) => db.transaction(cb),
+      close: async () => {},
+    };
+    const storage = await SqliteStorage.open(piDb, { prefix: PI_PREFIX });
+    const registry = createRegistry();
+    const harness = await Harness.open(
+      storage,
+      {
+        models: () => providers.models(),
+        registry,
+        env: ({ cwd }) => new VfsExecutionEnv(vfs, cwd ?? "/", `neo-vfs:${this.instanceId_}`, shell),
+        identity: { attribution: { name: "neo", url: "https://github.com/" } },
+        settings: {
+          compaction: { enabled: true },
+          // A failed turn must not hold the messages behind it (Neo's queue is separate anyway).
+          afterFailedRun: "continue",
+          retry: { maxRetries: 3 },
+        },
+        onWake: (wake) => void this.arm(wake).catch(() => {}),
+        onReport: (error, info) => {
+          if (info.type === "listener_error") return;
+          void this.events
+            .emit("error", { where: info.type, message: error instanceof Error ? error.message : String(error) })
+            .catch(() => {});
+        },
+        ...(this.host.now ? { now: this.host.now } : {}),
+      },
+      this.context,
+    );
+    const mailbox = new Mailbox(
+      db,
+      harness,
+      this.events,
+      {
+        conversation: (agentId) => this.conversation(agentId),
+        beforeWork: () => this.arm({ active: true }),
+        turnSettled: (turn, messages) => this.turnSettled(turn, messages),
+        paused: async (agentId) => (await agents.get(agentId)).paused,
+        timezone: () => settings.get("timezone"),
+      },
+      this.now,
+    );
+    this.live = { harness, vfs, secrets, providers, settings, agents, memories, mailbox, wakeups, watches: [] };
+
+    const tools: ToolServices = {
+      memories,
+      mailbox,
+      wakeups,
+      settings,
+      agentOf: (id) => this.agentOf(id),
+      conversation: (agentId) => this.conversation(agentId),
+      now: this.now,
+    };
+    registry.install(
+      defineExtension({
+        name: "files",
+        tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
+      }),
+    );
+    registry.install(
+      defineExtension({
+        name: "neo",
+        sections: promptSections({ agents, memories, settings, agentOf: (id) => this.agentOf(id) }),
+        tools: [...memoryTools(tools), ...historyTools(tools), ...wakeupTools(tools)],
+      }),
+    );
+    if (this.host.test) registry.install(this.host.test.extension);
+
+    for (const agent of await agents.list()) {
+      await this.watch(agent.id);
+      await mailbox.recover(agent.id);
+      if (agent.heartbeat.enabled && agent.heartbeatNextAt === null) await this.rescheduleHeartbeat(agent.id);
+    }
+    harness.resume();
+    await this.arm();
+  }
+
+  /** Streams the agent's running turn (text deltas, tool steps) to connected clients. */
+  private async watch(agentId: string): Promise<void> {
+    const live = this.services();
+    const conversation = await this.conversation(agentId);
+    const stream = await watchEvents(live.harness, conversation.id, this.context);
+    stream.start(async (events) => {
+      for (const event of events) {
+        if (event.type === "snapshot" || event.type === "agent_changed" || event.type === "usage_changed") continue;
+        this.events.live("pi", event, agentId);
+      }
+    });
+    live.watches.push(stream);
+  }
+
+  private async turnSettled(turn: Turn, _messages: MailboxMessage[]): Promise<void> {
+    const live = this.services();
+    const applied = await live.memories.finish(turn.id, turn.status === "completed");
+    if (applied > 0) await this.events.emit("memory.changed", { turnId: turn.id, applied }, turn.agentId);
+    await this.arm();
+  }
+
+  private async stop(): Promise<void> {
+    const live = this.live;
+    if (!live) return;
+    this.live = undefined;
+    live.mailbox.close();
+    for (const watch of live.watches) await watch.stop().catch(() => {});
+    await live.harness.close(this.context).catch(() => {});
+    await this.setAlarm(undefined).catch(() => {});
+  }
+}
+
+export class StateError extends Error {
+  constructor(
+    readonly state: InstanceState,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Something the person has to set up first. */
+export class SetupError extends Error {}
