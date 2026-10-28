@@ -73,9 +73,9 @@ export class VfsExecutionEnv implements ExecutionEnv {
     context: Context,
   ) {
     return attempt(context, path, async () => {
+      // Only as many chunks as the lines asked for; without a limit, a whole-file read (capped).
       if (options?.maxLines === undefined)
         return splitLines(await this.vfs.readText(this.resolve(path)));
-      // Only as many chunks as the lines asked for.
       const lines: string[] = [];
       for await (const line of fileLines(
         await this.vfs.open(this.resolve(path)),

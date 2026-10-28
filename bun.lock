@@ -54,6 +54,7 @@
         "@earendil-works/pi-ai": "1.4.0",
         "@earendil-works/pi-durable": "1.4.0",
         "@neo/client": "workspace:*",
+        "@noble/hashes": "^2.4.0",
         "croner": "9",
         "just-bash": "3.6.0",
       },
@@ -306,6 +307,8 @@
     "@neo/kernel": ["@neo/kernel@workspace:kernel"],
 
     "@neo/web": ["@neo/web@workspace:apps/web"],
+
+    "@noble/hashes": ["@noble/hashes@2.4.0", "", {}, "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="],
 
     "@nodable/entities": ["@nodable/entities@3.1.0", "", {}, "sha512-LsS/DjHr+uDM647Gru/cA8+J3a3HfhttwCKLyuoyN7yXTFCxKBtSgMQBvrW9yNPa2/zDRUNuGPaH5QUFoa4arQ=="],
 

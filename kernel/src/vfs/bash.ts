@@ -5,6 +5,7 @@ import {
   type Vfs,
   VfsError,
   type VfsStat,
+  WHOLE_READ_MAX,
 } from "./vfs";
 
 /**
@@ -20,7 +21,7 @@ const POSIX: Record<VfsError["code"], [string, string]> = {
   exists: ["EEXIST", "file already exists"],
   not_empty: ["ENOTEMPTY", "directory not empty"],
   invalid: ["EINVAL", "invalid argument"],
-  too_large: ["EFBIG", "file too large"],
+  too_large: ["EFBIG", "file too large for the shell (it reads whole files; use the read tool with offset and limit)"],
 };
 
 function posix(op: string, path: string, error: unknown): Error {
@@ -65,27 +66,30 @@ function bytes(content: string | Uint8Array, encoding?: string): Uint8Array {
 }
 
 export class VfsBashFs implements IFileSystem {
-  /** `getAllPaths` is synchronous in just-bash (globbing); refreshed before each command. */
-  private paths: string[] = [];
+  /** Files refused for size during the current command: commands report any read error as "No such file". */
+  readonly tooLarge = new Set<string>();
 
   constructor(private readonly vfs: Vfs) {}
 
-  async refresh(): Promise<void> {
-    this.paths = ["/", ...(await this.vfs.walk("/")).map((s) => s.path)];
+  private whole(path: string) {
+    return this.vfs.readFile(path).catch((error) => {
+      if (error instanceof VfsError && error.code === "too_large") this.tooLarge.add(error.path);
+      throw error;
+    });
   }
 
   readFile(path: string, options?: { encoding?: string | null } | string) {
     return wrap("open", path, async () => {
-      const data = await this.vfs.readFile(path);
+      const data = await this.whole(path);
       const encoding =
         typeof options === "string" ? options : options?.encoding;
-      if (encoding === "binary" || encoding === "latin1")
-        return String.fromCharCode(...data);
+      // Not String.fromCharCode(...data): spreading a large file overflows the call stack.
+      if (encoding === "binary" || encoding === "latin1") return new TextDecoder("latin1").decode(data);
       return new TextDecoder().decode(data);
     });
   }
   readFileBuffer(path: string) {
-    return wrap("open", path, () => this.vfs.readFile(path));
+    return wrap("open", path, () => this.whole(path));
   }
   writeFile(
     path: string,
@@ -157,8 +161,12 @@ export class VfsBashFs implements IFileSystem {
   resolvePath(base: string, path: string) {
     return joinPath(base, path);
   }
+  /**
+   * just-bash allows an empty answer here, and matches wildcards with readdir instead. Listing
+   * every path would hold the whole tree in memory before each command.
+   */
   getAllPaths() {
-    return this.paths;
+    return [];
   }
   async chmod() {}
   async utimes() {}
@@ -211,15 +219,18 @@ export class VfsShell {
       signal?: AbortSignal;
     },
   ): Promise<BashRun> {
-    await this.fs.refresh();
+    this.fs.tooLarge.clear();
     const result = await this.bash.exec(command, {
       cwd: options.cwd,
       ...(options.env ? { env: options.env } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     });
+    const notes = [...this.fs.tooLarge].map(
+      (p) => `neo: ${p} is over the shell's ${WHOLE_READ_MAX / 1024 / 1024} MB limit (it reads whole files); use the read tool with offset and limit\n`,
+    );
     return {
       stdout: result.stdout,
-      stderr: result.stderr,
+      stderr: result.stderr + notes.join(""),
       exitCode: result.exitCode,
     };
   }

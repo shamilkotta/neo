@@ -10,8 +10,9 @@
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-durable": "1.4.0",
+    "@neo/client": "workspace:*",
+    "@noble/hashes": "^2.4.0",
     "croner": "9",
-    "just-bash": "3.6.0",
-    "@neo/client": "workspace:*"
+    "just-bash": "3.6.0"
   }
 }

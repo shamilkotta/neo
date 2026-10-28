@@ -1,4 +1,5 @@
-import { Sha256 } from "../sha256";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 /**
  * Where the bytes of large files live: a folder on disk (Bun), R2 (Cloudflare). The instance
@@ -39,7 +40,8 @@ export function measured(
   stream: ReadableStream<Uint8Array>;
   result(): { size: number; hash: string };
 } {
-  const hash = new Sha256();
+  // Incremental: the stream is hashed as it passes, never held whole (Web Crypto cannot do this).
+  const hash = sha256.create();
   let size = 0;
   let digest: string | undefined;
   const counted = stream.pipeThrough(
@@ -51,7 +53,7 @@ export function measured(
         controller.enqueue(chunk);
       },
       flush() {
-        digest = hash.digestHex();
+        digest = bytesToHex(hash.digest());
       },
     }),
   );
