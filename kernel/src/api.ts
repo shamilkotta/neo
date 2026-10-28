@@ -292,8 +292,9 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
       });
     }
     if (method === "PUT") {
-      await live.vfs.writeFile(filePath, new Uint8Array(await request.arrayBuffer()), { createParents: true });
-      return json({ written: filePath });
+      // Streamed into the file store as it arrives: an upload is never held whole in memory.
+      const stat = await live.vfs.writeStream(filePath, request.body ?? new Blob([]).stream(), { createParents: true });
+      return json({ written: stat.path, size: stat.size });
     }
     if (method === "DELETE") {
       await live.vfs.rm(filePath, { recursive: url.searchParams.get("recursive") === "1" });

@@ -28,6 +28,7 @@ import { handleApi } from "./api";
 import type { HostPorts } from "./host";
 import { createSchema, getMeta, hasTable, setMeta } from "./schema";
 import { Events } from "./services/events";
+import { History } from "./services/history";
 import { Memories } from "./services/memory";
 import { Providers } from "./services/providers";
 import { Secrets } from "./services/secrets";
@@ -35,7 +36,7 @@ import { Settings } from "./services/settings";
 import type { SqliteDatabase } from "./sql";
 import { VfsShell } from "./vfs/bash";
 import { VfsExecutionEnv } from "./vfs/env";
-import { Vfs } from "./vfs/vfs";
+import { joinPath, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
 
 export const NEO_VERSION = "0.1.0";
 /** Pi's tables share the instance database under this prefix. */
@@ -58,6 +59,7 @@ export interface Live {
   settings: Settings;
   agents: Agents;
   memories: Memories;
+  history: History;
   mailbox: Mailbox;
   wakeups: Wakeups;
   watches: AgentEventStream[];
@@ -347,6 +349,7 @@ export class Neo {
     await agents.ensure();
     const memories = new Memories(db, this.now, () => settings.get("memoryLimit"));
     const wakeups = new Wakeups(db, this.now);
+    const history = new History(db);
 
     // Pi closes its storage's database on close; Neo owns the database, so Pi's handle does not.
     const piDb: SqliteDatabase = {
@@ -396,10 +399,11 @@ export class Neo {
       },
       this.now,
     );
-    this.live = { harness, vfs, secrets, providers, settings, agents, memories, mailbox, wakeups, watches: [] };
+    this.live = { harness, vfs, secrets, providers, settings, agents, memories, history, mailbox, wakeups, watches: [] };
 
     const tools: ToolServices = {
       memories,
+      history,
       mailbox,
       wakeups,
       settings,
@@ -410,7 +414,7 @@ export class Neo {
     registry.install(
       defineExtension({
         name: "files",
-        tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
+        tools: [createReadTool(), createWriteTool(), sizedEdit(createEditTool(), vfs), createBashTool()],
       }),
     );
     registry.install(
@@ -448,6 +452,8 @@ export class Neo {
   private async turnSettled(turn: Turn, _messages: MailboxMessage[]): Promise<void> {
     const live = this.services();
     const applied = await live.memories.finish(turn.id, turn.status === "completed");
+    // The turn's messages become searchable now, a page at a time, never all at once.
+    await live.history.sync(turn.agentId, await this.conversation(turn.agentId)).catch(() => {});
     if (applied > 0) await this.events.emit("memory.changed", { turnId: turn.id, applied }, turn.agentId);
     await this.arm();
   }
@@ -461,6 +467,27 @@ export class Neo {
     await live.harness.close(this.context).catch(() => {});
     await this.setAlarm(undefined).catch(() => {});
   }
+}
+
+/**
+ * `edit` reads the whole file, and Pi's tool reports a refused read only by its error code. This
+ * checks the size first, so the model learns why and reads the file in parts instead.
+ */
+function sizedEdit<T extends { execute: (...args: any[]) => any }>(edit: T, vfs: Vfs): T {
+  return {
+    ...edit,
+    execute: async (args: { path?: string }, api: { env?: { cwd?: string } }, context: unknown) => {
+      if (typeof args.path === "string") {
+        const path = joinPath(api.env?.cwd ?? "/", args.path);
+        const stat = await vfs.stat(path).catch(() => undefined);
+        if (stat && stat.kind === "file" && stat.size > WHOLE_READ_MAX)
+          throw new Error(
+            `${path} is ${(stat.size / 1024 / 1024).toFixed(1)} MB; edit reads whole files and is limited to ${WHOLE_READ_MAX / 1024 / 1024} MB. Read it in parts with read (offset and limit), and write a new file instead.`,
+          );
+      }
+      return edit.execute(args, api, context);
+    },
+  };
 }
 
 export class StateError extends Error {

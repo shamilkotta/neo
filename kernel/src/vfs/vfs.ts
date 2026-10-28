@@ -25,6 +25,12 @@ export const CHUNK_SIZE = 512 * 1024;
 /** Up to this size a file stays in the database; above it, it goes to the blob store. */
 export const INLINE_MAX = 256 * 1024;
 export const MAX_FILE_SIZE = 64 * 1024 * 1024;
+/**
+ * The most a whole-file read holds in memory (`readFile`, `readText`: the edit tool, the shell).
+ * Hosts can be small (a Durable Object has 128 MB in all), so anything larger is read in parts:
+ * `readStream`, `open` (ranges), or line readers with a limit.
+ */
+export const WHOLE_READ_MAX = 4 * 1024 * 1024;
 
 export type VfsErrorCode =
   | "not_found"
@@ -236,10 +242,19 @@ export class Vfs {
     );
   }
 
-  /** A whole file in memory. Prefer `readStream` or `open` for anything that may be large. */
+  /**
+   * A whole file in memory, at most `WHOLE_READ_MAX`. Prefer `readStream` or `open` for anything
+   * that may be large.
+   */
   async readFile(path: string): Promise<Uint8Array> {
     const p = normalizePath(path);
     const row = await this.fileRow(this.db, p);
+    if (row.size > WHOLE_READ_MAX)
+      throw new VfsError(
+        "too_large",
+        p,
+        `${p} is ${(row.size / 1024 / 1024).toFixed(1)} MB; whole-file reads are limited to ${WHOLE_READ_MAX / 1024 / 1024} MB. Read it in parts (the read tool's offset and limit).`,
+      );
     if (row.blob) return collect(await this.blobStream(row), row.size);
     return this.assemble(this.db, row);
   }

@@ -254,3 +254,55 @@ describe("client", () => {
     expect(seen).toContain("live:run_start");
   });
 });
+
+describe("file store", () => {
+  test("a large file streams into the blob store and back intact", async () => {
+    const size = 3 * 1024 * 1024 + 123; // past the inline limit: one blob object
+    const bytes = new Uint8Array(size);
+    for (let i = 0; i < size; i += 65536) crypto.getRandomValues(bytes.subarray(i, Math.min(i + 65536, size)));
+    const put = await fetch(`${neo.url()}/v1/files?path=/big/data.bin`, {
+      method: "PUT",
+      headers: { authorization: "Bearer t" },
+      body: bytes,
+    });
+    expect(await put.json()).toEqual({ written: "/big/data.bin", size });
+    const got = new Uint8Array(await (await fetch(`${neo.url()}/v1/files?path=/big/data.bin`, { headers: { authorization: "Bearer t" } })).arrayBuffer());
+    expect(got.length).toBe(size);
+    expect(Bun.hash(got)).toBe(Bun.hash(bytes));
+  });
+});
+
+describe("bounded memory", () => {
+  test("history search finds old messages through the index", async () => {
+    await script([{ text: "Noted: the wifi password is on the fridge" }, { text: "ok" }]);
+    await send("where did I leave the wifi password?");
+    await idle(neo);
+    await send("something else");
+    await idle(neo);
+    await script([{ tool: "history_search", args: { query: "wif fridg" } }, { text: "found" }]);
+    await send("search history");
+    await idle(neo);
+    const tool = (await transcript(neo)).find((i) => i.type === "tool" && i.name === "history_search");
+    const found = JSON.parse(tool.output);
+    expect(found.results.length).toBe(1);
+    expect(found.results[0]).toMatchObject({ role: "assistant" });
+    expect(found.results[0].excerpt).toContain("fridge");
+  });
+
+  test("whole-file reads over the cap are refused with a clear message", async () => {
+    const big = new Uint8Array(5 * 1024 * 1024).fill(97);
+    await fetch(`${neo.url()}/v1/files?path=/big.txt`, { method: "PUT", headers: { authorization: "Bearer t" }, body: big });
+    await script([
+      { tool: "edit", args: { path: "/big.txt", edits: [{ oldText: "a", newText: "b" }] } },
+      { tool: "bash", args: { command: "mkdir -p /n && touch /n/x.md /n/y.md && echo /n/*.md && cat /big.txt | wc -c" } },
+      { text: "done" },
+    ]);
+    await send("try it");
+    await idle(neo);
+    const tools = (await transcript(neo)).filter((i) => i.type === "tool");
+    expect(tools[0].isError).toBe(true);
+    expect(tools[0].output).toContain("limited to 4 MB");
+    expect(tools[1].output).toContain("/n/x.md /n/y.md");
+    expect(tools[1].output).toContain("over the shell's 4 MB limit");
+  });
+});

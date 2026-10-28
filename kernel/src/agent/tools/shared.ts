@@ -1,4 +1,5 @@
 import type { Conversation } from "@earendil-works/pi-durable";
+import type { History } from "../../services/history";
 import type { Memories } from "../../services/memory";
 import type { Settings } from "../../services/settings";
 import type { Mailbox } from "../mailbox";
@@ -7,6 +8,7 @@ import type { Wakeups } from "../wakeups";
 /** What the agent's own tools reach. Tools find their agent from the calling conversation. */
 export interface ToolServices {
   memories: Memories;
+  history: History;
   mailbox: Mailbox;
   wakeups: Wakeups;
   settings: Settings;
