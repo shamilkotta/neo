@@ -200,10 +200,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     await neo.schedulesChanged(agentId);
     return json({ schedule });
   }
-  if ((m = match("GET", /^\/v1\/schedules\/([\w-]+)\/runs$/))) {
-    if (!(await live.schedules.get(agentId, m[1]!))) throw new HttpError(404, "No such schedule");
-    return json({ runs: await live.schedules.runs(m[1]!) });
-  }
 
   // ---- agent and settings ----
   if (is("GET", "/v1/agent")) return json({ agent: await live.agents.get(agentId) });
@@ -301,6 +297,13 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     const ago = Number(url.searchParams.get("ago") ?? 1);
     if (!id || !(await live.schedules.dueNow(agentId, id, ago))) throw new HttpError(404, "No such schedule");
     return json({ due: id });
+  }
+  if (neo.host.test && (m = match("GET", /^\/v1\/test\/schedules\/([\w-]+)\/runs$/))) {
+    const runs = await neo.host.db.all(
+      `SELECT status, reason FROM neo_schedule_runs WHERE schedule_id = ? ORDER BY due_at DESC`,
+      m[1]!,
+    );
+    return json({ runs });
   }
   if (neo.host.test && is("POST", "/v1/test/wake")) {
     await neo.wake();

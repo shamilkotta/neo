@@ -13,7 +13,6 @@ import type {
   TranscriptPage,
   Turn,
   Schedule,
-  ScheduleRun,
 } from "./types";
 
 export class NeoApiError extends Error {
@@ -85,8 +84,6 @@ export class NeoClient {
   schedules = () => this.call<{ schedules: Schedule[] }>("GET", "/v1/schedules").then((r) => r.schedules);
   toggleSchedule = (id: string, enabled: boolean) =>
     this.call<{ schedule: Schedule }>("PATCH", `/v1/schedules/${id}`, { enabled }).then((r) => r.schedule);
-  scheduleRuns = (id: string) =>
-    this.call<{ runs: ScheduleRun[] }>("GET", `/v1/schedules/${id}/runs`).then((r) => r.runs);
 
   // ---- agent, settings, models ----
   agent = () => this.call<{ agent: AgentRecord }>("GET", "/v1/agent").then((r) => r.agent);
