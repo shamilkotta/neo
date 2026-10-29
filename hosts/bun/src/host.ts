@@ -1,4 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { createTestRuntime } from "@neo/kernel/testing";
 import {
@@ -45,7 +51,8 @@ export class BunHost extends NeoHost {
       blobs: new BunBlobs(join(dir, "blobs")),
       alarm: this.timer,
       masterKey: await masterKeyFromBase64(
-        process.env.NEO_MASTER_KEY ?? hostSecret(join(dir, "master.key"), newMasterKeyBase64),
+        process.env.NEO_MASTER_KEY ??
+          hostSecret(join(dir, "master.key"), newMasterKeyBase64),
       ),
       token: this.token,
       capabilities: { sockets: true, processes: false },

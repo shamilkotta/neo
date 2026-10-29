@@ -50,7 +50,11 @@ export function createTestRuntime() {
       if (!g.open)
         await new Promise<void>((resolve, reject) => {
           g.waiters.push(resolve);
-          ctx.abortSignal?.addEventListener("abort", () => reject(ctx.abortSignal!.reason), { once: true });
+          ctx.abortSignal?.addEventListener(
+            "abort",
+            () => reject(ctx.abortSignal!.reason),
+            { once: true },
+          );
         });
       return { output: [{ type: "text", text: `gate ${args.name} passed` }] };
     },

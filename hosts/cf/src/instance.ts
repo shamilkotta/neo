@@ -14,7 +14,8 @@ export class InstanceDO extends DurableObject<Env> {
       // A fallback alarm before anything can throw, so a failed start is tried again.
       const fallback = Date.now() + RECOVERY_MS;
       const current = await ctx.storage.getAlarm();
-      if (current === null || current > fallback) await ctx.storage.setAlarm(fallback);
+      if (current === null || current > fallback)
+        await ctx.storage.setAlarm(fallback);
       // Opening resumes interrupted work and sets the alarm to what the instance needs.
       await this.host.open();
     });

@@ -21,18 +21,28 @@ test("the instance serves the bundled web app next to its API", async () => {
   expect(asset.status).toBe(200);
   expect(await asset.text()).toContain("/v1/");
   // An app route that is not a file gets the app's page.
-  expect(await (await fetch(`${neo.url()}/some/app/route`)).text()).toContain('<div id="root">');
+  expect(await (await fetch(`${neo.url()}/some/app/route`)).text()).toContain(
+    '<div id="root">',
+  );
 });
 
 test("the API answers cross-origin requests (standalone apps)", async () => {
   const preflight = await fetch(`${neo.url()}/v1/status`, {
     method: "OPTIONS",
-    headers: { origin: "https://app.example", "access-control-request-method": "GET", "access-control-request-headers": "authorization" },
+    headers: {
+      origin: "https://app.example",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "authorization",
+    },
   });
   expect(preflight.status).toBe(204);
   expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
-  expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
-  const status = await fetch(`${neo.url()}/v1/status`, { headers: { authorization: "Bearer t", origin: "https://app.example" } });
+  expect(preflight.headers.get("access-control-allow-headers")).toContain(
+    "authorization",
+  );
+  const status = await fetch(`${neo.url()}/v1/status`, {
+    headers: { authorization: "Bearer t", origin: "https://app.example" },
+  });
   expect(status.headers.get("access-control-allow-origin")).toBe("*");
   // The token is a header only; a query token is not accepted.
   expect((await fetch(`${neo.url()}/v1/events?token=t`)).status).toBe(401);

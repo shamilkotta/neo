@@ -6,7 +6,10 @@ import { readTranscript } from "./agent/transcript";
 import { ScheduleError, type ScheduleInput } from "./agent/schedules";
 import { timingSafeEqual } from "./crypto";
 import { type Neo, NEO_VERSION, SetupError, StateError } from "./neo";
-import { detectLocalProviders, type ProviderConfig } from "./services/providers";
+import {
+  detectLocalProviders,
+  type ProviderConfig,
+} from "./services/providers";
 import type { SettingsShape } from "./services/settings";
 import { VfsError } from "./vfs/vfs";
 
@@ -37,7 +40,11 @@ const json = (value: unknown, status = 200) =>
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 async function body<T>(request: Request): Promise<T> {
@@ -53,7 +60,8 @@ async function body<T>(request: Request): Promise<T> {
  * kernel serves only the API; hosts serve the web app's files next to it.
  */
 export async function handleApi(neo: Neo, request: Request): Promise<Response> {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  if (request.method === "OPTIONS")
+    return new Response(null, { status: 204, headers: CORS });
   return withCors(await respond(neo, request));
 }
 
@@ -62,18 +70,30 @@ async function respond(neo: Neo, request: Request): Promise<Response> {
   const path = url.pathname;
   try {
     if (!path.startsWith("/v1/")) throw new HttpError(404, "Not found");
-    const given = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (!given || !timingSafeEqual(given, neo.host.token)) throw new HttpError(401, "Unauthorized");
+    const given = request.headers
+      .get("authorization")
+      ?.replace(/^Bearer\s+/i, "");
+    if (!given || !timingSafeEqual(given, neo.host.token))
+      throw new HttpError(401, "Unauthorized");
     return await route(neo, request, url);
   } catch (error) {
-    if (error instanceof HttpError) return json({ error: error.message }, error.status);
-    if (error instanceof StateError) return json({ error: error.message, state: error.state }, 409);
-    if (error instanceof SetupError) return json({ error: error.message, setup: true }, 409);
+    if (error instanceof HttpError)
+      return json({ error: error.message }, error.status);
+    if (error instanceof StateError)
+      return json({ error: error.message, state: error.state }, 409);
+    if (error instanceof SetupError)
+      return json({ error: error.message, setup: true }, 409);
     if (error instanceof MailboxError || error instanceof ScheduleError)
       return json({ error: error.message }, 400);
     if (error instanceof VfsError)
-      return json({ error: error.message, code: error.code }, error.code === "not_found" ? 404 : 400);
-    return json({ error: error instanceof Error ? error.message : String(error) }, 500);
+      return json(
+        { error: error.message, code: error.code },
+        error.code === "not_found" ? 404 : 400,
+      );
+    return json(
+      { error: error instanceof Error ? error.message : String(error) },
+      500,
+    );
   }
 }
 
@@ -82,7 +102,8 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   const path = url.pathname;
   const agentId = DEFAULT_AGENT_ID;
   const is = (m: string, p: string) => method === m && path === p;
-  const match = (m: string, pattern: RegExp) => (method === m ? pattern.exec(path) : null);
+  const match = (m: string, pattern: RegExp) =>
+    method === m ? pattern.exec(path) : null;
   let m: RegExpExecArray | null;
 
   if (is("GET", "/v1/status")) {
@@ -106,7 +127,12 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json(status);
   }
   if (is("GET", "/v1/events")) {
-    const after = Number(url.searchParams.get("after") ?? request.headers.get("last-event-id") ?? 0) || 0;
+    const after =
+      Number(
+        url.searchParams.get("after") ??
+          request.headers.get("last-event-id") ??
+          0,
+      ) || 0;
     return new Response(neo.events.stream(after, request.signal), {
       headers: {
         "content-type": "text/event-stream",
@@ -121,7 +147,8 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   // ---- conversation ----
   if (is("POST", "/v1/messages")) {
     const input = await body<{ text?: string; clientId?: string }>(request);
-    if (typeof input.text !== "string") throw new HttpError(400, "text is required");
+    if (typeof input.text !== "string")
+      throw new HttpError(400, "text is required");
     const message = await neo.send(agentId, {
       text: input.text,
       ...(input.clientId ? { clientId: input.clientId } : {}),
@@ -142,7 +169,11 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   if (is("GET", "/v1/live")) {
     // The running turn as it is now: the partial answer and tool calls not yet in the transcript.
     const conversation = await neo.conversation(agentId);
-    const stream = await watchEvents(live.harness, conversation.id, BACKGROUND_CONTEXT);
+    const stream = await watchEvents(
+      live.harness,
+      conversation.id,
+      BACKGROUND_CONTEXT,
+    );
     const { generation, tools, compactions, run } = stream.snapshot;
     await stream.stop();
     return json({
@@ -158,7 +189,8 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     if (!turn) throw new HttpError(404, "No such turn");
     return json({ turn, messages: await live.mailbox.turnMessages(turn.id) });
   }
-  if (is("POST", "/v1/stop")) return json({ stopped: await live.mailbox.stop(agentId) });
+  if (is("POST", "/v1/stop"))
+    return json({ stopped: await live.mailbox.stop(agentId) });
   if (is("POST", "/v1/pause")) {
     await neo.pause(agentId);
     return json({ paused: true });
@@ -169,16 +201,21 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   }
 
   // ---- queue ----
-  if (is("GET", "/v1/queue")) return json({ queue: await live.mailbox.queue(agentId) });
+  if (is("GET", "/v1/queue"))
+    return json({ queue: await live.mailbox.queue(agentId) });
   if (is("PUT", "/v1/queue/order")) {
     const input = await body<{ order?: string[] }>(request);
-    if (!Array.isArray(input.order)) throw new HttpError(400, "order is a list of message ids");
+    if (!Array.isArray(input.order))
+      throw new HttpError(400, "order is a list of message ids");
     return json({ queue: await live.mailbox.reorder(agentId, input.order) });
   }
   if ((m = match("PATCH", /^\/v1\/queue\/([\w-]+)$/))) {
     const input = await body<{ text?: string }>(request);
-    if (typeof input.text !== "string") throw new HttpError(400, "text is required");
-    return json({ message: await live.mailbox.edit(agentId, m[1]!, input.text) });
+    if (typeof input.text !== "string")
+      throw new HttpError(400, "text is required");
+    return json({
+      message: await live.mailbox.edit(agentId, m[1]!, input.text),
+    });
   }
   if ((m = match("DELETE", /^\/v1\/queue\/([\w-]+)$/))) {
     await live.mailbox.cancel(agentId, m[1]!);
@@ -190,38 +227,52 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   }
 
   // ---- schedules (reminders, routines, the heartbeat) ----
-  if (is("GET", "/v1/schedules")) return json({ schedules: await live.schedules.list(agentId) });
+  if (is("GET", "/v1/schedules"))
+    return json({ schedules: await live.schedules.list(agentId) });
   // The agent manages its schedules; the person can only turn one on or off.
   if ((m = match("PATCH", /^\/v1\/schedules\/([\w-]+)$/))) {
     const input = await body<{ enabled?: boolean }>(request);
-    if (typeof input.enabled !== "boolean") throw new HttpError(400, "enabled is required");
-    const schedule = await live.schedules.update(agentId, m[1]!, { enabled: input.enabled }, await live.settings.get("timezone"));
+    if (typeof input.enabled !== "boolean")
+      throw new HttpError(400, "enabled is required");
+    const schedule = await live.schedules.update(
+      agentId,
+      m[1]!,
+      { enabled: input.enabled },
+      await live.settings.get("timezone"),
+    );
     if (!schedule) throw new HttpError(404, "No such schedule");
     await neo.schedulesChanged(agentId);
     return json({ schedule });
   }
 
   // ---- agent and settings ----
-  if (is("GET", "/v1/agent")) return json({ agent: await live.agents.get(agentId) });
+  if (is("GET", "/v1/agent"))
+    return json({ agent: await live.agents.get(agentId) });
   if (is("PATCH", "/v1/agent")) {
     const change = await body<AgentChange>(request);
     await live.agents.update(agentId, change);
     await neo.events.emit("agent.changed", {}, agentId);
     return json({ agent: await live.agents.get(agentId) });
   }
-  if (is("GET", "/v1/settings")) return json({ settings: await live.settings.all() });
+  if (is("GET", "/v1/settings"))
+    return json({ settings: await live.settings.all() });
   if (is("PUT", "/v1/settings")) {
     const before = await live.settings.get("timezone");
-    const settings = await live.settings.update(await body<Partial<SettingsShape>>(request));
+    const settings = await live.settings.update(
+      await body<Partial<SettingsShape>>(request),
+    );
     if (settings.timezone !== before) await neo.timezoneChanged();
     await neo.events.emit("settings.changed", {});
     return json({ settings });
   }
 
   // ---- models ----
-  if (is("GET", "/v1/providers")) return json({ providers: await live.providers.list() });
+  if (is("GET", "/v1/providers"))
+    return json({ providers: await live.providers.list() });
   if (is("GET", "/v1/providers/detect"))
-    return json({ found: neo.host.capabilities.sockets ? await detectLocalProviders() : [] });
+    return json({
+      found: neo.host.capabilities.sockets ? await detectLocalProviders() : [],
+    });
   if ((m = match("PUT", /^\/v1\/providers\/([\w-]+)$/))) {
     const config = await body<ProviderConfig>(request);
     await live.providers.put({ ...config, id: m[1]! });
@@ -234,7 +285,10 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ providers: await live.providers.list() });
   }
   if (is("GET", "/v1/models"))
-    return json({ models: await live.providers.available(), default: (await neo.defaultModel()) ?? null });
+    return json({
+      models: await live.providers.available(),
+      default: (await neo.defaultModel()) ?? null,
+    });
 
   // ---- files ----
   if (path === "/v1/files") {
@@ -243,25 +297,40 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     if (method === "GET") {
       const stat = await live.vfs.stat(filePath);
       if (stat.kind === "directory")
-        return json({ path: stat.path, entries: await live.vfs.readdir(stat.path, { limit: 1000 }) });
+        return json({
+          path: stat.path,
+          entries: await live.vfs.readdir(stat.path, { limit: 1000 }),
+        });
       return new Response(await live.vfs.readStream(stat.path), {
-        headers: { "content-type": "application/octet-stream", "content-length": String(stat.size) },
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(stat.size),
+        },
       });
     }
     if (method === "PUT") {
       // Streamed into the file store as it arrives: an upload is never held whole in memory.
-      const stat = await live.vfs.writeStream(filePath, request.body ?? new Blob([]).stream(), { createParents: true });
+      const stat = await live.vfs.writeStream(
+        filePath,
+        request.body ?? new Blob([]).stream(),
+        { createParents: true },
+      );
       return json({ written: stat.path, size: stat.size });
     }
     if (method === "DELETE") {
-      await live.vfs.rm(filePath, { recursive: url.searchParams.get("recursive") === "1" });
+      await live.vfs.rm(filePath, {
+        recursive: url.searchParams.get("recursive") === "1",
+      });
       return json({ removed: filePath });
     }
   }
 
   // ---- test mode: script the fake model ----
   if (neo.host.test && is("POST", "/v1/test/script")) {
-    const input = await body<{ steps: Parameters<NonNullable<typeof neo.host.test>["script"]>[0]; append?: boolean }>(request);
+    const input = await body<{
+      steps: Parameters<NonNullable<typeof neo.host.test>["script"]>[0];
+      append?: boolean;
+    }>(request);
     neo.host.test.script(input.steps, { append: input.append ?? false });
     return json({ pending: neo.host.test.pending() });
   }
@@ -270,35 +339,64 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     neo.host.test.release(input.gate);
     return json({ released: input.gate });
   }
-  if (neo.host.test && is("GET", "/v1/test/seen")) return json({ seen: neo.host.test.seen });
+  if (neo.host.test && is("GET", "/v1/test/seen"))
+    return json({ seen: neo.host.test.seen });
   if (neo.host.test && is("POST", "/v1/test/messages")) {
     // Queued behind a running turn: the API always joins the turn.
     const input = await body<{ text?: string }>(request);
-    if (typeof input.text !== "string") throw new HttpError(400, "text is required");
-    return json({ message: await neo.send(agentId, { text: input.text, steer: false }) }, 202);
+    if (typeof input.text !== "string")
+      throw new HttpError(400, "text is required");
+    return json(
+      { message: await neo.send(agentId, { text: input.text, steer: false }) },
+      202,
+    );
   }
-  if (neo.host.test && is("GET", "/v1/test/memories")) return json({ memories: await live.memories.list(agentId) });
+  if (neo.host.test && is("GET", "/v1/test/memories"))
+    return json({ memories: await live.memories.list(agentId) });
   if (neo.host.test && is("POST", "/v1/test/schedules")) {
     // As the agent would: the API has no way to create one.
     const input = await body<ScheduleInput>(request);
-    const schedule = await live.schedules.create(agentId, input, "agent", await live.settings.get("timezone"));
+    const schedule = await live.schedules.create(
+      agentId,
+      input,
+      "agent",
+      await live.settings.get("timezone"),
+    );
     await neo.schedulesChanged(agentId);
     return json({ schedule }, 201);
   }
-  if (neo.host.test && (m = match("PATCH", /^\/v1\/test\/schedules\/([\w-]+)$/))) {
-    const schedule = await live.schedules.update(agentId, m[1]!, await body<ScheduleInput>(request), await live.settings.get("timezone"));
+  if (
+    neo.host.test &&
+    (m = match("PATCH", /^\/v1\/test\/schedules\/([\w-]+)$/))
+  ) {
+    const schedule = await live.schedules.update(
+      agentId,
+      m[1]!,
+      await body<ScheduleInput>(request),
+      await live.settings.get("timezone"),
+    );
     if (!schedule) throw new HttpError(404, "No such schedule");
     await neo.schedulesChanged(agentId);
     return json({ schedule });
   }
-  if (neo.host.test && (m = match("POST", /^\/v1\/test\/schedules\/([\w-]+)\/due$/))) {
+  if (
+    neo.host.test &&
+    (m = match("POST", /^\/v1\/test\/schedules\/([\w-]+)\/due$/))
+  ) {
     // Due now; the next wake fires it. "heartbeat" names the built-in one.
-    const id = m[1] === "heartbeat" ? (await live.schedules.system(agentId, "heartbeat"))?.id : m[1];
+    const id =
+      m[1] === "heartbeat"
+        ? (await live.schedules.system(agentId, "heartbeat"))?.id
+        : m[1];
     const ago = Number(url.searchParams.get("ago") ?? 1);
-    if (!id || !(await live.schedules.dueNow(agentId, id, ago))) throw new HttpError(404, "No such schedule");
+    if (!id || !(await live.schedules.dueNow(agentId, id, ago)))
+      throw new HttpError(404, "No such schedule");
     return json({ due: id });
   }
-  if (neo.host.test && (m = match("GET", /^\/v1\/test\/schedules\/([\w-]+)\/runs$/))) {
+  if (
+    neo.host.test &&
+    (m = match("GET", /^\/v1\/test\/schedules\/([\w-]+)\/runs$/))
+  ) {
     const runs = await neo.host.db.all(
       `SELECT status, reason FROM neo_schedule_runs WHERE schedule_id = ? ORDER BY due_at DESC`,
       m[1]!,

@@ -11,5 +11,12 @@
     "types": ["bun"]
   },
   // The Cloudflare package checks against its generated Workers types (its own tsconfig).
-  "exclude": ["node_modules", "**/node_modules", "hosts/cf", "apps/web/src", "apps/web/vite.config.ts", "**/dist"]
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "hosts/cf",
+    "apps/web/src",
+    "apps/web/vite.config.ts",
+    "**/dist"
+  ]
 }

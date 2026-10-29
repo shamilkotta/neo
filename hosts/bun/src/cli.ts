@@ -38,7 +38,9 @@ async function main() {
         ...(values.token ? { token: values.token } : {}),
         test: process.env.NEO_TEST === "1",
       });
-      console.log(`neo ${running.neo.state} on ${running.url} (data in ${dir})`);
+      console.log(
+        `neo ${running.neo.state} on ${running.url} (data in ${dir})`,
+      );
       console.log(`web chat: ${running.url}/#token=${running.token}`);
       const stop = async () => {
         await running.stop();

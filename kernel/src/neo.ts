@@ -1,4 +1,7 @@
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+} from "@earendil-works/chord/context";
 import {
   type AgentEventStream,
   type Conversation,
@@ -94,7 +97,9 @@ export class Neo {
     const neo = new Neo(host);
     if (await hasTable(host.db, "neo_meta")) {
       neo.instanceId_ = await getMeta(host.db, "instance_id");
-      neo.state_ = ((await getMeta(host.db, "state")) as InstanceState | undefined) ?? "empty";
+      neo.state_ =
+        ((await getMeta(host.db, "state")) as InstanceState | undefined) ??
+        "empty";
     } else {
       // A new host: a new instance. (A host that waits for an import will skip this.)
       await neo.init();
@@ -114,7 +119,8 @@ export class Neo {
 
   /** The running services; throws unless the instance is active. */
   services(): Live {
-    if (!this.live) throw new StateError(this.state_, `The instance is ${this.state_}`);
+    if (!this.live)
+      throw new StateError(this.state_, `The instance is ${this.state_}`);
     return this.live;
   }
 
@@ -124,7 +130,8 @@ export class Neo {
 
   /** Creates a new instance in an empty database. */
   async init(): Promise<void> {
-    if (this.state_ !== "empty") throw new StateError(this.state_, "This host already holds an instance");
+    if (this.state_ !== "empty")
+      throw new StateError(this.state_, "This host already holds an instance");
     await createSchema(this.host.db);
     this.instanceId_ = crypto.randomUUID();
     await setMeta(this.host.db, "instance_id", this.instanceId_);
@@ -150,14 +157,19 @@ export class Neo {
         const live = this.live;
         if (!live) return this.setAlarm(undefined);
         const wake = live.harness.wake();
-        const running = await this.host.db.get(`SELECT 1 FROM neo_turns WHERE status = 'running' LIMIT 1`);
+        const running = await this.host.db.get(
+          `SELECT 1 FROM neo_turns WHERE status = 'running' LIMIT 1`,
+        );
         const times: number[] = [];
-        if (wake.active || extra?.active || running) times.push(this.now() + RECOVERY_MS);
+        if (wake.active || extra?.active || running)
+          times.push(this.now() + RECOVERY_MS);
         if (wake.at !== undefined) times.push(wake.at);
         if (extra?.at !== undefined) times.push(extra.at);
         const scheduled = await live.schedules.next();
         if (scheduled !== undefined) times.push(scheduled);
-        await this.setAlarm(times.length ? Math.max(Math.min(...times), this.now()) : undefined);
+        await this.setAlarm(
+          times.length ? Math.max(Math.min(...times), this.now()) : undefined,
+        );
       });
     return this.arming;
   }
@@ -196,13 +208,19 @@ export class Neo {
           !(await live.agents.get(agentId)).paused &&
           !(await live.mailbox.currentTurn(agentId)) &&
           (await live.mailbox.queue(agentId)).length === 0,
-        waiting: async (messageId) => (await live.mailbox.message(messageId))?.status === "queued",
+        waiting: async (messageId) =>
+          (await live.mailbox.message(messageId))?.status === "queued",
         timezone: () => live.settings.get("timezone"),
       });
       for (const run of runs)
         await this.events.emit(
           "schedule.fired",
-          { scheduleId: run.scheduleId, status: run.status, reason: run.reason, messageId: run.messageId },
+          {
+            scheduleId: run.scheduleId,
+            status: run.status,
+            reason: run.reason,
+            messageId: run.messageId,
+          },
           run.agentId,
         );
       if (!more) return;
@@ -230,11 +248,17 @@ export class Neo {
     const agent = await live.agents.get(agentId);
     let conversation: Conversation | undefined;
     if (agent.conversationId !== null)
-      conversation = await live.harness.conversation(agent.conversationId as never, this.context);
+      conversation = await live.harness.conversation(
+        agent.conversationId as never,
+        this.context,
+      );
     if (!conversation) {
       // The default agent's chat is Pi's root conversation.
       conversation = await live.harness.root(this.context);
-      await live.agents.setConversation(agentId, conversation.id as unknown as number);
+      await live.agents.setConversation(
+        agentId,
+        conversation.id as unknown as number,
+      );
     }
     this.conversationAgents.set(conversation.id as unknown as number, agentId);
     const model = agent.model ?? (await this.defaultModel());
@@ -279,7 +303,10 @@ export class Neo {
   }
 
   /** Sends a message to the agent, after checking it has a model. */
-  async send(agentId: string, input: Parameters<Mailbox["send"]>[1]): Promise<MailboxMessage> {
+  async send(
+    agentId: string,
+    input: Parameters<Mailbox["send"]>[1],
+  ): Promise<MailboxMessage> {
     const live = this.services();
     const agent = await live.agents.get(agentId);
     if (!agent.model && !(await this.defaultModel()))
@@ -343,7 +370,13 @@ export class Neo {
       {
         models: () => providers.models(),
         registry,
-        env: ({ cwd }) => new VfsExecutionEnv(vfs, cwd ?? "/", `neo-vfs:${this.instanceId_}`, shell),
+        env: ({ cwd }) =>
+          new VfsExecutionEnv(
+            vfs,
+            cwd ?? "/",
+            `neo-vfs:${this.instanceId_}`,
+            shell,
+          ),
         identity: { attribution: { name: "neo", url: "https://github.com/" } },
         settings: {
           compaction: { enabled: true },
@@ -355,7 +388,10 @@ export class Neo {
         onReport: (error, info) => {
           if (info.type === "listener_error") return;
           void this.events
-            .emit("error", { where: info.type, message: error instanceof Error ? error.message : String(error) })
+            .emit("error", {
+              where: info.type,
+              message: error instanceof Error ? error.message : String(error),
+            })
             .catch(() => {});
         },
         ...(this.host.now ? { now: this.host.now } : {}),
@@ -375,7 +411,19 @@ export class Neo {
       },
       this.now,
     );
-    this.live = { harness, vfs, secrets, providers, settings, agents, memories, history, mailbox, schedules, watches: [] };
+    this.live = {
+      harness,
+      vfs,
+      secrets,
+      providers,
+      settings,
+      agents,
+      memories,
+      history,
+      mailbox,
+      schedules,
+      watches: [],
+    };
 
     const tools: ToolServices = {
       memories,
@@ -391,14 +439,28 @@ export class Neo {
     registry.install(
       defineExtension({
         name: "files",
-        tools: [createReadTool(), createWriteTool(), sizedEdit(createEditTool(), vfs), createBashTool()],
+        tools: [
+          createReadTool(),
+          createWriteTool(),
+          sizedEdit(createEditTool(), vfs),
+          createBashTool(),
+        ],
       }),
     );
     registry.install(
       defineExtension({
         name: "neo",
-        sections: promptSections({ agents, memories, settings, agentOf: (id) => this.agentOf(id) }),
-        tools: [...memoryTools(tools), ...historyTools(tools), ...scheduleTools(tools)],
+        sections: promptSections({
+          agents,
+          memories,
+          settings,
+          agentOf: (id) => this.agentOf(id),
+        }),
+        tools: [
+          ...memoryTools(tools),
+          ...historyTools(tools),
+          ...scheduleTools(tools),
+        ],
       }),
     );
     if (this.host.test) registry.install(this.host.test.extension);
@@ -406,7 +468,12 @@ export class Neo {
     for (const agent of await agents.list()) {
       await this.watch(agent.id);
       await mailbox.recover(agent.id);
-      await schedules.ensureSystem(agent.id, "heartbeat", HEARTBEAT, await settings.get("timezone"));
+      await schedules.ensureSystem(
+        agent.id,
+        "heartbeat",
+        HEARTBEAT,
+        await settings.get("timezone"),
+      );
     }
     harness.resume();
     await this.arm();
@@ -416,22 +483,44 @@ export class Neo {
   private async watch(agentId: string): Promise<void> {
     const live = this.services();
     const conversation = await this.conversation(agentId);
-    const stream = await watchEvents(live.harness, conversation.id, this.context);
+    const stream = await watchEvents(
+      live.harness,
+      conversation.id,
+      this.context,
+    );
     stream.start(async (events) => {
       for (const event of events) {
-        if (event.type === "snapshot" || event.type === "agent_changed" || event.type === "usage_changed") continue;
+        if (
+          event.type === "snapshot" ||
+          event.type === "agent_changed" ||
+          event.type === "usage_changed"
+        )
+          continue;
         this.events.live("pi", event, agentId);
       }
     });
     live.watches.push(stream);
   }
 
-  private async turnSettled(turn: Turn, _messages: MailboxMessage[]): Promise<void> {
+  private async turnSettled(
+    turn: Turn,
+    _messages: MailboxMessage[],
+  ): Promise<void> {
     const live = this.services();
-    const applied = await live.memories.finish(turn.id, turn.status === "completed");
+    const applied = await live.memories.finish(
+      turn.id,
+      turn.status === "completed",
+    );
     // The turn's messages become searchable now, a page at a time, never all at once.
-    await live.history.sync(turn.agentId, await this.conversation(turn.agentId)).catch(() => {});
-    if (applied > 0) await this.events.emit("memory.changed", { turnId: turn.id, applied }, turn.agentId);
+    await live.history
+      .sync(turn.agentId, await this.conversation(turn.agentId))
+      .catch(() => {});
+    if (applied > 0)
+      await this.events.emit(
+        "memory.changed",
+        { turnId: turn.id, applied },
+        turn.agentId,
+      );
     await this.arm();
   }
 
@@ -450,10 +539,17 @@ export class Neo {
  * `edit` reads the whole file, and Pi's tool reports a refused read only by its error code. This
  * checks the size first, so the model learns why and reads the file in parts instead.
  */
-function sizedEdit<T extends { execute: (...args: any[]) => any }>(edit: T, vfs: Vfs): T {
+function sizedEdit<T extends { execute: (...args: any[]) => any }>(
+  edit: T,
+  vfs: Vfs,
+): T {
   return {
     ...edit,
-    execute: async (args: { path?: string }, api: { env?: { cwd?: string } }, context: unknown) => {
+    execute: async (
+      args: { path?: string },
+      api: { env?: { cwd?: string } },
+      context: unknown,
+    ) => {
       if (typeof args.path === "string") {
         const path = joinPath(api.env?.cwd ?? "/", args.path);
         const stat = await vfs.stat(path).catch(() => undefined);

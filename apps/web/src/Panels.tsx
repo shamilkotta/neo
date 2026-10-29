@@ -9,9 +9,21 @@ import type {
   Schedule,
   Status,
 } from "@neo/client";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 
-export const TABS = ["Schedules", "Agent", "Providers", "Settings", "Files"] as const;
+export const TABS = [
+  "Schedules",
+  "Agent",
+  "Providers",
+  "Settings",
+  "Files",
+] as const;
 export type Tab = (typeof TABS)[number];
 
 interface PanelProps {
@@ -23,7 +35,10 @@ interface PanelProps {
 }
 
 /** Loads with `load`, again when `version` changes; shows errors in place. */
-function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [T | undefined, () => void, string | undefined] {
+function useLoad<T>(
+  load: () => Promise<T>,
+  deps: unknown[],
+): [T | undefined, () => void, string | undefined] {
   const [value, setValue] = useState<T>();
   const [error, setError] = useState<string>();
   const reload = useCallback(() => {
@@ -49,13 +64,22 @@ const attempt = async (fn: () => Promise<unknown>, then?: () => void) => {
   }
 };
 
-function Form({ onSubmit, children }: { onSubmit: (data: FormData) => Promise<unknown>; children: ReactNode }) {
+function Form({
+  onSubmit,
+  children,
+}: {
+  onSubmit: (data: FormData) => Promise<unknown>;
+  children: ReactNode;
+}) {
   return (
     <form
       onSubmit={(e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const form = e.currentTarget;
-        void attempt(() => onSubmit(new FormData(form)), () => form.reset());
+        void attempt(
+          () => onSubmit(new FormData(form)),
+          () => form.reset(),
+        );
       }}
     >
       {children}
@@ -78,19 +102,23 @@ export function Panel({ tab, ...props }: PanelProps & { tab: Tab }) {
   }
 }
 
-
 function describe(s: Schedule): string {
-  if (s.spec.kind === "once") return `once, ${new Date(s.spec.at).toLocaleString()}`;
+  if (s.spec.kind === "once")
+    return `once, ${new Date(s.spec.at).toLocaleString()}`;
   if (s.spec.kind === "every") return `every ${s.spec.minutes} min`;
   return `cron ${s.spec.expr}`;
 }
 
 function SchedulesPanel({ client, version }: PanelProps) {
-  const [schedules, reload, error] = useLoad(() => client.schedules(), [client, version]);
+  const [schedules, reload, error] = useLoad(
+    () => client.schedules(),
+    [client, version],
+  );
   return (
     <>
       <p className="muted">
-        Everything Neo does on its own time: reminders, routines and the heartbeat.
+        Everything Neo does on its own time: reminders, routines and the
+        heartbeat.
       </p>
       {error && <p className="err">{error}</p>}
       {schedules?.length === 0 && <p className="muted">None.</p>}
@@ -99,13 +127,25 @@ function SchedulesPanel({ client, version }: PanelProps) {
           <b>{s.name}</b> · {describe(s)}
           {s.window && ` · ${s.window.start}–${s.window.end}`} · {s.createdBy}
           <div className="muted">
-            {s.nextAt ? `next ${new Date(s.nextAt).toLocaleString()}` : s.enabled ? "done" : "off"} · ran {s.runCount}
+            {s.nextAt
+              ? `next ${new Date(s.nextAt).toLocaleString()}`
+              : s.enabled
+                ? "done"
+                : "off"}{" "}
+            · ran {s.runCount}
             {s.quiet && " · quiet"}
             {s.whenBusy === "skip" && " · skips when busy"}
           </div>
-          <div>{s.prompt.length > 200 ? `${s.prompt.slice(0, 200)}…` : s.prompt}</div>
+          <div>
+            {s.prompt.length > 200 ? `${s.prompt.slice(0, 200)}…` : s.prompt}
+          </div>
           <div className="actions">
-            <button className="small" onClick={() => attempt(() => client.toggleSchedule(s.id, !s.enabled), reload)}>
+            <button
+              className="small"
+              onClick={() =>
+                attempt(() => client.toggleSchedule(s.id, !s.enabled), reload)
+              }
+            >
               {s.enabled ? "Turn off" : "Turn on"}
             </button>
           </div>
@@ -115,16 +155,23 @@ function SchedulesPanel({ client, version }: PanelProps) {
   );
 }
 
-const modelKey = (m: ModelRef | null | undefined) => (m ? `${m.provider}/${m.modelId}` : "");
+const modelKey = (m: ModelRef | null | undefined) =>
+  m ? `${m.provider}/${m.modelId}` : "";
 
 function AgentPanel({ client, version }: PanelProps) {
   const [data, reload, error] = useLoad(
-    async () => ({ agent: await client.agent(), models: await client.models() }),
+    async () => ({
+      agent: await client.agent(),
+      models: await client.models(),
+    }),
     [client, version],
   );
   if (error) return <p className="err">{error}</p>;
   if (!data) return null;
-  const { agent, models } = data as { agent: AgentRecord; models: { models: AvailableModel[]; default: ModelRef | null } };
+  const { agent, models } = data as {
+    agent: AgentRecord;
+    models: { models: AvailableModel[]; default: ModelRef | null };
+  };
   return (
     <form
       key={agent.updatedAt}
@@ -137,8 +184,14 @@ function AgentPanel({ client, version }: PanelProps) {
           () =>
             client.updateAgent({
               name: String(f.get("name")),
-              model: model ? { provider: model.slice(0, slash), modelId: model.slice(slash + 1) } : null,
-              thinking: (String(f.get("thinking")) || null) as AgentRecord["thinking"],
+              model: model
+                ? {
+                    provider: model.slice(0, slash),
+                    modelId: model.slice(slash + 1),
+                  }
+                : null,
+              thinking: (String(f.get("thinking")) ||
+                null) as AgentRecord["thinking"],
             }),
           reload,
         );
@@ -170,26 +223,40 @@ function AgentPanel({ client, version }: PanelProps) {
 }
 
 function ProvidersPanel({ client, version, status }: PanelProps) {
-  const [providers, reload, error] = useLoad(() => client.providers(), [client, version]);
+  const [providers, reload, error] = useLoad(
+    () => client.providers(),
+    [client, version],
+  );
   const [found, setFound] = useState<ProviderConfig[]>([]);
   const [kind, setKind] = useState<ProviderConfig["kind"]>("anthropic");
   useEffect(() => {
-    if (status?.capabilities.sockets) client.detectProviders().then(setFound, () => {});
+    if (status?.capabilities.sockets)
+      client.detectProviders().then(setFound, () => {});
   }, [client, status?.capabilities.sockets]);
   const compat = kind === "openai-compatible";
   return (
     <>
       <p className="muted">Keys are encrypted with this instance's data key.</p>
       {error && <p className="err">{error}</p>}
-      {providers?.length === 0 && <p className="err">No provider yet: add one to start chatting.</p>}
+      {providers?.length === 0 && (
+        <p className="err">No provider yet: add one to start chatting.</p>
+      )}
       {providers?.map((p: ProviderInfo) => (
         <div className="row" key={p.id}>
           <b>{p.id}</b> · {p.kind}
           {p.baseUrl && ` · ${p.baseUrl}`}
           {p.hasKey && " · key set"}
-          {!!p.models?.length && <div className="muted">{p.models.map((m) => m.id).join(", ")}</div>}
+          {!!p.models?.length && (
+            <div className="muted">{p.models.map((m) => m.id).join(", ")}</div>
+          )}
           <div className="actions">
-            <button className="small" onClick={() => confirm(`Remove ${p.id}?`) && attempt(() => client.removeProvider(p.id), reload)}>
+            <button
+              className="small"
+              onClick={() =>
+                confirm(`Remove ${p.id}?`) &&
+                attempt(() => client.removeProvider(p.id), reload)
+              }
+            >
               Remove
             </button>
           </div>
@@ -201,7 +268,10 @@ function ProvidersPanel({ client, version, status }: PanelProps) {
           {found.map((p) => (
             <div className="row" key={p.id}>
               {p.id} · {p.models?.length ?? 0} models{" "}
-              <button className="small" onClick={() => attempt(() => client.putProvider(p), reload)}>
+              <button
+                className="small"
+                onClick={() => attempt(() => client.putProvider(p), reload)}
+              >
                 Add
               </button>
             </div>
@@ -229,18 +299,27 @@ function ProvidersPanel({ client, version, status }: PanelProps) {
       >
         <h3>Add a provider</h3>
         <label>Kind</label>
-        <select value={kind} onChange={(e) => setKind(e.target.value as ProviderConfig["kind"])}>
+        <select
+          value={kind}
+          onChange={(e) => setKind(e.target.value as ProviderConfig["kind"])}
+        >
           <option value="anthropic">anthropic</option>
           <option value="openai">openai</option>
           <option value="openrouter">openrouter</option>
-          <option value="openai-compatible">OpenAI-compatible (Ollama, LM Studio, vLLM, Groq…)</option>
+          <option value="openai-compatible">
+            OpenAI-compatible (Ollama, LM Studio, vLLM, Groq…)
+          </option>
         </select>
         {compat && (
           <>
             <label>Id</label>
             <input name="id" placeholder="ollama" required />
             <label>Base URL</label>
-            <input name="baseUrl" placeholder="http://127.0.0.1:11434/v1" required />
+            <input
+              name="baseUrl"
+              placeholder="http://127.0.0.1:11434/v1"
+              required
+            />
             <label>Models (comma separated)</label>
             <input name="models" placeholder="llama3.2" required />
           </>
@@ -254,7 +333,10 @@ function ProvidersPanel({ client, version, status }: PanelProps) {
 }
 
 function SettingsPanel({ client, version, status, onForget }: PanelProps) {
-  const [settings, reload, error] = useLoad(() => client.settings(), [client, version]);
+  const [settings, reload, error] = useLoad(
+    () => client.settings(),
+    [client, version],
+  );
   if (error) return <p className="err">{error}</p>;
   if (!settings) return null;
   const s = settings as SettingsShape;
@@ -280,7 +362,8 @@ function SettingsPanel({ client, version, status, onForget }: PanelProps) {
           type="button"
           className="small"
           onClick={() => {
-            (document.getElementById("tz") as HTMLInputElement).value = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            (document.getElementById("tz") as HTMLInputElement).value =
+              Intl.DateTimeFormat().resolvedOptions().timeZone;
           }}
         >
           Use this browser's
@@ -318,15 +401,22 @@ function FilesPanel({ client }: PanelProps) {
         ) : (
           entry.entries.map((e) => (
             <div className="row" key={e.path}>
-              <a href="#" onClick={(ev) => (ev.preventDefault(), setPath(e.path))}>
+              <a
+                href="#"
+                onClick={(ev) => (ev.preventDefault(), setPath(e.path))}
+              >
                 {e.name}
                 {e.kind === "directory" ? "/" : ""}
               </a>{" "}
-              <span className="muted">{e.kind === "file" ? `${e.size} B` : ""}</span>
+              <span className="muted">
+                {e.kind === "file" ? `${e.size} B` : ""}
+              </span>
             </div>
           ))
         ))}
-      {entry?.kind === "file" && <pre className="file">{entry.text.slice(0, 50_000)}</pre>}
+      {entry?.kind === "file" && (
+        <pre className="file">{entry.text.slice(0, 50_000)}</pre>
+      )}
     </>
   );
 }

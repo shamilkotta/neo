@@ -100,8 +100,7 @@ export class Secrets {
 
   /** Every secret value (6+ characters), for redacting tool output. Cached until a secret changes. */
   async values(): Promise<string[]> {
-    if (this.cachedValues)
-      return this.cachedValues;
+    if (this.cachedValues) return this.cachedValues;
     const names = await this.list();
     const values: string[] = [];
     for (const { name } of names) {

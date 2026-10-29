@@ -1,4 +1,12 @@
-import type { LiveEvent, MailboxMessage, NeoClient, NeoEvent, Status, TranscriptItem, Turn } from "@neo/client";
+import type {
+  LiveEvent,
+  MailboxMessage,
+  NeoClient,
+  NeoEvent,
+  Status,
+  TranscriptItem,
+  Turn,
+} from "@neo/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** The running turn as it streams: the answer so far and the tools still running. */
@@ -27,7 +35,10 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
 
   const loadTranscript = useCallback(
     async (before?: number) => {
-      const page = await client.transcript({ limit: 100, ...(before ? { before } : {}) });
+      const page = await client.transcript({
+        limit: 100,
+        ...(before ? { before } : {}),
+      });
       setItems((current) => {
         const next = new Map(current);
         // A fresh newest page replaces what it covers (items can change while a turn runs).
@@ -39,7 +50,8 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
         return next;
       });
       setTurns((t) => ({ ...t, ...page.turns }));
-      if (before || page.before === null || older === null) setOlder(page.before);
+      if (before || page.before === null || older === null)
+        setOlder(page.before);
     },
     [client, older],
   );
@@ -95,39 +107,72 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
   }, [client]);
 
   const sorted = [...items.values()].sort((a, b) => a.entryId - b.entryId);
-  return { status, items: sorted, turns, older, queue, live, error, refresh, loadOlder: () => older && loadTranscript(older) };
+  return {
+    status,
+    items: sorted,
+    turns,
+    older,
+    queue,
+    live,
+    error,
+    refresh,
+    loadOlder: () => older && loadTranscript(older),
+  };
 }
 
 /** Applies one of Pi's live events (run, message, tool) to the streaming view. */
-function applyLive(current: LiveTurn, event: LiveEvent, settle: () => void): LiveTurn {
+function applyLive(
+  current: LiveTurn,
+  event: LiveEvent,
+  settle: () => void,
+): LiveTurn {
   const e = event.data as { type: string; [k: string]: any };
   switch (e.type) {
     case "run_start":
       return { active: true, text: "", tools: [] };
     case "message_start":
-      return e.message?.role === "assistant" ? { ...current, active: true, text: "" } : current;
+      return e.message?.role === "assistant"
+        ? { ...current, active: true, text: "" }
+        : current;
     case "message_update": {
       let text = current.text;
-      for (const c of e.changes ?? []) if (c.type === "text_delta") text += c.delta;
+      for (const c of e.changes ?? [])
+        if (c.type === "text_delta") text += c.delta;
       return { ...current, active: true, text };
     }
     case "message_end":
       settle();
       return { ...current, text: "" };
     case "tool_execution_start":
-      return { ...current, active: true, tools: [...current.tools, { id: e.toolCallId, name: e.toolName, output: "" }] };
+      return {
+        ...current,
+        active: true,
+        tools: [
+          ...current.tools,
+          { id: e.toolCallId, name: e.toolName, output: "" },
+        ],
+      };
     case "tool_execution_update":
       return {
         ...current,
         tools: current.tools.map((t) =>
           t.id !== e.toolCallId
             ? t
-            : { ...t, output: e.output?.set !== undefined ? e.output.set : t.output + (e.output?.append ?? "") },
+            : {
+                ...t,
+                output:
+                  e.output?.set !== undefined
+                    ? e.output.set
+                    : t.output + (e.output?.append ?? ""),
+              },
         ),
       };
     case "tool_execution_end":
       settle();
-      return { ...current, tools: current.tools.filter((t) => t.id !== e.toolCallId) };
+      return {
+        ...current,
+        tools: current.tools.filter((t) => t.id !== e.toolCallId),
+      };
     case "run_end":
       settle();
       return IDLE;

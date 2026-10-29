@@ -23,7 +23,9 @@ import { VFS_SCHEMA } from "./vfs/vfs";
  */
 const TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   async (tx) => {
-    await tx.exec(`CREATE TABLE neo_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`);
+    await tx.exec(
+      `CREATE TABLE neo_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`,
+    );
   },
   SETTINGS_SCHEMA,
   SECRETS_SCHEMA,

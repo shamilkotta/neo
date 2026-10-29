@@ -20,9 +20,7 @@ import type { Secrets } from "./secrets";
 import type { ProviderKind, CustomModel, ProviderConfig } from "@neo/client";
 export type { ProviderKind, CustomModel, ProviderConfig } from "@neo/client";
 
-export const PROVIDERS_SCHEMA = async (
-  tx: SqliteExecutor,
-): Promise<void> => {
+export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(`CREATE TABLE neo_providers (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -38,7 +36,11 @@ export const PROVIDERS_SCHEMA = async (
  * its own (never pi-ai's all-providers barrel), so a Worker bundle carries only these SDKs. Any
  * other API (Ollama, LM Studio, vLLM, Groq, DeepSeek, ...) is an OpenAI-compatible provider.
  */
-export const BUILTIN_KINDS = ["anthropic", "openai", "openrouter"] as const satisfies readonly ProviderKind[];
+export const BUILTIN_KINDS = [
+  "anthropic",
+  "openai",
+  "openrouter",
+] as const satisfies readonly ProviderKind[];
 
 interface ProviderRow {
   id: string;
