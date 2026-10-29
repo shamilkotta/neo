@@ -4,8 +4,6 @@ import type {
   AvailableModel,
   LiveEvent,
   MailboxMessage,
-  Memory,
-  MemoryKind,
   ModelRef,
   NeoEvent,
   ProviderConfig,
@@ -15,7 +13,6 @@ import type {
   TranscriptPage,
   Turn,
   Schedule,
-  ScheduleInput,
   ScheduleRun,
 } from "./types";
 
@@ -67,7 +64,7 @@ export class NeoClient {
   status = () => this.call<Status>("GET", "/v1/status");
 
   // ---- conversation ----
-  send = (text: string, options: { clientId?: string; steer?: boolean } = {}) =>
+  send = (text: string, options: { clientId?: string } = {}) =>
     this.call<{ message: MailboxMessage }>("POST", "/v1/messages", { text, ...options }).then((r) => r.message);
   transcript = (options: { before?: number; limit?: number } = {}) =>
     this.call<TranscriptPage>("GET", `/v1/transcript${query(options)}`);
@@ -84,22 +81,10 @@ export class NeoClient {
   reorderQueue = (order: string[]) =>
     this.call<{ queue: MailboxMessage[] }>("PUT", "/v1/queue/order", { order }).then((r) => r.queue);
 
-  // ---- memory ----
-  memories = (q?: string) =>
-    this.call<{ memories: Memory[]; count: number; limit: number }>("GET", `/v1/memories${query({ q })}`);
-  addMemory = (text: string, kind: MemoryKind = "searchable") =>
-    this.call<{ memory: Memory }>("POST", "/v1/memories", { text, kind }).then((r) => r.memory);
-  updateMemory = (id: string, change: { text?: string; kind?: MemoryKind }) =>
-    this.call<{ memory: Memory }>("PATCH", `/v1/memories/${id}`, change).then((r) => r.memory);
-  removeMemory = (id: string) => this.call<{ removed: string }>("DELETE", `/v1/memories/${id}`);
-
   // ---- schedules ----
   schedules = () => this.call<{ schedules: Schedule[] }>("GET", "/v1/schedules").then((r) => r.schedules);
-  addSchedule = (input: ScheduleInput) =>
-    this.call<{ schedule: Schedule }>("POST", "/v1/schedules", input).then((r) => r.schedule);
-  updateSchedule = (id: string, change: ScheduleInput) =>
-    this.call<{ schedule: Schedule }>("PATCH", `/v1/schedules/${id}`, change).then((r) => r.schedule);
-  removeSchedule = (id: string) => this.call<{ removed: string }>("DELETE", `/v1/schedules/${id}`);
+  toggleSchedule = (id: string, enabled: boolean) =>
+    this.call<{ schedule: Schedule }>("PATCH", `/v1/schedules/${id}`, { enabled }).then((r) => r.schedule);
   scheduleRuns = (id: string) =>
     this.call<{ runs: ScheduleRun[] }>("GET", `/v1/schedules/${id}/runs`).then((r) => r.runs);
 

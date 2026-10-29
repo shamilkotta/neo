@@ -9,8 +9,6 @@ export const SETTINGS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
 };
 
 const DEFAULTS: SettingsShape = {
-  memoryLimit: 128,
-  busyMessageMode: "queue",
   timezone: "UTC",
 };
 
@@ -57,14 +55,6 @@ export class Settings {
 
 function validate(key: keyof SettingsShape, value: unknown): void {
   switch (key) {
-    case "memoryLimit":
-      if (![64, 128, 256, 512].includes(value as number))
-        throw new Error("memoryLimit is 64, 128, 256 or 512");
-      return;
-    case "busyMessageMode":
-      if (value !== "queue" && value !== "steer")
-        throw new Error("busyMessageMode is queue or steer");
-      return;
     case "timezone":
       try {
         new Intl.DateTimeFormat("en", { timeZone: String(value) });

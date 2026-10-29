@@ -7,7 +7,6 @@ export const AGENTS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(`CREATE TABLE neo_agents (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    instructions TEXT NOT NULL DEFAULT '',
     model_provider TEXT,
     model_id TEXT,
     thinking TEXT,
@@ -24,7 +23,6 @@ export const DEFAULT_AGENT_ID = "neo";
 interface Row {
   id: string;
   name: string;
-  instructions: string;
   model_provider: string | null;
   model_id: string | null;
   thinking: ThinkingLevel | null;
@@ -70,15 +68,12 @@ export class Agents {
     const current = await this.get(id);
     if (change.name !== undefined && !change.name.trim()) throw new Error("name is empty");
     if (change.name !== undefined && change.name.length > 60) throw new Error("name is too long");
-    if (change.instructions !== undefined && change.instructions.length > 20_000)
-      throw new Error("instructions are too long (20000 characters)");
     if (change.thinking && !THINKING.includes(change.thinking))
       throw new Error(`thinking is one of ${THINKING.join(", ")}`);
     const model = change.model === undefined ? current.model : change.model;
     await this.db.run(
-      `UPDATE neo_agents SET name = ?, instructions = ?, model_provider = ?, model_id = ?, thinking = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE neo_agents SET name = ?, model_provider = ?, model_id = ?, thinking = ?, updated_at = ? WHERE id = ?`,
       change.name?.trim() ?? current.name,
-      change.instructions ?? current.instructions,
       model?.provider ?? null,
       model?.modelId ?? null,
       change.thinking === undefined ? current.thinking : change.thinking,
@@ -110,7 +105,6 @@ function toRecord(row: Row): AgentRecord {
   return {
     id: row.id,
     name: row.name,
-    instructions: row.instructions,
     model:
       row.model_provider && row.model_id
         ? { provider: row.model_provider, modelId: row.model_id }

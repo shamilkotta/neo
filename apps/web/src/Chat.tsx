@@ -1,5 +1,5 @@
 import type { MailboxMessage, NeoClient, TranscriptItem, Turn } from "@neo/client";
-import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
 import type { LiveTurn } from "./useNeo";
 
 /** Markdown-lite: code blocks, inline code and bold; everything else is plain text. */
@@ -194,11 +194,9 @@ export function Queue({ client, queue, running, refresh }: { client: NeoClient; 
   );
 }
 
-export function Composer({ client, busyDefault, onSent, onNeedsSetup }: { client: NeoClient; busyDefault: "queue" | "steer"; onSent: () => void; onNeedsSetup: () => void }) {
+export function Composer({ client, onSent, onNeedsSetup }: { client: NeoClient; onSent: () => void; onNeedsSetup: () => void }) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState(busyDefault);
   const input = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => setMode(busyDefault), [busyDefault]);
   useLayoutEffect(() => {
     const el = input.current;
     if (!el) return;
@@ -211,7 +209,7 @@ export function Composer({ client, busyDefault, onSent, onNeedsSetup }: { client
     if (!value) return;
     setText("");
     try {
-      await client.send(value, { clientId: `web-${crypto.randomUUID()}`, steer: mode === "steer" });
+      await client.send(value, { clientId: `web-${crypto.randomUUID()}` });
     } catch (err) {
       setText(value);
       const body = (err as { body?: { setup?: boolean } }).body;
@@ -236,10 +234,6 @@ export function Composer({ client, busyDefault, onSent, onNeedsSetup }: { client
         onKeyDown={onKey}
         placeholder="Message Neo… (Enter to send, Shift+Enter for a new line)"
       />
-      <select value={mode} onChange={(e) => setMode(e.target.value as "queue" | "steer")} title="When Neo is busy">
-        <option value="queue">Queue</option>
-        <option value="steer">Join turn</option>
-      </select>
       <button className="primary" type="submit">
         Send
       </button>

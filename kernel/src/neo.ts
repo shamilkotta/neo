@@ -238,13 +238,12 @@ export class Neo {
     }
     this.conversationAgents.set(conversation.id as unknown as number, agentId);
     const model = agent.model ?? (await this.defaultModel());
-    const config = JSON.stringify([model, agent.thinking, agent.instructions]);
+    const config = JSON.stringify([model, agent.thinking]);
     if (this.configured.get(agentId) !== config) {
       await conversation.configure(
         {
           model: model ?? null,
           thinkingLevel: agent.thinking ?? null,
-          instructions: agent.instructions.trim() || null,
           cwd: "/",
         },
         this.context,
@@ -324,7 +323,7 @@ export class Neo {
     const settings = new Settings(db);
     const agents = new Agents(db, this.now);
     await agents.ensure();
-    const memories = new Memories(db, this.now, () => settings.get("memoryLimit"));
+    const memories = new Memories(db, this.now);
     const schedules = new Schedules(db, this.now);
     const history = new History(db);
 
