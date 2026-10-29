@@ -13,7 +13,6 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export interface AgentRecord {
   id: string;
   name: string;
-  instructions: string;
   model: ModelRef | null;
   thinking: ThinkingLevel | null;
   conversationId: number | null;
@@ -24,7 +23,6 @@ export interface AgentRecord {
 
 export interface AgentChange {
   name?: string;
-  instructions?: string;
   model?: ModelRef | null;
   thinking?: ThinkingLevel | null;
 }
@@ -170,7 +168,7 @@ export interface Schedule {
   enabled: boolean;
   /** A built-in schedule ("heartbeat"): it can be changed or turned off, not deleted. */
   system: string | null;
-  createdBy: "agent" | "person" | "system";
+  createdBy: "agent" | "system";
   /** null: nothing more to fire (done, ended, or disabled). */
   nextAt: number | null;
   lastAt: number | null;
@@ -215,10 +213,6 @@ export interface ScheduleRun {
 // ---- settings and models ----
 
 export interface SettingsShape {
-  /** How many memories the agent can hold: 64, 128, 256 or 512 (OpenBot's choices). */
-  memoryLimit: number;
-  /** What a message sent while a turn runs does by default: wait in the queue, or join the turn. */
-  busyMessageMode: "queue" | "steer";
   /** The person's timezone: message times and schedules use it. */
   timezone: string;
 }

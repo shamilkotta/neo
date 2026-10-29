@@ -1,7 +1,6 @@
 import type {
   AgentRecord,
   AvailableModel,
-  Memory,
   ModelRef,
   NeoClient,
   ProviderConfig,
@@ -12,7 +11,7 @@ import type {
 } from "@neo/client";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 
-export const TABS = ["Memory", "Schedules", "Agent", "Providers", "Settings", "Files"] as const;
+export const TABS = ["Schedules", "Agent", "Providers", "Settings", "Files"] as const;
 export type Tab = (typeof TABS)[number];
 
 interface PanelProps {
@@ -66,8 +65,6 @@ function Form({ onSubmit, children }: { onSubmit: (data: FormData) => Promise<un
 
 export function Panel({ tab, ...props }: PanelProps & { tab: Tab }) {
   switch (tab) {
-    case "Memory":
-      return <MemoryPanel {...props} />;
     case "Schedules":
       return <SchedulesPanel {...props} />;
     case "Agent":
@@ -81,50 +78,6 @@ export function Panel({ tab, ...props }: PanelProps & { tab: Tab }) {
   }
 }
 
-function MemoryPanel({ client, version }: PanelProps) {
-  const [q, setQ] = useState("");
-  const [data, reload, error] = useLoad(() => client.memories(q || undefined), [client, q, version]);
-  return (
-    <>
-      <input placeholder="Search memories" defaultValue={q} onChange={(e) => setQ(e.target.value)} />
-      {error && <p className="err">{error}</p>}
-      {data && (
-        <p className="muted">
-          {data.count} of {data.limit} · essential ones are in every prompt
-        </p>
-      )}
-      {data?.memories.map((m: Memory) => (
-        <div className="row" key={m.id}>
-          {m.text}
-          <div className="muted">
-            {m.kind} · {m.origin === "manual" ? "you" : "Neo"}
-          </div>
-          <div className="actions">
-            <button
-              className="small"
-              onClick={() =>
-                attempt(() => client.updateMemory(m.id, { kind: m.kind === "essential" ? "searchable" : "essential" }), reload)
-              }
-            >
-              {m.kind === "essential" ? "Make searchable" : "Make essential"}
-            </button>
-            <button className="small" onClick={() => attempt(() => client.removeMemory(m.id), reload)}>
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
-      <Form onSubmit={(f) => client.addMemory(String(f.get("text")), f.get("essential") ? "essential" : "searchable").then(reload)}>
-        <label>Add a memory</label>
-        <textarea name="text" rows={2} maxLength={500} required />
-        <label className="check">
-          <input type="checkbox" name="essential" /> Essential (in every prompt)
-        </label>
-        <button className="primary">Add</button>
-      </Form>
-    </>
-  );
-}
 
 function describe(s: Schedule): string {
   if (s.spec.kind === "once") return `once, ${new Date(s.spec.at).toLocaleString()}`;
@@ -134,11 +87,10 @@ function describe(s: Schedule): string {
 
 function SchedulesPanel({ client, version }: PanelProps) {
   const [schedules, reload, error] = useLoad(() => client.schedules(), [client, version]);
-  const [repeat, setRepeat] = useState<"once" | "every" | "cron">("once");
   return (
     <>
       <p className="muted">
-        Everything Neo does on its own time: reminders, routines and the heartbeat. Neo creates these itself; you can too.
+        Everything Neo does on its own time: reminders, routines and the heartbeat.
       </p>
       {error && <p className="err">{error}</p>}
       {schedules?.length === 0 && <p className="muted">None.</p>}
@@ -153,65 +105,12 @@ function SchedulesPanel({ client, version }: PanelProps) {
           </div>
           <div>{s.prompt.length > 200 ? `${s.prompt.slice(0, 200)}…` : s.prompt}</div>
           <div className="actions">
-            <button className="small" onClick={() => attempt(() => client.updateSchedule(s.id, { enabled: !s.enabled }), reload)}>
+            <button className="small" onClick={() => attempt(() => client.toggleSchedule(s.id, !s.enabled), reload)}>
               {s.enabled ? "Turn off" : "Turn on"}
             </button>
-            {s.spec.kind === "every" && (
-              <button
-                className="small"
-                onClick={() => {
-                  const every = prompt("Every how many minutes?", String(s.spec.kind === "every" ? s.spec.minutes : 60));
-                  if (every) void attempt(() => client.updateSchedule(s.id, { everyMinutes: Number(every) }), reload);
-                }}
-              >
-                Interval
-              </button>
-            )}
-            {!s.system && (
-              <button className="small" onClick={() => attempt(() => client.removeSchedule(s.id), reload)}>
-                Delete
-              </button>
-            )}
           </div>
         </div>
       ))}
-      <Form
-        onSubmit={(f) => {
-          const when = String(f.get("when"));
-          const start = String(f.get("start") ?? "");
-          const end = String(f.get("end") ?? "");
-          return client
-            .addSchedule({
-              name: String(f.get("name") ?? "") || undefined,
-              prompt: String(f.get("prompt")),
-              ...(repeat === "once" ? { inMinutes: Number(when) } : repeat === "every" ? { everyMinutes: Number(when) } : { cron: when }),
-              ...(start && end ? { window: { start, end } } : {}),
-              quiet: f.get("quiet") === "on",
-            })
-            .then(reload);
-        }}
-      >
-        <label>New schedule</label>
-        <input name="name" placeholder="Name (optional)" />
-        <textarea name="prompt" rows={2} placeholder="What should Neo do then?" required />
-        <div className="pair">
-          <select value={repeat} onChange={(e) => setRepeat(e.target.value as typeof repeat)}>
-            <option value="once">Once, in minutes</option>
-            <option value="every">Every N minutes</option>
-            <option value="cron">Cron (local time)</option>
-          </select>
-          <input key={repeat} name="when" required defaultValue={repeat === "cron" ? "0 9 * * 1-5" : "60"} />
-        </div>
-        <label>Only between (blank = any time)</label>
-        <div className="pair">
-          <input name="start" placeholder="08:00" />
-          <input name="end" placeholder="22:00" />
-        </div>
-        <label className="check">
-          <input type="checkbox" name="quiet" /> Quiet when there is nothing to report
-        </label>
-        <button className="primary">Schedule</button>
-      </Form>
     </>
   );
 }
@@ -238,7 +137,6 @@ function AgentPanel({ client, version }: PanelProps) {
           () =>
             client.updateAgent({
               name: String(f.get("name")),
-              instructions: String(f.get("instructions")),
               model: model ? { provider: model.slice(0, slash), modelId: model.slice(slash + 1) } : null,
               thinking: (String(f.get("thinking")) || null) as AgentRecord["thinking"],
             }),
@@ -248,8 +146,6 @@ function AgentPanel({ client, version }: PanelProps) {
     >
       <label>Name</label>
       <input name="name" defaultValue={agent.name} />
-      <label>Instructions (added to the system prompt)</label>
-      <textarea name="instructions" rows={6} defaultValue={agent.instructions} />
       <label>Model</label>
       <select name="model" defaultValue={modelKey(agent.model)}>
         <option value="">Default ({modelKey(models.default) || "none"})</option>
@@ -373,8 +269,6 @@ function SettingsPanel({ client, version, status, onForget }: PanelProps) {
             () =>
               client.updateSettings({
                 timezone: String(f.get("timezone")),
-                busyMessageMode: f.get("busy") as SettingsShape["busyMessageMode"],
-                memoryLimit: Number(f.get("limit")),
               }),
             reload,
           );
@@ -391,17 +285,6 @@ function SettingsPanel({ client, version, status, onForget }: PanelProps) {
         >
           Use this browser's
         </button>
-        <label>A message sent while Neo works</label>
-        <select name="busy" defaultValue={s.busyMessageMode}>
-          <option value="queue">waits in the queue</option>
-          <option value="steer">joins the running turn</option>
-        </select>
-        <label>Memory limit</label>
-        <select name="limit" defaultValue={s.memoryLimit}>
-          {[64, 128, 256, 512].map((n) => (
-            <option key={n}>{n}</option>
-          ))}
-        </select>
         <button className="primary">Save</button>
       </form>
       <p className="muted">

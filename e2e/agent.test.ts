@@ -12,6 +12,8 @@ afterEach(async () => {
 const script = (steps: unknown[], append = false) => neo.call("POST", "/v1/test/script", { steps, append });
 const send = (text: string, extra: Record<string, unknown> = {}) =>
   neo.call("POST", "/v1/messages", { text, ...extra }).then((r) => r.message);
+/** Waits in the queue behind a running turn, which the API itself never does. */
+const enqueue = (text: string) => neo.call("POST", "/v1/test/messages", { text }).then((r) => r.message);
 
 describe("turns", () => {
   test("a message runs one turn: tool steps, answer, transcript", async () => {
@@ -45,45 +47,11 @@ describe("turns", () => {
 });
 
 describe("queue", () => {
-  test("messages sent while a turn runs wait, then start one turn together", async () => {
-    await script([{ gate: "g" }, { text: "first done" }, { recall: "both read" }]);
-    await send("first");
-    await running(neo);
-    await send("second");
-    await send("third");
-    expect((await neo.call("GET", "/v1/queue")).queue.map((m: any) => m.text)).toEqual(["second", "third"]);
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
-    await idle(neo);
-    expect(await answers(neo)).toEqual(["first done", "both read"]);
-    const { seen } = await neo.call("GET", "/v1/test/seen");
-    expect(seen.at(-1)).toContain("This turn starts with 2 messages");
-    const inputs = (await transcript(neo)).filter((i) => i.type === "input");
-    expect(inputs.map((i) => i.messages.map((m: any) => m.text))).toEqual([["first"], ["second", "third"]]);
-  });
-
-  test("queued messages can be edited, reordered and cancelled before they run", async () => {
-    await script([{ gate: "g" }, { text: "first done" }, { recall: "rest" }]);
-    await send("first");
-    await running(neo);
-    const a = await send("a");
-    const b = await send("b");
-    const c = await send("c");
-    await neo.call("PATCH", `/v1/queue/${a.id}`, { text: "a (edited)" });
-    await neo.call("PUT", "/v1/queue/order", { order: [c.id, a.id] });
-    await neo.call("DELETE", `/v1/queue/${b.id}`);
-    expect((await neo.call("GET", "/v1/queue")).queue.map((m: any) => m.text)).toEqual(["c", "a (edited)"]);
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
-    await idle(neo);
-    const last = (await transcript(neo)).filter((i) => i.type === "input").at(-1);
-    expect(last.messages.map((m: any) => m.text)).toEqual(["c", "a (edited)"]);
-    await expect(neo.call("PATCH", `/v1/queue/${a.id}`, { text: "too late" })).rejects.toThrow();
-  });
-
-  test("a message can join the running turn (steer)", async () => {
+  test("a message joins the running turn", async () => {
     await script([{ gate: "g" }, { recall: "saw it" }]);
     await send("start work");
     await running(neo);
-    const steered = await send("also do X", { steer: true });
+    const steered = await send("also do X");
     await neo.call("POST", "/v1/test/release", { gate: "g" });
     await idle(neo);
     expect(await answers(neo)).toEqual(["saw it"]);
@@ -102,7 +70,7 @@ describe("queue", () => {
     await script([{ gate: "never" }, { text: "next turn ran" }]);
     await send("long job");
     await running(neo);
-    await send("after");
+    await enqueue("after");
     expect((await neo.call("POST", "/v1/stop")).stopped).toBe(true);
     await idle(neo);
     const inputs = (await transcript(neo)).filter((i) => i.type === "input");
@@ -125,6 +93,8 @@ describe("queue", () => {
 });
 
 describe("memory", () => {
+  const memories = async () => (await neo.call("GET", "/v1/test/memories")).memories as any[];
+
   test("memories an agent saves commit when its turn completes, and are in the next prompt", async () => {
     await script([
       { tool: "remember", args: { text: "The person's dog is called Biscuit", inclusion: "essential" } },
@@ -133,8 +103,7 @@ describe("memory", () => {
     ]);
     await send("my dog is Biscuit");
     await idle(neo);
-    const { memories } = await neo.call("GET", "/v1/memories");
-    expect(memories.map((m: any) => [m.text, m.kind, m.origin])).toEqual([
+    expect((await memories()).map((m) => [m.text, m.kind, m.origin])).toEqual([
       ["The person's dog is called Biscuit", "essential", "automatic"],
     ]);
     await send("hello again");
@@ -144,22 +113,12 @@ describe("memory", () => {
   });
 
   test("memories staged in an interrupted turn are dropped", async () => {
-    await script([
-      { tool: "remember", args: { text: "should not be kept" } },
-      { gate: "never" },
-    ]);
+    await script([{ tool: "remember", args: { text: "should not be kept" } }, { gate: "never" }]);
     await send("remember something then hang");
     await until(async () => (await transcript(neo)).some((i) => i.type === "tool" && i.name === "remember"), 5000, "remember ran");
     await neo.call("POST", "/v1/stop");
     await idle(neo);
-    expect((await neo.call("GET", "/v1/memories")).memories).toEqual([]);
-  });
-
-  test("the person's memories apply at once and can be searched", async () => {
-    await neo.call("POST", "/v1/memories", { text: "Prefers short answers", kind: "essential" });
-    await neo.call("POST", "/v1/memories", { text: "Works at a bakery in Kochi" });
-    const found = await neo.call("GET", "/v1/memories?q=bakery");
-    expect(found.memories.map((m: any) => m.text)).toEqual(["Works at a bakery in Kochi"]);
+    expect(await memories()).toEqual([]);
   });
 });
 
@@ -192,7 +151,7 @@ describe("schedules", () => {
 
   test("the alarm fires a due schedule by itself", async () => {
     await script([{ text: "woke up" }]);
-    await neo.call("POST", "/v1/schedules", { prompt: "ping", inMinutes: 0.01 });
+    await neo.call("POST", "/v1/test/schedules", { prompt: "ping", inMinutes: 0.01 });
     await until(async () => (await answers(neo)).includes("woke up") || undefined, 8000, "the scheduled turn");
   });
 
@@ -200,7 +159,7 @@ describe("schedules", () => {
     const hb = await heartbeat();
     expect(hb).toMatchObject({ enabled: true, quiet: true, whenBusy: "skip", spec: { kind: "every", minutes: 60 } });
     // Any time of day, so the test does not depend on the clock.
-    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { window: null });
+    await neo.call("PATCH", `/v1/test/schedules/${hb.id}`, { window: null });
     await script([{ text: "QUIET_OK" }]);
     await due(hb.id);
     await wake();
@@ -213,8 +172,9 @@ describe("schedules", () => {
     expect(await answers(neo)).toEqual(["Your 3pm meeting moved"]);
     expect((await heartbeat()).nextAt).toBeGreaterThan(Date.now() + 55 * 60_000);
     expect((await runs(hb.id)).map((r) => r.status)).toEqual(["sent", "sent"]);
-    // Built in: it can be turned off, not deleted.
-    expect(neo.call("DELETE", `/v1/schedules/${hb.id}`)).rejects.toThrow(/built in/);
+    // The person can only turn it off or on.
+    expect(neo.call("PATCH", `/v1/schedules/${hb.id}`, {})).rejects.toThrow(/enabled/);
+    expect(neo.call("DELETE", `/v1/schedules/${hb.id}`)).rejects.toThrow();
     await neo.call("PATCH", `/v1/schedules/${hb.id}`, { enabled: false });
     expect((await heartbeat()).nextAt).toBeNull();
   });
@@ -236,7 +196,7 @@ describe("schedules", () => {
 
   test("a routine repeats; one occurrence fires once however often the alarm rings", async () => {
     await script([{ text: "first" }]);
-    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "routine", everyMinutes: 30 });
+    const { schedule } = await neo.call("POST", "/v1/test/schedules", { prompt: "routine", everyMinutes: 30 });
     await due(schedule.id);
     await Promise.all([wake(), wake(), wake()]);
     await idle(neo);
@@ -250,8 +210,8 @@ describe("schedules", () => {
 
   test("busy and backlog: the heartbeat skips, a routine does not pile up", async () => {
     const hb = await heartbeat();
-    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { window: null });
-    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "routine", everyMinutes: 30 });
+    await neo.call("PATCH", `/v1/test/schedules/${hb.id}`, { window: null });
+    const { schedule } = await neo.call("POST", "/v1/test/schedules", { prompt: "routine", everyMinutes: 30 });
     await neo.call("POST", "/v1/pause");
     await due(hb.id);
     await due(schedule.id, 2000);
@@ -268,8 +228,8 @@ describe("schedules", () => {
 
   test("after downtime: missed skip skips, missed run runs once late", async () => {
     await script([{ recall: "ran late" }]);
-    const skip = (await neo.call("POST", "/v1/schedules", { prompt: "skip me", everyMinutes: 30, missed: "skip" })).schedule;
-    const run = (await neo.call("POST", "/v1/schedules", { prompt: "run me", everyMinutes: 30 })).schedule;
+    const skip = (await neo.call("POST", "/v1/test/schedules", { prompt: "skip me", everyMinutes: 30, missed: "skip" })).schedule;
+    const run = (await neo.call("POST", "/v1/test/schedules", { prompt: "run me", everyMinutes: 30 })).schedule;
     const day = 24 * 60 * 60_000;
     await due(skip.id, day);
     await due(run.id, day);
@@ -285,7 +245,7 @@ describe("schedules", () => {
   });
 
   test("bad schedules are refused with a reason", async () => {
-    const bad = (input: unknown) => neo.call("POST", "/v1/schedules", input);
+    const bad = (input: unknown) => neo.call("POST", "/v1/test/schedules", input);
     expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(/at most every 5 minutes/);
     expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(/at least 5/);
     expect(bad({ prompt: "x", at: "2020-01-01T09:00" })).rejects.toThrow(/passed/);
@@ -295,7 +255,7 @@ describe("schedules", () => {
 
   test("a cron follows the person's timezone when it changes", async () => {
     await neo.call("PUT", "/v1/settings", { timezone: "UTC" });
-    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "x", cron: "0 9 * * *" });
+    const { schedule } = await neo.call("POST", "/v1/test/schedules", { prompt: "x", cron: "0 9 * * *" });
     expect(new Date(schedule.nextAt).getUTCHours()).toBe(9);
     await neo.call("PUT", "/v1/settings", { timezone: "Asia/Kolkata" });
     const moved = (await schedules()).find((s) => s.id === schedule.id);
@@ -305,7 +265,7 @@ describe("schedules", () => {
 
   test("schedules survive a restart and still fire", async () => {
     if (!neo.restart) return;
-    const { schedule } = await neo.call("POST", "/v1/schedules", { prompt: "after restart", everyMinutes: 30 });
+    const { schedule } = await neo.call("POST", "/v1/test/schedules", { prompt: "after restart", everyMinutes: 30 });
     await neo.restart();
     expect((await schedules()).find((s) => s.id === schedule.id).nextAt).toBe(schedule.nextAt);
     await script([{ text: "fired after restart" }]);
@@ -338,7 +298,7 @@ describe("recovery", () => {
     await script([{ gate: "g" }, { text: "unused" }]);
     await send("long job");
     await until(async () => (await transcript(neo)).some((i) => i.type === "assistant"), 5000, "the tool call");
-    await send("queued behind it");
+    await enqueue("queued behind it");
     await neo.restart();
     // The new process has a new scripted model: the gate tool replays (replay-safe), then answers.
     await script([{ text: "resumed after restart" }, { text: "then the queue" }]);

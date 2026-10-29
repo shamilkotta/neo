@@ -7,7 +7,6 @@ import { useNeo } from "./useNeo";
 
 /** Which panel each durable event type refreshes. */
 const PANEL_EVENTS: Record<string, Tab[]> = {
-  "memory.changed": ["Memory"],
   "schedule.changed": ["Schedules"],
   "schedule.fired": ["Schedules"],
   "agent.changed": ["Agent"],
@@ -74,10 +73,6 @@ function Instance({ client: initial, onForget }: { client: NeoClient; onForget: 
   const { status } = neo;
   const running = !!status?.turn;
   const paused = !!status?.agent?.paused;
-  const [busyDefault, setBusyDefault] = useState<"queue" | "steer">("queue");
-  useEffect(() => {
-    client.settings().then((s) => setBusyDefault(s.busyMessageMode), () => {});
-  }, [client, versions.Settings]);
   // A wrong or revoked token: back to the connect screen.
   useEffect(() => {
     if (neo.error === "Unauthorized") onForget();
@@ -95,12 +90,12 @@ function Instance({ client: initial, onForget }: { client: NeoClient; onForget: 
           <span className="grow" />
           {running && <button onClick={() => client.stop().then(neo.refresh)}>Stop</button>}
           <button onClick={() => (paused ? client.resume() : client.pause()).then(neo.refresh)}>{paused ? "Resume" : "Pause"}</button>
-          <button onClick={() => setTab(tab ? null : "Memory")}>Panel</button>
+          <button onClick={() => setTab(tab ? null : "Schedules")}>Panel</button>
         </header>
         {neo.error && <p className="err banner">{neo.error}</p>}
         <Transcript items={neo.items} turns={neo.turns} live={neo.live} older={neo.older} loadOlder={() => void neo.loadOlder()} />
         <Queue client={client} queue={neo.queue} running={running} refresh={() => void neo.refresh()} />
-        <Composer client={client} busyDefault={busyDefault} onSent={() => void neo.refresh()} onNeedsSetup={() => setTab("Providers")} />
+        <Composer client={client} onSent={() => void neo.refresh()} onNeedsSetup={() => setTab("Providers")} />
       </div>
       {tab && (
         <aside id="side">

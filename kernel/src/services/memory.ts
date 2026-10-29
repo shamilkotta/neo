@@ -49,7 +49,8 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
 /** OpenBot's limits. */
 export const MEMORY_TEXT_LIMIT = 500;
 export const ESSENTIAL_BUDGET_BYTES = 8192;
-export const MEMORY_LIMIT_CHOICES = [64, 128, 256, 512] as const;
+/** How many memories an agent can hold: a hard cap, not a target. */
+export const MEMORY_LIMIT = 128;
 export const OWNER_LIMITS: Record<Exclude<MemoryOwnerKind, "agent">, number> = {
   channel: 32,
   connection: 32,
@@ -115,7 +116,6 @@ export class Memories {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly now: () => number = Date.now,
-    private readonly limitFor: () => Promise<number> = async () => 64,
   ) {}
 
   // ---- direct writes (the person, or a tool that writes at once) ------------------------------
@@ -139,7 +139,7 @@ export class Memories {
     const ownerKind = options.ownerKind ?? "agent";
     const count = await this.count(agentId, ownerKind);
     const limit =
-      ownerKind === "agent" ? await this.limitFor() : OWNER_LIMITS[ownerKind];
+      ownerKind === "agent" ? MEMORY_LIMIT : OWNER_LIMITS[ownerKind];
     if (count >= limit)
       throw new MemoryError(
         `The memory limit is reached (${count} of ${limit}); forget one first`,
@@ -456,12 +456,9 @@ export class Memories {
       }
     }
     if (!input.memoryId) {
-      const limit = await this.limitFor();
-      if (planned.size >= limit)
+      if (planned.size >= MEMORY_LIMIT)
         throw new MemoryError(
-          planned.size > limit
-            ? `You hold ${planned.size} memories, over the limit of ${limit} the person set. Do not delete memories for that.`
-            : `The memory limit is reached (${planned.size} of ${limit}). Forget or merge one first.`,
+          `The memory limit is reached (${planned.size} of ${MEMORY_LIMIT}). Forget or merge one first.`,
         );
     }
     await this.stage(requestId, agentId, callId, {
@@ -595,7 +592,7 @@ export class Memories {
       }
       const same = (await this.list(agentId)).find((m) => m.text === op.text);
       if (same) return 0;
-      if ((await this.count(agentId)) >= (await this.limitFor())) return 0;
+      if ((await this.count(agentId)) >= MEMORY_LIMIT) return 0;
       await this.db.run(
         `INSERT INTO neo_memories (id, agent_id, owner_kind, kind, origin, user_controlled, revision, text, created_at, updated_at)
          VALUES (?, ?, 'agent', ?, 'automatic', 0, 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,

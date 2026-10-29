@@ -1,6 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
-import type { Memory } from "../../services/memory";
+import { MEMORY_LIMIT, type Memory } from "../../services/memory";
 import { caller, json, refuse, type ToolServices } from "./shared";
 
 const inclusion = Type.Union([
@@ -55,7 +55,7 @@ export function memoryTools(services: ToolServices) {
     defineTool({
       name: "forget_memory",
       description:
-        "Stage deletion of one saved memory when the person asks you to forget it, or when it is stale or merged into another and you need room under the limit. The change commits only if the current turn completes.",
+        "Stage deletion of one saved memory when the person asks you to forget it, or or when it is stale, wrong, no longer useful, or merged into another. Prune freely; do not wait for the limit. The change commits only if the current turn completes.",
       parameters: Type.Object({ memoryId: Type.String({ minLength: 1 }) }),
       replay: "safe",
       execute: async (args, api) => {
@@ -107,7 +107,7 @@ export function memoryTools(services: ToolServices) {
           memories: page.memories.map(view),
           nextCursor: page.nextCursor,
           total: await services.memories.count(c.agentId),
-          limit: await services.settings.get("memoryLimit"),
+          limit: MEMORY_LIMIT,
         });
       },
     }),
