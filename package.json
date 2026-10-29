@@ -15,7 +15,7 @@
     "dev:cf": "bun run --filter @neo/cf dev",
     "deploy:cf": "bun run --filter @neo/cf deploy",
     "types:cf": "bun run --filter @neo/cf types",
-    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p hosts/cf && tsc --noEmit -p apps/web",
+    "check": "bun check --no-script && bun check --no-script -p hosts/cf && bun check --no-script -p apps/web",
     "test": "bun run build:web && bun test e2e",
     "test:cf": "NEO_CF_URL=http://localhost:8799 bun test e2e"
   },
