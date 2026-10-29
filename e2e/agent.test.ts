@@ -125,7 +125,7 @@ describe("memory", () => {
 describe("schedules", () => {
   const schedules = async () => (await neo.call("GET", "/v1/schedules")).schedules as any[];
   const heartbeat = async () => (await schedules()).find((s) => s.system === "heartbeat");
-  const runs = async (id: string) => (await neo.call("GET", `/v1/schedules/${id}/runs`)).runs as any[];
+  const runs = async (id: string) => (await neo.call("GET", `/v1/test/schedules/${id}/runs`)).runs as any[];
   const due = (id: string, ago = 1) => neo.call("POST", `/v1/test/schedules/${id}/due?ago=${ago}`);
   const wake = () => neo.call("POST", "/v1/test/wake");
 

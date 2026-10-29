@@ -109,16 +109,6 @@ interface Row {
   updated_at: number;
 }
 
-interface RunRow {
-  id: string;
-  schedule_id: string;
-  due_at: number;
-  fired_at: number;
-  status: ScheduleRun["status"];
-  reason: string | null;
-  message_id: string | null;
-}
-
 /** What firing needs from the rest of Neo. */
 export interface ScheduleDelivery {
   /** Puts the message in the agent's queue (deduplicated by `clientId`); throws when it cannot (no model). */
@@ -166,15 +156,6 @@ export class Schedules {
       agentId,
     );
     return rows.map(toSchedule);
-  }
-
-  async runs(scheduleId: string, limit = 50): Promise<ScheduleRun[]> {
-    const rows = await this.db.all<RunRow>(
-      `SELECT * FROM neo_schedule_runs WHERE schedule_id = ? ORDER BY due_at DESC LIMIT ?`,
-      scheduleId,
-      limit,
-    );
-    return rows.map(toRun);
   }
 
   /** The earliest time anything is due. */
@@ -701,17 +682,5 @@ function toSchedule(row: Row): Schedule {
     endsAt: row.ends_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
-}
-
-function toRun(row: RunRow): ScheduleRun {
-  return {
-    id: row.id,
-    scheduleId: row.schedule_id,
-    dueAt: row.due_at,
-    firedAt: row.fired_at,
-    status: row.status,
-    reason: row.reason,
-    messageId: row.message_id,
   };
 }
