@@ -22,7 +22,8 @@ const view = (m: Memory) => ({
 export function memoryTools(services: ToolServices) {
   const turn = async (conversationId: number) => {
     const c = await caller(services, conversationId);
-    if (!c.turnId) refuse("Memories change only in a turn that answers a message.");
+    if (!c.turnId)
+      refuse("Memories change only in a turn that answers a message.");
     return c as typeof c & { turnId: string };
   };
   return [

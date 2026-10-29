@@ -54,20 +54,27 @@ export class Agents {
   }
 
   async get(id = DEFAULT_AGENT_ID): Promise<AgentRecord> {
-    const row = await this.db.get<Row>(`SELECT * FROM neo_agents WHERE id = ?`, id);
+    const row = await this.db.get<Row>(
+      `SELECT * FROM neo_agents WHERE id = ?`,
+      id,
+    );
     if (!row) throw new Error(`No agent ${id}`);
     return toRecord(row);
   }
 
   async list(): Promise<AgentRecord[]> {
-    const rows = await this.db.all<Row>(`SELECT * FROM neo_agents ORDER BY created_at`);
+    const rows = await this.db.all<Row>(
+      `SELECT * FROM neo_agents ORDER BY created_at`,
+    );
     return rows.map(toRecord);
   }
 
   async update(id: string, change: AgentChange): Promise<AgentRecord> {
     const current = await this.get(id);
-    if (change.name !== undefined && !change.name.trim()) throw new Error("name is empty");
-    if (change.name !== undefined && change.name.length > 60) throw new Error("name is too long");
+    if (change.name !== undefined && !change.name.trim())
+      throw new Error("name is empty");
+    if (change.name !== undefined && change.name.length > 60)
+      throw new Error("name is too long");
     if (change.thinking && !THINKING.includes(change.thinking))
       throw new Error(`thinking is one of ${THINKING.join(", ")}`);
     const model = change.model === undefined ? current.model : change.model;

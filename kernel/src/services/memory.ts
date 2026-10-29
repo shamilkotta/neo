@@ -1,7 +1,17 @@
 import { ulid } from "../ids";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type { MemoryKind, MemoryOrigin, MemoryOwnerKind, Memory } from "@neo/client";
-export type { MemoryKind, MemoryOrigin, MemoryOwnerKind, Memory } from "@neo/client";
+import type {
+  MemoryKind,
+  MemoryOrigin,
+  MemoryOwnerKind,
+  Memory,
+} from "@neo/client";
+export type {
+  MemoryKind,
+  MemoryOrigin,
+  MemoryOwnerKind,
+  Memory,
+} from "@neo/client";
 
 export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   // OpenBot's memory model: an owner (an agent; later a channel or a chat workspace), an origin
@@ -19,7 +29,9 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
-  await tx.exec(`CREATE INDEX neo_memories_by_agent ON neo_memories (agent_id, kind, id)`);
+  await tx.exec(
+    `CREATE INDEX neo_memories_by_agent ON neo_memories (agent_id, kind, id)`,
+  );
   // External content, so an export carries only neo_memories and the index is rebuilt on import.
   await tx.exec(
     `CREATE VIRTUAL TABLE neo_memories_fts USING fts5(text, content='neo_memories', content_rowid='rowid')`,
@@ -43,7 +55,9 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     op TEXT NOT NULL,
     created_at INTEGER NOT NULL
   ) STRICT`);
-  await tx.exec(`CREATE INDEX neo_memory_staged_by_request ON neo_memory_staged (request_id, seq)`);
+  await tx.exec(
+    `CREATE INDEX neo_memory_staged_by_request ON neo_memory_staged (request_id, seq)`,
+  );
 };
 
 /** OpenBot's limits. */

@@ -1,5 +1,9 @@
 import { section } from "@earendil-works/pi-durable";
-import { MEMORY_LIMIT, serializeEssential, type Memories } from "../services/memory";
+import {
+  MEMORY_LIMIT,
+  serializeEssential,
+  type Memories,
+} from "../services/memory";
 import type { Settings } from "../services/settings";
 import type { Agents } from "./agents";
 
@@ -18,7 +22,9 @@ export function promptSections(deps: {
     section(
       "identity",
       async (input) => {
-        const agent = await deps.agents.get(await deps.agentOf(input.conversationId));
+        const agent = await deps.agents.get(
+          await deps.agentOf(input.conversationId),
+        );
         return `You are ${agent.name}, a persistent personal agent. You run continuously on the person's own infrastructure (a laptop, a server or the cloud) and can be moved between them; your memory, files and conversation move with you.
 
 How you work:

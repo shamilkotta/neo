@@ -2,7 +2,9 @@
   "name": "@neo/web",
   "private": true,
   "type": "module",
-  "exports": { "./dist-path": "./dist-path.ts" },
+  "exports": {
+    "./dist-path": "./dist-path.ts"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

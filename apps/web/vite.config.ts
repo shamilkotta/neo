@@ -12,7 +12,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // `bun run dev:web` against a local `neo serve`: same-origin through the proxy.
-    proxy: { "/v1": { target: process.env.NEO_DEV_API ?? "http://127.0.0.1:7420", changeOrigin: true } },
+    proxy: {
+      "/v1": {
+        target: process.env.NEO_DEV_API ?? "http://127.0.0.1:7420",
+        changeOrigin: true,
+      },
+    },
   },
   build: { outDir: "dist", emptyOutDir: true },
 });

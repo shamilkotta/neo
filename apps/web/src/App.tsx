@@ -38,7 +38,13 @@ export function App() {
   );
 }
 
-function Connect({ url, onToken }: { url: string; onToken: (token: string) => void }) {
+function Connect({
+  url,
+  onToken,
+}: {
+  url: string;
+  onToken: (token: string) => void;
+}) {
   const [value, setValue] = useState("");
   return (
     <form
@@ -51,23 +57,40 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
       <h2>Neo</h2>
       <p className="muted">{url}</p>
       <label>API token</label>
-      <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
       <p className="muted">
-        Printed by <code>neo serve</code>, or the <code>NEO_TOKEN</code> secret on Cloudflare.
+        Printed by <code>neo serve</code>, or the <code>NEO_TOKEN</code> secret
+        on Cloudflare.
       </p>
       <button className="primary">Connect</button>
     </form>
   );
 }
 
-function Instance({ client: initial, onForget }: { client: NeoClient; onForget: () => void }) {
+function Instance({
+  client: initial,
+  onForget,
+}: {
+  client: NeoClient;
+  onForget: () => void;
+}) {
   // One client for the life of this screen.
   const [client] = useState(initial);
   const [tab, setTab] = useState<Tab | null>(null);
   const [versions, setVersions] = useState<Record<string, number>>({});
   const bump = useCallback((e: NeoEvent) => {
     const tabs = PANEL_EVENTS[e.type];
-    if (tabs) setVersions((v) => Object.fromEntries([...Object.entries(v), ...tabs.map((t) => [t, (v[t] ?? 0) + 1])]));
+    if (tabs)
+      setVersions((v) =>
+        Object.fromEntries([
+          ...Object.entries(v),
+          ...tabs.map((t) => [t, (v[t] ?? 0) + 1]),
+        ]),
+      );
   }, []);
   const neo = useNeo(client, bump);
   const { status } = neo;
@@ -81,27 +104,63 @@ function Instance({ client: initial, onForget }: { client: NeoClient; onForget: 
     <div id="app">
       <div id="main">
         <header>
-          <span className={`dot ${paused ? "paused" : running ? "running" : "idle"}`} />
+          <span
+            className={`dot ${paused ? "paused" : running ? "running" : "idle"}`}
+          />
           <h1>{status?.agent?.name ?? "Neo"}</h1>
           <span id="state">
             {paused ? "paused" : running ? "working" : "idle"} ·{" "}
-            {status?.model ? `${status.model.provider}/${status.model.modelId}` : "no model"} · {status?.host}
+            {status?.model
+              ? `${status.model.provider}/${status.model.modelId}`
+              : "no model"}{" "}
+            · {status?.host}
           </span>
           <span className="grow" />
-          {running && <button onClick={() => client.stop().then(neo.refresh)}>Stop</button>}
-          <button onClick={() => (paused ? client.resume() : client.pause()).then(neo.refresh)}>{paused ? "Resume" : "Pause"}</button>
-          <button onClick={() => setTab(tab ? null : "Schedules")}>Panel</button>
+          {running && (
+            <button onClick={() => client.stop().then(neo.refresh)}>
+              Stop
+            </button>
+          )}
+          <button
+            onClick={() =>
+              (paused ? client.resume() : client.pause()).then(neo.refresh)
+            }
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
+          <button onClick={() => setTab(tab ? null : "Schedules")}>
+            Panel
+          </button>
         </header>
         {neo.error && <p className="err banner">{neo.error}</p>}
-        <Transcript items={neo.items} turns={neo.turns} live={neo.live} older={neo.older} loadOlder={() => void neo.loadOlder()} />
-        <Queue client={client} queue={neo.queue} running={running} refresh={() => void neo.refresh()} />
-        <Composer client={client} onSent={() => void neo.refresh()} onNeedsSetup={() => setTab("Providers")} />
+        <Transcript
+          items={neo.items}
+          turns={neo.turns}
+          live={neo.live}
+          older={neo.older}
+          loadOlder={() => void neo.loadOlder()}
+        />
+        <Queue
+          client={client}
+          queue={neo.queue}
+          running={running}
+          refresh={() => void neo.refresh()}
+        />
+        <Composer
+          client={client}
+          onSent={() => void neo.refresh()}
+          onNeedsSetup={() => setTab("Providers")}
+        />
       </div>
       {tab && (
         <aside id="side">
           <div id="tabs">
             {TABS.map((t) => (
-              <button key={t} className={t === tab ? "on" : ""} onClick={() => setTab(t)}>
+              <button
+                key={t}
+                className={t === tab ? "on" : ""}
+                onClick={() => setTab(t)}
+              >
                 {t}
               </button>
             ))}
@@ -111,7 +170,13 @@ function Instance({ client: initial, onForget }: { client: NeoClient; onForget: 
             </button>
           </div>
           <div id="pane">
-            <Panel tab={tab} client={client} version={versions[tab] ?? 0} status={status} onForget={onForget} />
+            <Panel
+              tab={tab}
+              client={client}
+              version={versions[tab] ?? 0}
+              status={status}
+              onForget={onForget}
+            />
           </div>
         </aside>
       )}

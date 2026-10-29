@@ -50,14 +50,25 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
     const data = entry.data as InputEntryData | undefined;
     const text = (data?.messages ?? []).map((m) => m.text).join("\n\n");
     if (!text.trim()) return undefined;
-    return { messageId: entry.id as unknown as number, role: "user", text, steps: [] };
+    return {
+      messageId: entry.id as unknown as number,
+      role: "user",
+      text,
+      steps: [],
+    };
   }
-  const message = entry.model?.[0] as { role?: string; content?: unknown } | undefined;
+  const message = entry.model?.[0] as
+    { role?: string; content?: unknown } | undefined;
   if (!message || message.role !== "assistant") return undefined;
   const parts =
     typeof message.content === "string"
       ? [{ type: "text", text: message.content }]
-      : ((message.content as { type: string; text?: string; name?: string; arguments?: unknown }[]) ?? []);
+      : ((message.content as {
+          type: string;
+          text?: string;
+          name?: string;
+          arguments?: unknown;
+        }[]) ?? []);
   const text = parts
     .filter((p) => p.type === "text")
     .map((p) => p.text)
@@ -65,9 +76,16 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
   // Work steps: the tools called, never raw reasoning.
   const steps = parts
     .filter((p) => p.type === "toolCall")
-    .map((p) => `${p.name}(${JSON.stringify(p.arguments ?? {}).slice(0, 200)})`);
+    .map(
+      (p) => `${p.name}(${JSON.stringify(p.arguments ?? {}).slice(0, 200)})`,
+    );
   if (!text.trim() && steps.length === 0) return undefined;
-  return { messageId: entry.id as unknown as number, role: "assistant", text, steps };
+  return {
+    messageId: entry.id as unknown as number,
+    role: "assistant",
+    text,
+    steps,
+  };
 }
 
 /**
@@ -84,12 +102,17 @@ export class History {
   sync(agentId: string, conversation: Conversation): Promise<void> {
     const running = this.syncing.get(agentId);
     if (running) return running;
-    const run = this.catchUp(agentId, conversation).finally(() => this.syncing.delete(agentId));
+    const run = this.catchUp(agentId, conversation).finally(() =>
+      this.syncing.delete(agentId),
+    );
     this.syncing.set(agentId, run);
     return run;
   }
 
-  private async catchUp(agentId: string, conversation: Conversation): Promise<void> {
+  private async catchUp(
+    agentId: string,
+    conversation: Conversation,
+  ): Promise<void> {
     const last = await this.db.get<{ id: number | null }>(
       `SELECT max(entry_id) AS id FROM neo_history WHERE agent_id = ?`,
       agentId,
@@ -97,12 +120,17 @@ export class History {
     let cursor: Parameters<Conversation["entries"]>[2];
     for (;;) {
       const page = await conversation.entries(
-        { order: "ascending", ...(last?.id ? { minEntryId: (last.id + 1) as never } : {}) },
+        {
+          order: "ascending",
+          ...(last?.id ? { minEntryId: (last.id + 1) as never } : {}),
+        },
         SYNC_PAGE,
         cursor,
         BACKGROUND_CONTEXT,
       );
-      const lines = page.items.map(lineOf).filter((l): l is HistoryLine => l !== undefined);
+      const lines = page.items
+        .map(lineOf)
+        .filter((l): l is HistoryLine => l !== undefined);
       if (lines.length)
         await this.db.transaction(async (tx) => {
           for (const line of lines)
@@ -125,14 +153,24 @@ export class History {
     agentId: string,
     query: string,
     options: { before?: number; limit?: number } = {},
-  ): Promise<(Pick<HistoryLine, "messageId" | "role"> & { excerpt: string; length: number })[]> {
+  ): Promise<
+    (Pick<HistoryLine, "messageId" | "role"> & {
+      excerpt: string;
+      length: number;
+    })[]
+  > {
     const terms = query
       .toLowerCase()
       .split(/[^\p{L}\p{N}]+/u)
       .filter(Boolean)
       .map((t) => `"${t}"*`);
     if (terms.length === 0) return [];
-    const rows = await this.db.all<{ entry_id: number; role: "user" | "assistant"; excerpt: string; length: number }>(
+    const rows = await this.db.all<{
+      entry_id: number;
+      role: "user" | "assistant";
+      excerpt: string;
+      length: number;
+    }>(
       `SELECT h.entry_id, h.role, length(h.text) AS length,
               snippet(neo_history_fts, 0, '', '', '…', 48) AS excerpt
        FROM neo_history_fts JOIN neo_history h ON h.id = neo_history_fts.rowid
@@ -143,10 +181,18 @@ export class History {
       options.before ?? Number.MAX_SAFE_INTEGER,
       Math.min(Math.max(options.limit ?? 8, 1), 20),
     );
-    return rows.map((r) => ({ messageId: r.entry_id, role: r.role, excerpt: r.excerpt, length: r.length }));
+    return rows.map((r) => ({
+      messageId: r.entry_id,
+      role: r.role,
+      excerpt: r.excerpt,
+      length: r.length,
+    }));
   }
 
-  async message(agentId: string, messageId: number): Promise<HistoryLine | undefined> {
+  async message(
+    agentId: string,
+    messageId: number,
+  ): Promise<HistoryLine | undefined> {
     const row = await this.db.get<Row>(
       `SELECT entry_id, role, text, steps FROM neo_history WHERE agent_id = ? AND entry_id = ?`,
       agentId,
@@ -156,7 +202,11 @@ export class History {
   }
 
   /** A page of messages before `before`, oldest first, and the cursor for the page before it. */
-  async page(agentId: string, before: number | undefined, limit: number): Promise<{ lines: HistoryLine[]; before: number | null }> {
+  async page(
+    agentId: string,
+    before: number | undefined,
+    limit: number,
+  ): Promise<{ lines: HistoryLine[]; before: number | null }> {
     const rows = await this.db.all<Row>(
       `SELECT entry_id, role, text, steps FROM neo_history WHERE agent_id = ? AND entry_id < ? ORDER BY entry_id DESC LIMIT ?`,
       agentId,
@@ -170,5 +220,10 @@ export class History {
 }
 
 function toLine(row: Row): HistoryLine {
-  return { messageId: row.entry_id, role: row.role, text: row.text, steps: JSON.parse(row.steps) as string[] };
+  return {
+    messageId: row.entry_id,
+    role: row.role,
+    text: row.text,
+    steps: JSON.parse(row.steps) as string[],
+  };
 }

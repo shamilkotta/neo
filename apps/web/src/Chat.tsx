@@ -1,5 +1,16 @@
-import type { MailboxMessage, NeoClient, TranscriptItem, Turn } from "@neo/client";
-import { type FormEvent, type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import type {
+  MailboxMessage,
+  NeoClient,
+  TranscriptItem,
+  Turn,
+} from "@neo/client";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { LiveTurn } from "./useNeo";
 
 /** Markdown-lite: code blocks, inline code and bold; everything else is plain text. */
@@ -14,15 +25,21 @@ function Markdown({ text }: { text: string }) {
           </pre>
         ) : (
           <span key={i}>
-            {part.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).map((piece, j) =>
-              piece.startsWith("`") && piece.endsWith("`") && piece.length > 1 ? (
-                <code key={j}>{piece.slice(1, -1)}</code>
-              ) : piece.startsWith("**") && piece.endsWith("**") && piece.length > 3 ? (
-                <b key={j}>{piece.slice(2, -2)}</b>
-              ) : (
-                piece
-              ),
-            )}
+            {part
+              .split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g)
+              .map((piece, j) =>
+                piece.startsWith("`") &&
+                piece.endsWith("`") &&
+                piece.length > 1 ? (
+                  <code key={j}>{piece.slice(1, -1)}</code>
+                ) : piece.startsWith("**") &&
+                  piece.endsWith("**") &&
+                  piece.length > 3 ? (
+                  <b key={j}>{piece.slice(2, -2)}</b>
+                ) : (
+                  piece
+                ),
+              )}
           </span>
         ),
       )}
@@ -30,9 +47,22 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
-const time = (at: number) => new Date(at).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+const time = (at: number) =>
+  new Date(at).toLocaleString([], {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
-function Item({ item, turns, results }: { item: TranscriptItem; turns: Record<string, Turn>; results: Map<string, TranscriptItem & { type: "tool" }> }) {
+function Item({
+  item,
+  turns,
+  results,
+}: {
+  item: TranscriptItem;
+  turns: Record<string, Turn>;
+  results: Map<string, TranscriptItem & { type: "tool" }>;
+}) {
   if (item.type === "input") {
     const turn = turns[item.turnId];
     return (
@@ -42,7 +72,9 @@ function Item({ item, turns, results }: { item: TranscriptItem; turns: Record<st
             <div className="meta">
               {m.source === "user" ? "You" : m.source} · {time(m.at)}
               {item.steered && " · joined the turn"}
-              {turn && turn.status !== "completed" && <span className={`chip ${turn.status}`}>{turn.status}</span>}
+              {turn && turn.status !== "completed" && (
+                <span className={`chip ${turn.status}`}>{turn.status}</span>
+              )}
             </div>
             <div className="bubble">{m.text}</div>
             {turn?.error && <div className="err">{turn.error}</div>}
@@ -73,11 +105,14 @@ function Item({ item, turns, results }: { item: TranscriptItem; turns: Record<st
             </details>
           );
         })}
-        {item.error && item.stopReason !== "aborted" && <div className="err">{item.error}</div>}
+        {item.error && item.stopReason !== "aborted" && (
+          <div className="err">{item.error}</div>
+        )}
       </div>
     );
   }
-  if (item.type === "compaction") return <div className="note">— earlier conversation summarized —</div>;
+  if (item.type === "compaction")
+    return <div className="note">— earlier conversation summarized —</div>;
   if (item.type === "reset") return <div className="note">— new context —</div>;
   return null;
 }
@@ -92,11 +127,14 @@ export function Transcript(props: {
   const log = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const results = new Map(
-    props.items.filter((i): i is TranscriptItem & { type: "tool" } => i.type === "tool").map((i) => [i.toolCallId, i]),
+    props.items
+      .filter((i): i is TranscriptItem & { type: "tool" } => i.type === "tool")
+      .map((i) => [i.toolCallId, i]),
   );
   // Stay at the bottom while new things arrive, unless the person scrolled up.
   useLayoutEffect(() => {
-    if (pinned.current && log.current) log.current.scrollTop = log.current.scrollHeight;
+    if (pinned.current && log.current)
+      log.current.scrollTop = log.current.scrollHeight;
   });
   return (
     <div
@@ -114,9 +152,16 @@ export function Transcript(props: {
           </button>
         </div>
       )}
-      {props.items.length === 0 && !props.live.active && <div className="note">Say hello to Neo.</div>}
+      {props.items.length === 0 && !props.live.active && (
+        <div className="note">Say hello to Neo.</div>
+      )}
       {props.items.map((item) => (
-        <Item key={item.entryId} item={item} turns={props.turns} results={results} />
+        <Item
+          key={item.entryId}
+          item={item}
+          turns={props.turns}
+          results={results}
+        />
       ))}
       {props.live.active && (
         <div className="msg">
@@ -139,7 +184,17 @@ export function Transcript(props: {
   );
 }
 
-export function Queue({ client, queue, running, refresh }: { client: NeoClient; queue: MailboxMessage[]; running: boolean; refresh: () => void }) {
+export function Queue({
+  client,
+  queue,
+  running,
+  refresh,
+}: {
+  client: NeoClient;
+  queue: MailboxMessage[];
+  running: boolean;
+  refresh: () => void;
+}) {
   if (queue.length === 0) return null;
   const act = async (fn: () => Promise<unknown>) => {
     try {
@@ -158,7 +213,10 @@ export function Queue({ client, queue, running, refresh }: { client: NeoClient; 
             {m.text}
           </span>
           {running && (
-            <button className="small" onClick={() => act(() => client.steerQueued(m.id))}>
+            <button
+              className="small"
+              onClick={() => act(() => client.steerQueued(m.id))}
+            >
               Join turn
             </button>
           )}
@@ -185,7 +243,10 @@ export function Queue({ client, queue, running, refresh }: { client: NeoClient; 
           >
             Edit
           </button>
-          <button className="small" onClick={() => act(() => client.cancelQueued(m.id))}>
+          <button
+            className="small"
+            onClick={() => act(() => client.cancelQueued(m.id))}
+          >
             ✕
           </button>
         </div>
@@ -194,7 +255,15 @@ export function Queue({ client, queue, running, refresh }: { client: NeoClient; 
   );
 }
 
-export function Composer({ client, onSent, onNeedsSetup }: { client: NeoClient; onSent: () => void; onNeedsSetup: () => void }) {
+export function Composer({
+  client,
+  onSent,
+  onNeedsSetup,
+}: {
+  client: NeoClient;
+  onSent: () => void;
+  onNeedsSetup: () => void;
+}) {
   const [text, setText] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {

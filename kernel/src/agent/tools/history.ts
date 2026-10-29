@@ -11,7 +11,10 @@ export function historyTools(services: ToolServices) {
   /** The index catches up with the transcript before each use. */
   const ready = async (conversationId: number) => {
     const c = await caller(services, conversationId);
-    await services.history.sync(c.agentId, await services.conversation(c.agentId));
+    await services.history.sync(
+      c.agentId,
+      await services.conversation(c.agentId),
+    );
     return c;
   };
   return [
@@ -21,7 +24,9 @@ export function historyTools(services: ToolServices) {
         "Search your whole conversation history with the person, including messages from before a compaction that you no longer see. Every term must appear (words match by prefix, case-insensitive). Returns excerpts, newest first, and a cursor; use history_read for the full text.",
       parameters: Type.Object({
         query: Type.String({ minLength: 1, maxLength: 500 }),
-        before: Type.Optional(Type.Number({ description: "A cursor from an earlier result" })),
+        before: Type.Optional(
+          Type.Number({ description: "A cursor from an earlier result" }),
+        ),
         limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
       }),
       replay: "safe",
@@ -31,7 +36,10 @@ export function historyTools(services: ToolServices) {
           ...(args.before !== undefined ? { before: args.before } : {}),
           limit: args.limit ?? 8,
         });
-        return json({ results, nextCursor: results.length ? results.at(-1)!.messageId : null });
+        return json({
+          results,
+          nextCursor: results.length ? results.at(-1)!.messageId : null,
+        });
       },
     }),
     defineTool({
@@ -48,7 +56,10 @@ export function historyTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await ready(api.conversationId);
         if (args.messageId !== undefined) {
-          const line = await services.history.message(c.agentId, args.messageId);
+          const line = await services.history.message(
+            c.agentId,
+            args.messageId,
+          );
           if (!line) refuse("No such message.");
           const offset = args.offset ?? 0;
           const stepsFrom = args.workStepsOffset ?? 0;
@@ -57,9 +68,13 @@ export function historyTools(services: ToolServices) {
             role: line!.role,
             text: line!.text.slice(offset, offset + READ_CHARS),
             offset,
-            nextOffset: offset + READ_CHARS < line!.text.length ? offset + READ_CHARS : null,
+            nextOffset:
+              offset + READ_CHARS < line!.text.length
+                ? offset + READ_CHARS
+                : null,
             workSteps: line!.steps.slice(stepsFrom, stepsFrom + STEPS),
-            nextWorkStepsOffset: stepsFrom + STEPS < line!.steps.length ? stepsFrom + STEPS : null,
+            nextWorkStepsOffset:
+              stepsFrom + STEPS < line!.steps.length ? stepsFrom + STEPS : null,
           });
         }
         const page = await services.history.page(c.agentId, args.before, PAGE);

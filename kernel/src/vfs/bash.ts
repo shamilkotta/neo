@@ -21,7 +21,10 @@ const POSIX: Record<VfsError["code"], [string, string]> = {
   exists: ["EEXIST", "file already exists"],
   not_empty: ["ENOTEMPTY", "directory not empty"],
   invalid: ["EINVAL", "invalid argument"],
-  too_large: ["EFBIG", "file too large for the shell (it reads whole files; use the read tool with offset and limit)"],
+  too_large: [
+    "EFBIG",
+    "file too large for the shell (it reads whole files; use the read tool with offset and limit)",
+  ],
 };
 
 function posix(op: string, path: string, error: unknown): Error {
@@ -73,7 +76,8 @@ export class VfsBashFs implements IFileSystem {
 
   private whole(path: string) {
     return this.vfs.readFile(path).catch((error) => {
-      if (error instanceof VfsError && error.code === "too_large") this.tooLarge.add(error.path);
+      if (error instanceof VfsError && error.code === "too_large")
+        this.tooLarge.add(error.path);
       throw error;
     });
   }
@@ -84,7 +88,8 @@ export class VfsBashFs implements IFileSystem {
       const encoding =
         typeof options === "string" ? options : options?.encoding;
       // Not String.fromCharCode(...data): spreading a large file overflows the call stack.
-      if (encoding === "binary" || encoding === "latin1") return new TextDecoder("latin1").decode(data);
+      if (encoding === "binary" || encoding === "latin1")
+        return new TextDecoder("latin1").decode(data);
       return new TextDecoder().decode(data);
     });
   }
@@ -226,7 +231,8 @@ export class VfsShell {
       ...(options.signal ? { signal: options.signal } : {}),
     });
     const notes = [...this.fs.tooLarge].map(
-      (p) => `neo: ${p} is over the shell's ${WHOLE_READ_MAX / 1024 / 1024} MB limit (it reads whole files); use the read tool with offset and limit\n`,
+      (p) =>
+        `neo: ${p} is over the shell's ${WHOLE_READ_MAX / 1024 / 1024} MB limit (it reads whole files); use the read tool with offset and limit\n`,
     );
     return {
       stdout: result.stdout,

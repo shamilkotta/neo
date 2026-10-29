@@ -10,8 +10,21 @@ import { ulid } from "../ids";
 import { QUIET_REPLY } from "./schedules";
 import type { Events } from "../services/events";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type { MessageSource, MessageStatus, TurnStatus, MailboxMessage, Turn, InputMessage } from "@neo/client";
-export type { MessageSource, MessageStatus, TurnStatus, MailboxMessage, Turn } from "@neo/client";
+import type {
+  MessageSource,
+  MessageStatus,
+  TurnStatus,
+  MailboxMessage,
+  Turn,
+  InputMessage,
+} from "@neo/client";
+export type {
+  MessageSource,
+  MessageStatus,
+  TurnStatus,
+  MailboxMessage,
+  Turn,
+} from "@neo/client";
 
 export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   // Every message to an agent, from arrival to settle (OpenBot's mailbox deliveries).
@@ -32,7 +45,9 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     started_at INTEGER,
     settled_at INTEGER
   ) STRICT`);
-  await tx.exec(`CREATE INDEX neo_mailbox_queue ON neo_mailbox (agent_id, status, position)`);
+  await tx.exec(
+    `CREATE INDEX neo_mailbox_queue ON neo_mailbox (agent_id, status, position)`,
+  );
   await tx.exec(`CREATE INDEX neo_mailbox_by_turn ON neo_mailbox (turn_id)`);
   // One turn: the messages it started with (and any steered in), answered by one Pi run.
   await tx.exec(`CREATE TABLE neo_turns (
@@ -48,7 +63,9 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     started_at INTEGER NOT NULL,
     ended_at INTEGER
   ) STRICT`);
-  await tx.exec(`CREATE INDEX neo_turns_by_status ON neo_turns (agent_id, status, started_at)`);
+  await tx.exec(
+    `CREATE INDEX neo_turns_by_status ON neo_turns (agent_id, status, started_at)`,
+  );
 };
 
 /** What the turn's input entry carries, so the transcript shows each message as it was sent. */
@@ -60,7 +77,6 @@ export interface InputEntryData {
 }
 
 export const INPUT_ENTRY = "neo.input";
-
 
 export interface SendInput {
   text: string;
@@ -155,7 +171,10 @@ export class Mailbox {
   // ---- reads ---------------------------------------------------------------------------------
 
   async message(id: string): Promise<MailboxMessage | undefined> {
-    const row = await this.db.get<MessageRow>(`SELECT * FROM neo_mailbox WHERE id = ?`, id);
+    const row = await this.db.get<MessageRow>(
+      `SELECT * FROM neo_mailbox WHERE id = ?`,
+      id,
+    );
     return row ? toMessage(row) : undefined;
   }
 
@@ -169,7 +188,10 @@ export class Mailbox {
   }
 
   async turn(id: string): Promise<Turn | undefined> {
-    const row = await this.db.get<TurnRow>(`SELECT * FROM neo_turns WHERE id = ?`, id);
+    const row = await this.db.get<TurnRow>(
+      `SELECT * FROM neo_turns WHERE id = ?`,
+      id,
+    );
     return row ? toTurn(row) : undefined;
   }
 
@@ -213,9 +235,17 @@ export class Mailbox {
   async send(agentId: string, input: SendInput): Promise<MailboxMessage> {
     const text = input.text.trim();
     if (!text) throw new MailboxError("The message is empty");
-    if (text.length > MAX_TEXT) throw new MailboxError(`The message is too long (${MAX_TEXT} characters)`);
-    if (input.clientId !== undefined && !/^[\w.:-]{1,100}$/.test(input.clientId))
-      throw new MailboxError("clientId is 1-100 letters, digits, '.', ':', '_' or '-'");
+    if (text.length > MAX_TEXT)
+      throw new MailboxError(
+        `The message is too long (${MAX_TEXT} characters)`,
+      );
+    if (
+      input.clientId !== undefined &&
+      !/^[\w.:-]{1,100}$/.test(input.clientId)
+    )
+      throw new MailboxError(
+        "clientId is 1-100 letters, digits, '.', ':', '_' or '-'",
+      );
     const message = await this.lane(agentId, async () => {
       if (input.clientId) {
         const existing = await this.db.get<MessageRow>(
@@ -240,9 +270,15 @@ export class Mailbox {
       return { message: toMessage(row!), fresh: true };
     });
     if (!message.fresh) return message.message;
-    await this.events.emit("message.queued", { message: message.message }, agentId);
+    await this.events.emit(
+      "message.queued",
+      { message: message.message },
+      agentId,
+    );
     if (input.steer && (await this.currentTurn(agentId))) {
-      await this.steer(agentId, message.message.id).catch(() => this.drain(agentId));
+      await this.steer(agentId, message.message.id).catch(() =>
+        this.drain(agentId),
+      );
     } else {
       await this.drain(agentId);
     }
@@ -261,7 +297,12 @@ export class Mailbox {
       const content = await this.prompt(queued);
       const data: InputEntryData = {
         turnId,
-        messages: queued.map((m) => ({ id: m.id, source: m.source, text: m.text, at: m.createdAt })),
+        messages: queued.map((m) => ({
+          id: m.id,
+          source: m.source,
+          text: m.text,
+          at: m.createdAt,
+        })),
       };
       const input = { content, entry: { kind: INPUT_ENTRY, data } };
       // The turn and its rows first, in one commit: a crash after this is a turn recovery submits.
@@ -294,14 +335,27 @@ export class Mailbox {
   steer(agentId: string, messageId: string): Promise<void> {
     return this.lane(agentId, async () => {
       const message = await this.message(messageId);
-      if (!message || message.agentId !== agentId || message.status !== "queued")
-        throw new MailboxError("Only a queued message can join the running turn");
+      if (
+        !message ||
+        message.agentId !== agentId ||
+        message.status !== "queued"
+      )
+        throw new MailboxError(
+          "Only a queued message can join the running turn",
+        );
       const turn = await this.currentTurn(agentId);
       if (!turn) throw new MailboxError("No turn is running");
       const data: InputEntryData = {
         turnId: turn.id,
         steered: true,
-        messages: [{ id: message.id, source: message.source, text: message.text, at: message.createdAt }],
+        messages: [
+          {
+            id: message.id,
+            source: message.source,
+            text: message.text,
+            at: message.createdAt,
+          },
+        ],
       };
       await this.db.run(
         `UPDATE neo_mailbox SET status = 'starting', turn_id = ?, steered = 1, started_at = ? WHERE id = ?`,
@@ -327,7 +381,11 @@ export class Mailbox {
         submission.id,
         message.id,
       );
-      await this.events.emit("message.steered", { messageId, turnId: turn.id }, agentId);
+      await this.events.emit(
+        "message.steered",
+        { messageId, turnId: turn.id },
+        agentId,
+      );
       this.trackSteer(agentId, message.id, submission.id);
     });
   }
@@ -337,7 +395,10 @@ export class Mailbox {
     const stopped = await this.lane(agentId, async () => {
       const turn = await this.currentTurn(agentId);
       if (!turn) return false;
-      await this.db.run(`UPDATE neo_turns SET stop_requested = 1 WHERE id = ?`, turn.id);
+      await this.db.run(
+        `UPDATE neo_turns SET stop_requested = 1 WHERE id = ?`,
+        turn.id,
+      );
       await (await this.hooks.conversation(agentId)).abort(context);
       return true;
     });
@@ -353,15 +414,23 @@ export class Mailbox {
         messageId,
         agentId,
       );
-      if (!changed) throw new MailboxError("Only a queued message can be cancelled");
+      if (!changed)
+        throw new MailboxError("Only a queued message can be cancelled");
     });
     await this.events.emit("message.cancelled", { messageId }, agentId);
   }
 
-  async edit(agentId: string, messageId: string, text: string): Promise<MailboxMessage> {
+  async edit(
+    agentId: string,
+    messageId: string,
+    text: string,
+  ): Promise<MailboxMessage> {
     const trimmed = text.trim();
     if (!trimmed) throw new MailboxError("The message is empty");
-    if (trimmed.length > MAX_TEXT) throw new MailboxError(`The message is too long (${MAX_TEXT} characters)`);
+    if (trimmed.length > MAX_TEXT)
+      throw new MailboxError(
+        `The message is too long (${MAX_TEXT} characters)`,
+      );
     const row = await this.lane(agentId, () =>
       this.db.get<MessageRow>(
         `UPDATE neo_mailbox SET text = ? WHERE id = ? AND agent_id = ? AND status = 'queued' RETURNING *`,
@@ -386,7 +455,11 @@ export class Mailbox {
       await this.db.transaction(async (tx) => {
         let position = 1;
         for (const id of [...named, ...rest])
-          await tx.run(`UPDATE neo_mailbox SET position = ? WHERE id = ?`, position++, id);
+          await tx.run(
+            `UPDATE neo_mailbox SET position = ? WHERE id = ?`,
+            position++,
+            id,
+          );
       });
     });
     await this.events.emit("queue.reordered", {}, agentId);
@@ -410,7 +483,8 @@ export class Mailbox {
         agentId,
       );
       for (const row of steers) {
-        if (row.pi_submission !== null) this.trackSteer(agentId, row.id, row.pi_submission as SubmissionId);
+        if (row.pi_submission !== null)
+          this.trackSteer(agentId, row.id, row.pi_submission as SubmissionId);
         else
           // Cut off before Pi admitted it: it waits in the queue again.
           await this.db.run(
@@ -441,7 +515,11 @@ export class Mailbox {
       context,
     );
     await this.db.transaction(async (tx) => {
-      await tx.run(`UPDATE neo_turns SET pi_submission = ? WHERE id = ?`, submission.id, turnId);
+      await tx.run(
+        `UPDATE neo_turns SET pi_submission = ? WHERE id = ?`,
+        submission.id,
+        turnId,
+      );
       await tx.run(
         `UPDATE neo_mailbox SET status = 'running', pi_submission = ? WHERE turn_id = ? AND steered = 0 AND status = 'starting'`,
         submission.id,
@@ -451,13 +529,21 @@ export class Mailbox {
     this.trackTurn(agentId, turnId, submission.id);
   }
 
-  private trackTurn(agentId: string, turnId: string, submissionId: SubmissionId): void {
+  private trackTurn(
+    agentId: string,
+    turnId: string,
+    submissionId: SubmissionId,
+  ): void {
     this.follow(`turn:${turnId}`, submissionId, (record) =>
       this.lane(agentId, () => this.settleTurn(agentId, turnId, record)),
     );
   }
 
-  private trackSteer(agentId: string, messageId: string, submissionId: SubmissionId): void {
+  private trackSteer(
+    agentId: string,
+    messageId: string,
+    submissionId: SubmissionId,
+  ): void {
     this.follow(`steer:${messageId}`, submissionId, (record) =>
       this.lane(agentId, () => this.settleSteer(agentId, messageId, record)),
     );
@@ -485,12 +571,21 @@ export class Mailbox {
     })();
   }
 
-  private async settleTurn(agentId: string, turnId: string, record: SubmissionRecord): Promise<void> {
-    const row = await this.db.get<TurnRow>(`SELECT * FROM neo_turns WHERE id = ?`, turnId);
+  private async settleTurn(
+    agentId: string,
+    turnId: string,
+    record: SubmissionRecord,
+  ): Promise<void> {
+    const row = await this.db.get<TurnRow>(
+      `SELECT * FROM neo_turns WHERE id = ?`,
+      turnId,
+    );
     if (!row || row.status !== "running") return;
     const { status, error } = outcome(record, row.stop_requested === 1);
     const answer =
-      record.status === "done" ? await this.entryText(agentId, record.answer) : null;
+      record.status === "done"
+        ? await this.entryText(agentId, record.answer)
+        : null;
     const messages = await this.turnMessages(turnId);
     const quiet =
       status === "completed" &&
@@ -521,15 +616,27 @@ export class Mailbox {
     try {
       await this.hooks.turnSettled(turn, await this.turnMessages(turnId));
     } catch (e) {
-      await this.events.emit("error", { where: "turn.settled", message: errorText(e) }, agentId);
+      await this.events.emit(
+        "error",
+        { where: "turn.settled", message: errorText(e) },
+        agentId,
+      );
     }
     // The next turn starts after this lane step: drain queues behind it.
     void this.drain(agentId);
   }
 
-  private async settleSteer(agentId: string, messageId: string, record: SubmissionRecord): Promise<void> {
+  private async settleSteer(
+    agentId: string,
+    messageId: string,
+    record: SubmissionRecord,
+  ): Promise<void> {
     const message = await this.message(messageId);
-    if (!message || (message.status !== "running" && message.status !== "starting")) return;
+    if (
+      !message ||
+      (message.status !== "running" && message.status !== "starting")
+    )
+      return;
     if (record.status === "unanswered" && record.entry === undefined) {
       // Withdrawn before it reached the transcript (a stop): it waits in the queue again.
       await this.db.run(
@@ -553,18 +660,30 @@ export class Mailbox {
   }
 
   /** The text of an answer entry. */
-  private async entryText(agentId: string, entryId: unknown): Promise<string | null> {
+  private async entryText(
+    agentId: string,
+    entryId: unknown,
+  ): Promise<string | null> {
     const conversation = await this.hooks.conversation(agentId);
-    const page = await conversation.entries({ order: "descending" }, 50, undefined, context);
+    const page = await conversation.entries(
+      { order: "descending" },
+      50,
+      undefined,
+      context,
+    );
     const entry = page.items.find((e) => e.id === entryId);
     return entry ? textOf(entry) : null;
   }
 
   /** The model's view of the messages a turn starts with (OpenBot's combined delivery). */
-  private async prompt(messages: MailboxMessage[], steered = false): Promise<string> {
+  private async prompt(
+    messages: MailboxMessage[],
+    steered = false,
+  ): Promise<string> {
     const timezone = await this.hooks.timezone();
     const parts = messages.map((m) => `${header(m, timezone)}\n${m.text}`);
-    if (steered) return `[This message arrived while you were working. Take it into account.]\n${parts[0]}`;
+    if (steered)
+      return `[This message arrived while you were working. Take it into account.]\n${parts[0]}`;
     if (parts.length === 1) return parts[0]!;
     return `This turn starts with ${parts.length} messages. Read all of them before you answer.\n\n${parts.join("\n\n---\n\n")}`;
   }
@@ -600,7 +719,8 @@ const SOURCE_LABEL: Record<MessageSource, string> = {
 
 function header(message: MailboxMessage, timezone: string): string {
   const at = formatTime(message.createdAt, timezone);
-  if (message.source !== "schedule") return `[${SOURCE_LABEL[message.source]} · ${at}]`;
+  if (message.source !== "schedule")
+    return `[${SOURCE_LABEL[message.source]} · ${at}]`;
   const { name, scheduleId, dueAt, late, quiet } = message.meta as {
     name?: string;
     scheduleId?: string;
@@ -608,9 +728,17 @@ function header(message: MailboxMessage, timezone: string): string {
     late?: number;
     quiet?: boolean;
   };
-  const lines = [`[Your schedule "${name ?? "?"}" (${scheduleId ?? "?"}) · ${at}]`];
-  if (late && dueAt) lines.push(`[It was due ${formatTime(dueAt, timezone)}; the host was not running then.]`);
-  if (quiet) lines.push(`[If there is nothing worth telling the person, answer exactly ${QUIET_REPLY} and nothing else; it is not shown.]`);
+  const lines = [
+    `[Your schedule "${name ?? "?"}" (${scheduleId ?? "?"}) · ${at}]`,
+  ];
+  if (late && dueAt)
+    lines.push(
+      `[It was due ${formatTime(dueAt, timezone)}; the host was not running then.]`,
+    );
+  if (quiet)
+    lines.push(
+      `[If there is nothing worth telling the person, answer exactly ${QUIET_REPLY} and nothing else; it is not shown.]`,
+    );
   return lines.join("\n");
 }
 
@@ -632,8 +760,12 @@ function outcome(
   stopRequested: boolean,
 ): { status: Exclude<TurnStatus, "running">; error: string | null } {
   if (record.status === "done") return { status: "completed", error: null };
-  if (stopRequested || record.reason === "aborted") return { status: "interrupted", error: null };
-  const detail = record.detail === undefined ? "" : `: ${JSON.stringify(record.detail).slice(0, 500)}`;
+  if (stopRequested || record.reason === "aborted")
+    return { status: "interrupted", error: null };
+  const detail =
+    record.detail === undefined
+      ? ""
+      : `: ${JSON.stringify(record.detail).slice(0, 500)}`;
   return { status: "failed", error: `${record.reason ?? "failed"}${detail}` };
 }
 

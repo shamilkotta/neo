@@ -56,13 +56,13 @@ bun run test:cf
 
 ## API (JSON, `Authorization: Bearer <token>`)
 
-| Area | Routes |
-| --- | --- |
-| Instance | `GET /v1/status`, `GET /v1/events?after=` (SSE: durable events with ids, plus `live` turn deltas). Any origin (CORS); token in the header only. |
+| Area         | Routes                                                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instance     | `GET /v1/status`, `GET /v1/events?after=` (SSE: durable events with ids, plus `live` turn deltas). Any origin (CORS); token in the header only.                       |
 | Conversation | `POST /v1/messages` `{text, clientId?, steer?}`, `GET /v1/transcript?before=&limit=`, `GET /v1/live`, `GET /v1/turns/:id`, `POST /v1/stop`, `/v1/pause`, `/v1/resume` |
-| Queue | `GET /v1/queue`, `PATCH/DELETE /v1/queue/:id`, `POST /v1/queue/:id/steer`, `PUT /v1/queue/order` |
-| Memory | `GET /v1/memories?q=`, `POST /v1/memories`, `PATCH/DELETE /v1/memories/:id` |
-| Wake-ups | `GET/POST /v1/wakeups`, `DELETE /v1/wakeups/:id` |
-| Agent | `GET/PATCH /v1/agent` (name, instructions, model, thinking, heartbeat), `GET/PUT /v1/settings` |
-| Models | `GET /v1/providers`, `PUT/DELETE /v1/providers/:id`, `GET /v1/providers/detect`, `GET /v1/models` |
-| Files | `GET/PUT/DELETE /v1/files?path=` |
+| Queue        | `GET /v1/queue`, `PATCH/DELETE /v1/queue/:id`, `POST /v1/queue/:id/steer`, `PUT /v1/queue/order`                                                                      |
+| Memory       | `GET /v1/memories?q=`, `POST /v1/memories`, `PATCH/DELETE /v1/memories/:id`                                                                                           |
+| Wake-ups     | `GET/POST /v1/wakeups`, `DELETE /v1/wakeups/:id`                                                                                                                      |
+| Agent        | `GET/PATCH /v1/agent` (name, instructions, model, thinking, heartbeat), `GET/PUT /v1/settings`                                                                        |
+| Models       | `GET /v1/providers`, `PUT/DELETE /v1/providers/:id`, `GET /v1/providers/detect`, `GET /v1/models`                                                                     |
+| Files        | `GET/PUT/DELETE /v1/files?path=`                                                                                                                                      |

@@ -52,7 +52,10 @@ export class Events {
       } catch {}
     }
     if (++this.writes % 500 === 0)
-      await this.db.run(`DELETE FROM neo_events WHERE seq <= ?`, event.seq - KEEP);
+      await this.db.run(
+        `DELETE FROM neo_events WHERE seq <= ?`,
+        event.seq - KEEP,
+      );
     return event;
   }
 
@@ -118,7 +121,9 @@ export class Events {
         const send = (event: NeoEvent) => {
           if (event.seq <= last) return;
           last = event.seq;
-          write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+          write(
+            `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+          );
         };
         // Buffer what happens while the backlog is read, so nothing falls between the two.
         const pending: NeoEvent[] = [];

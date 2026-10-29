@@ -1,9 +1,20 @@
 import { Cron } from "croner";
 import { ulid } from "../ids";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type { MailboxMessage, Schedule, ScheduleInput, ScheduleRun, ScheduleSpec } from "@neo/client";
+import type {
+  MailboxMessage,
+  Schedule,
+  ScheduleInput,
+  ScheduleRun,
+  ScheduleSpec,
+} from "@neo/client";
 import type { SendInput } from "./mailbox";
-export type { Schedule, ScheduleInput, ScheduleRun, ScheduleSpec } from "@neo/client";
+export type {
+  Schedule,
+  ScheduleInput,
+  ScheduleRun,
+  ScheduleSpec,
+} from "@neo/client";
 
 export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   // Everything that wakes an agent on a clock: one-off reminders, routines, the heartbeat.
@@ -35,7 +46,9 @@ export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     updated_at INTEGER NOT NULL,
     UNIQUE (agent_id, system)
   ) STRICT`);
-  await tx.exec(`CREATE INDEX neo_schedules_due ON neo_schedules (next_at) WHERE next_at IS NOT NULL`);
+  await tx.exec(
+    `CREATE INDEX neo_schedules_due ON neo_schedules (next_at) WHERE next_at IS NOT NULL`,
+  );
   // One row per due time: what happened to it. The unique key makes a fire record once.
   await tx.exec(`CREATE TABLE neo_schedule_runs (
     id TEXT PRIMARY KEY,
@@ -144,12 +157,19 @@ export class Schedules {
   // ---- reads ---------------------------------------------------------------------------------
 
   async get(agentId: string, id: string): Promise<Schedule | undefined> {
-    const row = await this.db.get<Row>(`SELECT * FROM neo_schedules WHERE id = ? AND agent_id = ?`, id, agentId);
+    const row = await this.db.get<Row>(
+      `SELECT * FROM neo_schedules WHERE id = ? AND agent_id = ?`,
+      id,
+      agentId,
+    );
     return row ? toSchedule(row) : undefined;
   }
 
   /** Active ones first (soonest first), then the rest, newest first. */
-  async list(agentId: string, which: "active" | "all" = "all"): Promise<Schedule[]> {
+  async list(
+    agentId: string,
+    which: "active" | "all" = "all",
+  ): Promise<Schedule[]> {
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_schedules WHERE agent_id = ? ${which === "active" ? "AND next_at IS NOT NULL" : ""}
        ORDER BY next_at IS NULL, next_at, updated_at DESC LIMIT 300`,
@@ -179,7 +199,10 @@ export class Schedules {
     options: { originKey?: string; system?: string } = {},
   ): Promise<Schedule> {
     if (options.originKey) {
-      const existing = await this.db.get<Row>(`SELECT * FROM neo_schedules WHERE origin_key = ?`, options.originKey);
+      const existing = await this.db.get<Row>(
+        `SELECT * FROM neo_schedules WHERE origin_key = ?`,
+        options.originKey,
+      );
       if (existing) return toSchedule(existing);
     }
     const active = await this.db.get<{ n: number }>(
@@ -187,7 +210,9 @@ export class Schedules {
       agentId,
     );
     if ((active?.n ?? 0) >= SCHEDULE_LIMIT)
-      throw new ScheduleError(`At most ${SCHEDULE_LIMIT} schedules can be active; delete or turn off some first`);
+      throw new ScheduleError(
+        `At most ${SCHEDULE_LIMIT} schedules can be active; delete or turn off some first`,
+      );
     const time = this.now();
     const fields = resolve(undefined, input, time, timezone);
     const row = await this.db.get<Row>(
@@ -219,28 +244,49 @@ export class Schedules {
     );
     if (!row) return (await this.system(agentId, options.system!))!;
     const created = toSchedule(row);
-    await this.setNext(created.id, nextTime(created, time, time, timezone, true));
+    await this.setNext(
+      created.id,
+      nextTime(created, time, time, timezone, true),
+    );
     return (await this.get(agentId, created.id))!;
   }
 
   /** The agent's built-in schedule `key`, created with `defaults` the first time. */
-  async ensureSystem(agentId: string, key: string, defaults: ScheduleInput, timezone: string): Promise<Schedule> {
-    return (await this.system(agentId, key)) ?? this.create(agentId, defaults, "system", timezone, { system: key });
+  async ensureSystem(
+    agentId: string,
+    key: string,
+    defaults: ScheduleInput,
+    timezone: string,
+  ): Promise<Schedule> {
+    return (
+      (await this.system(agentId, key)) ??
+      this.create(agentId, defaults, "system", timezone, { system: key })
+    );
   }
 
   async system(agentId: string, key: string): Promise<Schedule | undefined> {
-    const row = await this.db.get<Row>(`SELECT * FROM neo_schedules WHERE agent_id = ? AND system = ?`, agentId, key);
+    const row = await this.db.get<Row>(
+      `SELECT * FROM neo_schedules WHERE agent_id = ? AND system = ?`,
+      agentId,
+      key,
+    );
     return row ? toSchedule(row) : undefined;
   }
 
   /** Changes a schedule; its next time is computed again from now. */
-  async update(agentId: string, id: string, change: ScheduleInput, timezone: string): Promise<Schedule | undefined> {
+  async update(
+    agentId: string,
+    id: string,
+    change: ScheduleInput,
+    timezone: string,
+  ): Promise<Schedule | undefined> {
     const current = await this.get(agentId, id);
     if (!current) return undefined;
     const time = this.now();
     const fields = resolve(current, change, time, timezone);
     // A new timing restarts the count and the anchor; other changes keep them.
-    const retimed = JSON.stringify(fields.spec) !== JSON.stringify(current.spec);
+    const retimed =
+      JSON.stringify(fields.spec) !== JSON.stringify(current.spec);
     await this.db.run(
       `UPDATE neo_schedules SET name = ?, prompt = ?, spec = ?, anchor_at = ?, timezone = ?, window_start = ?, window_end = ?,
          when_busy = ?, missed = ?, quiet = ?, enabled = ?, max_runs = ?, ends_at = ?, run_count = ?, updated_at = ?
@@ -248,7 +294,7 @@ export class Schedules {
       fields.name,
       fields.prompt,
       JSON.stringify(fields.spec),
-      retimed ? time : (await this.anchor(id)),
+      retimed ? time : await this.anchor(id),
       fields.timezone,
       fields.window?.start ?? null,
       fields.window?.end ?? null,
@@ -263,7 +309,10 @@ export class Schedules {
       id,
     );
     const updated = (await this.get(agentId, id))!;
-    await this.setNext(id, nextTime(updated, await this.anchor(id), time, timezone, true));
+    await this.setNext(
+      id,
+      nextTime(updated, await this.anchor(id), time, timezone, true),
+    );
     return this.get(agentId, id);
   }
 
@@ -271,7 +320,10 @@ export class Schedules {
   async remove(agentId: string, id: string): Promise<boolean> {
     const current = await this.get(agentId, id);
     if (!current) return false;
-    if (current.system) throw new ScheduleError(`${current.name} is built in; turn it off instead (enabled: false)`);
+    if (current.system)
+      throw new ScheduleError(
+        `${current.name} is built in; turn it off instead (enabled: false)`,
+      );
     await this.db.transaction(async (tx) => {
       await tx.run(`DELETE FROM neo_schedules WHERE id = ?`, id);
       await tx.run(`DELETE FROM neo_schedule_runs WHERE schedule_id = ?`, id);
@@ -288,7 +340,10 @@ export class Schedules {
     for (const row of rows) {
       const schedule = toSchedule(row);
       if (schedule.spec.kind === "once") continue;
-      await this.setNext(row.id, nextTime(schedule, row.anchor_at, time, timezone, true));
+      await this.setNext(
+        row.id,
+        nextTime(schedule, row.anchor_at, time, timezone, true),
+      );
     }
   }
 
@@ -309,7 +364,9 @@ export class Schedules {
    * Fires everything due. Returns the runs it recorded and whether more are due (the caller
    * arms at once). One schedule failing never stops the others.
    */
-  async fire(delivery: ScheduleDelivery): Promise<{ runs: (ScheduleRun & { agentId: string })[]; more: boolean }> {
+  async fire(
+    delivery: ScheduleDelivery,
+  ): Promise<{ runs: (ScheduleRun & { agentId: string })[]; more: boolean }> {
     const due = await this.db.all<Row>(
       `SELECT * FROM neo_schedules WHERE next_at IS NOT NULL AND next_at <= ? ORDER BY next_at LIMIT ?`,
       this.now(),
@@ -323,13 +380,20 @@ export class Schedules {
         if (run) runs.push({ ...run, agentId: row.agent_id });
       } catch {
         // A broken row (bad stored spec): turn it off rather than ring forever.
-        await this.db.run(`UPDATE neo_schedules SET next_at = NULL, enabled = 0 WHERE id = ?`, row.id);
+        await this.db.run(
+          `UPDATE neo_schedules SET next_at = NULL, enabled = 0 WHERE id = ?`,
+          row.id,
+        );
       }
     }
     return { runs, more: due.length > BATCH };
   }
 
-  private async fireOne(row: Row, delivery: ScheduleDelivery, personTz: string): Promise<ScheduleRun | undefined> {
+  private async fireOne(
+    row: Row,
+    delivery: ScheduleDelivery,
+    personTz: string,
+  ): Promise<ScheduleRun | undefined> {
     const schedule = toSchedule(row);
     const dueAt = row.next_at!;
     const time = this.now();
@@ -340,10 +404,24 @@ export class Schedules {
     let status: ScheduleRun["status"] = "sent";
     let reason: string | null = null;
     let message: MailboxMessage | undefined;
-    if (recurring && schedule.missed === "skip" && late > GRACE_MS) reason = "missed";
-    else if (recurring && schedule.window && !inWindow(schedule.window, time, timezone)) reason = "outside_window";
-    else if (schedule.whenBusy === "skip" && !(await delivery.idle(schedule.agentId))) reason = "busy";
-    else if (recurring && row.last_message_id && (await delivery.waiting(row.last_message_id)))
+    if (recurring && schedule.missed === "skip" && late > GRACE_MS)
+      reason = "missed";
+    else if (
+      recurring &&
+      schedule.window &&
+      !inWindow(schedule.window, time, timezone)
+    )
+      reason = "outside_window";
+    else if (
+      schedule.whenBusy === "skip" &&
+      !(await delivery.idle(schedule.agentId))
+    )
+      reason = "busy";
+    else if (
+      recurring &&
+      row.last_message_id &&
+      (await delivery.waiting(row.last_message_id))
+    )
       // The last one has not even started: a second copy would only pile up behind it.
       reason = "previous_pending";
     if (reason) status = "skipped";
@@ -364,13 +442,20 @@ export class Schedules {
         });
       } catch (error) {
         status = "failed";
-        reason = error instanceof Error ? error.message.slice(0, 300) : String(error);
+        reason =
+          error instanceof Error ? error.message.slice(0, 300) : String(error);
       }
     }
 
     const sent = status === "sent" ? 1 : 0;
     const counted = { ...schedule, runCount: schedule.runCount + sent };
-    let next = nextTime(counted, row.anchor_at, Math.max(time, dueAt), timezone, false);
+    let next = nextTime(
+      counted,
+      row.anchor_at,
+      Math.max(time, dueAt),
+      timezone,
+      false,
+    );
     // A failed send is tried again a few times (a reminder must not be lost to a passing error),
     // unless the schedule's own next time comes first.
     const retry = status === "failed" && row.failures < RETRY_MS.length;
@@ -414,17 +499,32 @@ export class Schedules {
       recorded = true;
     });
     if (!recorded) return undefined;
-    return { id: runId, scheduleId: row.id, dueAt, firedAt: time, status, reason, messageId: message?.id ?? null };
+    return {
+      id: runId,
+      scheduleId: row.id,
+      dueAt,
+      firedAt: time,
+      status,
+      reason,
+      messageId: message?.id ?? null,
+    };
   }
 
   // ---- internals -----------------------------------------------------------------------------
 
   private async anchor(id: string): Promise<number> {
-    return (await this.db.get<{ a: number }>(`SELECT anchor_at AS a FROM neo_schedules WHERE id = ?`, id))!.a;
+    return (await this.db.get<{ a: number }>(
+      `SELECT anchor_at AS a FROM neo_schedules WHERE id = ?`,
+      id,
+    ))!.a;
   }
 
   private async setNext(id: string, at: number | null): Promise<void> {
-    await this.db.run(`UPDATE neo_schedules SET next_at = ? WHERE id = ?`, at, id);
+    await this.db.run(
+      `UPDATE neo_schedules SET next_at = ? WHERE id = ?`,
+      at,
+      id,
+    );
   }
 }
 
@@ -442,11 +542,13 @@ export function nextTime(
   fresh: boolean,
 ): number | null {
   if (!schedule.enabled) return null;
-  if (schedule.maxRuns !== null && schedule.runCount >= schedule.maxRuns) return null;
+  if (schedule.maxRuns !== null && schedule.runCount >= schedule.maxRuns)
+    return null;
   const tz = schedule.timezone ?? timezone;
   let at: number | null;
   const spec = schedule.spec;
-  if (spec.kind === "once") at = fresh && schedule.runCount === 0 ? Math.max(spec.at, from) : null;
+  if (spec.kind === "once")
+    at = fresh && schedule.runCount === 0 ? Math.max(spec.at, from) : null;
   else if (spec.kind === "every") {
     const step = spec.minutes * 60_000;
     const base = anchorAt || from;
@@ -455,31 +557,54 @@ export function nextTime(
   } else {
     at = cronNext(spec.expr, tz, from);
     // Cron already picks its hours; a window on top only filters.
-    for (let i = 0; at !== null && schedule.window && !inWindow(schedule.window, at, tz) && i < 2000; i++)
+    for (
+      let i = 0;
+      at !== null &&
+      schedule.window &&
+      !inWindow(schedule.window, at, tz) &&
+      i < 2000;
+      i++
+    )
       at = cronNext(spec.expr, tz, at);
   }
-  if (at !== null && schedule.endsAt !== null && at > schedule.endsAt) return null;
+  if (at !== null && schedule.endsAt !== null && at > schedule.endsAt)
+    return null;
   return at;
 }
 
-function cronNext(expr: string, timezone: string, after: number): number | null {
-  const next = new Cron(expr, { timezone, paused: true }).nextRun(new Date(after));
+function cronNext(
+  expr: string,
+  timezone: string,
+  after: number,
+): number | null {
+  const next = new Cron(expr, { timezone, paused: true }).nextRun(
+    new Date(after),
+  );
   return next ? next.getTime() : null;
 }
 
 /** Moved forward to the window's next opening when it falls outside (minute steps, a day at most). */
-function intoWindow(at: number, window: { start: string; end: string }, timezone: string): number {
+function intoWindow(
+  at: number,
+  window: { start: string; end: string },
+  timezone: string,
+): number {
   if (inWindow(window, at, timezone)) return at;
   const start = toMinutes(window.start);
   const now = minutesOfDay(at, timezone);
   const wait = (start - now + 24 * 60) % (24 * 60);
   const moved = Math.floor(at / 60_000) * 60_000 + wait * 60_000;
   // A DST change in between can be off by an hour: settle on the next minute inside.
-  for (let t = moved - 60 * 60_000, i = 0; i < 180; i++, t += 60_000) if (t >= at && inWindow(window, t, timezone)) return t;
+  for (let t = moved - 60 * 60_000, i = 0; i < 180; i++, t += 60_000)
+    if (t >= at && inWindow(window, t, timezone)) return t;
   return moved;
 }
 
-export function inWindow(window: { start: string; end: string }, at: number, timezone: string): boolean {
+export function inWindow(
+  window: { start: string; end: string },
+  at: number,
+  timezone: string,
+): boolean {
   const now = minutesOfDay(at, timezone);
   const start = toMinutes(window.start);
   const end = toMinutes(window.end);
@@ -504,10 +629,22 @@ interface Fields {
 }
 
 /** Checks an input against the current schedule (or none) and fills in the rest. */
-function resolve(current: Schedule | undefined, input: ScheduleInput, now: number, personTz: string): Fields {
-  const timing = [input.at, input.inMinutes, input.everyMinutes, input.cron].filter((v) => v !== undefined).length;
-  if (timing > 1) throw new ScheduleError("Give one of at, inMinutes, everyMinutes or cron");
-  const timezone = input.timezone === undefined ? (current?.timezone ?? null) : input.timezone;
+function resolve(
+  current: Schedule | undefined,
+  input: ScheduleInput,
+  now: number,
+  personTz: string,
+): Fields {
+  const timing = [
+    input.at,
+    input.inMinutes,
+    input.everyMinutes,
+    input.cron,
+  ].filter((v) => v !== undefined).length;
+  if (timing > 1)
+    throw new ScheduleError("Give one of at, inMinutes, everyMinutes or cron");
+  const timezone =
+    input.timezone === undefined ? (current?.timezone ?? null) : input.timezone;
   if (timezone !== null) checkTimezone(timezone);
   const tz = timezone ?? personTz;
 
@@ -515,11 +652,18 @@ function resolve(current: Schedule | undefined, input: ScheduleInput, now: numbe
   if (input.at !== undefined || input.inMinutes !== undefined) {
     const at = parseTime(input, now, tz);
     if (at < now - 60_000) throw new ScheduleError("That time has passed");
-    if (at > now + MAX_AHEAD) throw new ScheduleError("A one-time schedule is at most a year ahead");
+    if (at > now + MAX_AHEAD)
+      throw new ScheduleError("A one-time schedule is at most a year ahead");
     spec = { kind: "once", at: Math.max(at, now) };
   } else if (input.everyMinutes !== undefined) {
-    if (!Number.isInteger(input.everyMinutes) || input.everyMinutes < MIN_INTERVAL_MINUTES || input.everyMinutes > 366 * 24 * 60)
-      throw new ScheduleError(`everyMinutes is a whole number, at least ${MIN_INTERVAL_MINUTES}`);
+    if (
+      !Number.isInteger(input.everyMinutes) ||
+      input.everyMinutes < MIN_INTERVAL_MINUTES ||
+      input.everyMinutes > 366 * 24 * 60
+    )
+      throw new ScheduleError(
+        `everyMinutes is a whole number, at least ${MIN_INTERVAL_MINUTES}`,
+      );
     spec = { kind: "every", minutes: input.everyMinutes };
   } else if (input.cron !== undefined) {
     spec = { kind: "cron", expr: checkCron(input.cron.trim(), tz, now) };
@@ -527,22 +671,40 @@ function resolve(current: Schedule | undefined, input: ScheduleInput, now: numbe
   else throw new ScheduleError("Say when: at, inMinutes, everyMinutes or cron");
 
   const prompt = (input.prompt ?? current?.prompt ?? "").trim();
-  if (!prompt) throw new ScheduleError("The prompt is empty: say what the agent should do then");
-  if (prompt.length > 4_000) throw new ScheduleError("The prompt is too long (4000 characters)");
-  const name = (input.name ?? current?.name ?? prompt.split("\n")[0]!.slice(0, 60)).trim();
-  if (!name || name.length > 80) throw new ScheduleError("The name is 1-80 characters");
+  if (!prompt)
+    throw new ScheduleError(
+      "The prompt is empty: say what the agent should do then",
+    );
+  if (prompt.length > 4_000)
+    throw new ScheduleError("The prompt is too long (4000 characters)");
+  const name = (
+    input.name ??
+    current?.name ??
+    prompt.split("\n")[0]!.slice(0, 60)
+  ).trim();
+  if (!name || name.length > 80)
+    throw new ScheduleError("The name is 1-80 characters");
 
-  const window = input.window === undefined ? (current?.window ?? null) : input.window;
+  const window =
+    input.window === undefined ? (current?.window ?? null) : input.window;
   if (window && (!HHMM.test(window.start) || !HHMM.test(window.end)))
     throw new ScheduleError("window.start and window.end are HH:MM");
   const whenBusy = input.whenBusy ?? current?.whenBusy ?? "queue";
-  if (whenBusy !== "queue" && whenBusy !== "skip") throw new ScheduleError("whenBusy is queue or skip");
+  if (whenBusy !== "queue" && whenBusy !== "skip")
+    throw new ScheduleError("whenBusy is queue or skip");
   const missed = input.missed ?? current?.missed ?? "run";
-  if (missed !== "run" && missed !== "skip") throw new ScheduleError("missed is run or skip");
-  const maxRuns = input.maxRuns === undefined ? (current?.maxRuns ?? null) : input.maxRuns;
-  if (maxRuns !== null && (!Number.isInteger(maxRuns) || maxRuns < 1)) throw new ScheduleError("maxRuns is at least 1");
+  if (missed !== "run" && missed !== "skip")
+    throw new ScheduleError("missed is run or skip");
+  const maxRuns =
+    input.maxRuns === undefined ? (current?.maxRuns ?? null) : input.maxRuns;
+  if (maxRuns !== null && (!Number.isInteger(maxRuns) || maxRuns < 1))
+    throw new ScheduleError("maxRuns is at least 1");
   const endsAt =
-    input.endsAt === undefined ? (current?.endsAt ?? null) : input.endsAt === null ? null : parseTime({ at: input.endsAt }, now, tz);
+    input.endsAt === undefined
+      ? (current?.endsAt ?? null)
+      : input.endsAt === null
+        ? null
+        : parseTime({ at: input.endsAt }, now, tz);
   return {
     name,
     prompt,
@@ -567,30 +729,43 @@ function checkTimezone(timezone: string): void {
 }
 
 function checkCron(expr: string, timezone: string, now: number): string {
-  if (expr.split(/\s+/).length !== 5) throw new ScheduleError("cron has five fields: minute hour day month weekday");
+  if (expr.split(/\s+/).length !== 5)
+    throw new ScheduleError(
+      "cron has five fields: minute hour day month weekday",
+    );
   let first: number | null;
   try {
     first = cronNext(expr, timezone, now);
   } catch (error) {
-    throw new ScheduleError(`Not a cron expression: ${error instanceof Error ? error.message : expr}`);
+    throw new ScheduleError(
+      `Not a cron expression: ${error instanceof Error ? error.message : expr}`,
+    );
   }
-  if (first === null) throw new ScheduleError("That cron expression never fires");
+  if (first === null)
+    throw new ScheduleError("That cron expression never fires");
   // The tightest gap in the next few runs.
   let previous = first;
   for (let i = 0; i < 5; i++) {
     const next = cronNext(expr, timezone, previous);
     if (next === null) break;
     if (next - previous < MIN_INTERVAL_MINUTES * 60_000)
-      throw new ScheduleError(`A schedule fires at most every ${MIN_INTERVAL_MINUTES} minutes`);
+      throw new ScheduleError(
+        `A schedule fires at most every ${MIN_INTERVAL_MINUTES} minutes`,
+      );
     previous = next;
   }
   return expr;
 }
 
 /** A time: minutes from now, an ISO time with an offset, or a local wall time in `timezone`. */
-export function parseTime(input: { at?: string; inMinutes?: number }, now: number, timezone: string): number {
+export function parseTime(
+  input: { at?: string; inMinutes?: number },
+  now: number,
+  timezone: string,
+): number {
   if (input.inMinutes !== undefined) {
-    if (!(input.inMinutes > 0)) throw new ScheduleError("inMinutes is more than 0");
+    if (!(input.inMinutes > 0))
+      throw new ScheduleError("inMinutes is more than 0");
     return now + Math.round(input.inMinutes * 60_000);
   }
   const text = (input.at ?? "").trim();
@@ -600,14 +775,27 @@ export function parseTime(input: { at?: string; inMinutes?: number }, now: numbe
     if (Number.isNaN(at)) throw new ScheduleError(`Not a time: ${text}`);
     return at;
   }
-  const match = /^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::(\d\d))?$/.exec(text);
-  if (!match) throw new ScheduleError("A time is like 2026-10-29T09:00 (local) or has an offset");
+  const match = /^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::(\d\d))?$/.exec(
+    text,
+  );
+  if (!match)
+    throw new ScheduleError(
+      "A time is like 2026-10-29T09:00 (local) or has an offset",
+    );
   const [y, mo, d, h, mi] = match.slice(1, 6).map(Number) as number[];
   return zonedToUtc(y!, mo!, d!, h!, mi!, Number(match[6] ?? 0), timezone);
 }
 
 /** A wall time in `timezone` as epoch milliseconds (two passes settle a DST edge). */
-export function zonedToUtc(y: number, mo: number, d: number, h: number, mi: number, s: number, timezone: string): number {
+export function zonedToUtc(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  s: number,
+  timezone: string,
+): number {
   const wall = Date.UTC(y, mo - 1, d, h, mi, s);
   let guess = wall;
   for (let i = 0; i < 2; i++) guess = wall - offsetAt(guess, timezone);
@@ -641,7 +829,12 @@ function offsetAt(at: number, timezone: string): number {
 }
 
 function minutesOfDay(at: number, timezone: string): number {
-  const [h, m] = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+  const [h, m] = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
     .format(at)
     .split(":")
     .map(Number);
@@ -668,7 +861,10 @@ function toSchedule(row: Row): Schedule {
     prompt: row.prompt,
     spec: JSON.parse(row.spec) as ScheduleSpec,
     timezone: row.timezone,
-    window: row.window_start && row.window_end ? { start: row.window_start, end: row.window_end } : null,
+    window:
+      row.window_start && row.window_end
+        ? { start: row.window_start, end: row.window_end }
+        : null,
     whenBusy: row.when_busy,
     missed: row.missed,
     quiet: row.quiet === 1,

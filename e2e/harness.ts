@@ -26,7 +26,12 @@ const TOKEN = "t";
 export async function instance(): Promise<Instance> {
   if (CF) {
     const base = `${CF.replace(/\/$/, "")}/i/e2e-${crypto.randomUUID().slice(0, 8)}`;
-    return { host: "cloudflare", call: client(() => base), url: () => base, close: async () => {} };
+    return {
+      host: "cloudflare",
+      call: client(() => base),
+      url: () => base,
+      close: async () => {},
+    };
   }
   const dir = mkdtempSync(join(tmpdir(), "neo-e2e-"));
   let running = await serve({ dir, port: 0, test: true, token: TOKEN });
@@ -53,7 +58,11 @@ function client(base: () => string) {
 }
 
 /** Polls until `check` returns a value (not undefined/false), or fails after `ms`. */
-export async function until<T>(check: () => Promise<T | undefined | false>, ms = 5000, what = "condition"): Promise<T> {
+export async function until<T>(
+  check: () => Promise<T | undefined | false>,
+  ms = 5000,
+  what = "condition",
+): Promise<T> {
   const end = Date.now() + ms;
   for (;;) {
     const value = await check();
@@ -65,14 +74,25 @@ export async function until<T>(check: () => Promise<T | undefined | false>, ms =
 
 /** Waits until no turn runs and nothing is queued. */
 export const idle = (neo: Instance) =>
-  until(async () => {
-    const s = await neo.call("GET", "/v1/status");
-    return !s.turn && s.queued === 0 ? s : undefined;
-  }, 8000, "idle");
+  until(
+    async () => {
+      const s = await neo.call("GET", "/v1/status");
+      return !s.turn && s.queued === 0 ? s : undefined;
+    },
+    8000,
+    "idle",
+  );
 
 export const running = (neo: Instance) =>
-  until(async () => (await neo.call("GET", "/v1/status")).turn ?? undefined, 5000, "a running turn");
+  until(
+    async () => (await neo.call("GET", "/v1/status")).turn ?? undefined,
+    5000,
+    "a running turn",
+  );
 
-export const transcript = async (neo: Instance) => (await neo.call("GET", "/v1/transcript")).items as any[];
+export const transcript = async (neo: Instance) =>
+  (await neo.call("GET", "/v1/transcript")).items as any[];
 export const answers = async (neo: Instance) =>
-  (await transcript(neo)).filter((i) => i.type === "assistant" && i.text).map((i) => i.text as string);
+  (await transcript(neo))
+    .filter((i) => i.type === "assistant" && i.text)
+    .map((i) => i.text as string);

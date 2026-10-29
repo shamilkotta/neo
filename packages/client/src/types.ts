@@ -8,7 +8,8 @@ export interface ModelRef {
 
 // ---- agent ----
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel =
+  "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface AgentRecord {
   id: string;
@@ -217,7 +218,8 @@ export interface SettingsShape {
   timezone: string;
 }
 
-export type ProviderKind = "anthropic" | "openai" | "openrouter" | "openai-compatible";
+export type ProviderKind =
+  "anthropic" | "openai" | "openrouter" | "openai-compatible";
 
 export interface CustomModel {
   id: string;

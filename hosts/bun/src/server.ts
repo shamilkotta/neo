@@ -19,7 +19,9 @@ export async function serve(options: ServeOptions) {
     // SSE connections stay open.
     idleTimeout: 0,
     fetch: (request) =>
-      options.web === false || new URL(request.url).pathname.startsWith("/v1/") || request.method === "OPTIONS"
+      options.web === false ||
+      new URL(request.url).pathname.startsWith("/v1/") ||
+      request.method === "OPTIONS"
         ? host.fetch(request)
         : web(request),
   });
