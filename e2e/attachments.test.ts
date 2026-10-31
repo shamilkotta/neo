@@ -56,8 +56,8 @@ describe("attachments from the person", () => {
     expect(sent).toContain(`${attached.path} (image/png`);
     expect(sent).toContain("shown to you below");
     expect(sent).toContain('"type":"image"');
-    expect(await exists(upload.path)).toBe(false);
-    expect(await exists(attached.path)).toBe(true);
+    expect(await exists(`/.staging/${upload.id}`)).toBe(false);
+    expect((await client.fileBlob(attached.path)).size).toBeGreaterThan(0);
     const turn = await client.turn(items[0].turnId);
     expect(turn.messages[0]!.attachments[0]!.path).toBe(attached.path);
   });
@@ -95,10 +95,9 @@ describe("attachments from the person", () => {
   test("names are made safe and unique within a message", async () => {
     await script([{ text: "ok" }]);
     const a = await client.upload(new Blob(["1"]), "a.txt");
-    const b = await client.upload(new Blob(["2"]), "a.txt");
-    await client.send("two", {
-      attachments: [a, { ...b, name: "../A.txt" }],
-    });
+    const b = await client.upload(new Blob(["2"]), "../A.txt");
+    expect(b.name).toBe("__A.txt");
+    await client.send("two", { attachments: [a, b] });
     await idle(neo);
     const items = await transcript(neo);
     expect(
@@ -131,7 +130,7 @@ describe("attachments from the person", () => {
     expect((await seen()).at(-1)).toContain("/later.txt (text/plain");
   });
 
-  test("a retried send moves nothing again; a missing file is refused", async () => {
+  test("a retried send moves nothing again; an unknown upload or a path is refused", async () => {
     await script([{ text: "ok" }]);
     const file = await client.upload(new Blob(["x"]), "x.txt");
     const a = await client.send("hi", { clientId: "c-1", attachments: [file] });
@@ -139,17 +138,70 @@ describe("attachments from the person", () => {
     expect(b.id).toBe(a.id);
     await idle(neo);
     const error = await client
-      .send("hi", { attachments: [{ path: "/.staging/nope/x.txt" }] })
+      .send("hi", { attachments: [{ id: "01JAAAAAAAAAAAAAAAAAAAAAAA" }] })
       .catch((e) => e);
     expect(error).toBeInstanceOf(NeoApiError);
     expect(error.status).toBe(400);
+    const path = await client
+      .send("hi", { attachments: [{ path: "/user/a.txt" } as never] })
+      .catch((e) => e);
+    expect(path.status).toBe(400);
+  });
+});
+
+describe("who reaches what", () => {
+  test("the files API stays inside /user, and has no writes", async () => {
+    const mine = await client.upload(new Blob(["mine"]), "a.txt");
+    expect((await client.file("/")).kind).toBe("directory");
+    const escaped = await client.file(`/../../.staging/${mine.id}/a.txt`);
+    expect(escaped).toMatchObject({ kind: "file", text: "mine" });
+    const put = await fetch(`${neo.url()}/v1/files?path=/b.txt`, {
+      method: "PUT",
+      headers: { authorization: "Bearer t" },
+      body: "x",
+    });
+    expect(put.ok).toBe(false);
+    await script([{ text: "ok" }]);
+    const file = await client.upload(new Blob(["x"]), "x.txt");
+    await client.send("hi", { attachments: [file] });
+    await idle(neo);
+    const [attached] = (await transcript(neo))[0].messages[0].attachments;
+    expect(await exists(attached.path)).toBe(false);
+    expect(
+      await client.fileBlob(`/user/.staging/${mine.id}/a.txt`).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(false);
+  });
+
+  test("the agent's tools cannot change /attachments", async () => {
+    await script([{ text: "ok" }]);
+    const file = await client.upload(new Blob(["keep"]), "keep.txt");
+    await client.send("hi", { attachments: [file] });
+    await idle(neo);
+    const [attached] = (await transcript(neo))[0].messages[0].attachments;
+    await script([
+      { tool: "bash", args: { command: `rm -r /attachments; rm -r /; echo x > ${attached.path}` } },
+      { tool: "write", args: { path: attached.path, content: "changed" } },
+      { text: "tried" },
+    ]);
+    await client.send("break it");
+    await idle(neo);
+    const tools = (await transcript(neo)).filter((i) => i.type === "tool");
+    expect(tools[0].output).toContain("read-only");
+    expect(tools[1].isError).toBe(true);
+    expect(await (await client.fileBlob(attached.path)).text()).toBe("keep");
   });
 });
 
 describe("files from the agent", () => {
   test("send_file sends a copy the person can download", async () => {
-    await client.writeFile("/out/report.csv", "name,total\nneo,42\n");
     await script([
+      {
+        tool: "write",
+        args: { path: "/out/report.csv", content: "name,total\nneo,42\n" },
+      },
       {
         tool: "send_file",
         args: { path: "/out/report.csv", caption: "This week's totals" },
@@ -167,7 +219,12 @@ describe("files from the agent", () => {
       size: 18,
       caption: "This week's totals",
     });
-    await client.writeFile("/out/report.csv", "changed");
+    await script([
+      { tool: "write", args: { path: "/out/report.csv", content: "changed" } },
+      { text: "ok" },
+    ]);
+    await client.send("change it");
+    await idle(neo);
     const blob = await client.fileBlob(tool.file.path);
     expect(await blob.text()).toBe("name,total\nneo,42\n");
   });

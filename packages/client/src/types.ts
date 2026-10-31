@@ -44,9 +44,14 @@ export interface Attachment {
   size: number;
 }
 
+export interface Upload {
+  id: string;
+  name: string;
+  size: number;
+}
+
 export interface AttachmentInput {
-  path: string;
-  name?: string;
+  id: string;
   mimeType?: string;
 }
 

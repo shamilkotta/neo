@@ -1,7 +1,12 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { watchEvents } from "@earendil-works/pi-durable";
 import { type AgentChange, DEFAULT_AGENT_ID } from "./agent/agents";
-import { AttachmentError, type AttachmentInput } from "./agent/attachments";
+import {
+  ATTACHMENTS_ROOT,
+  AttachmentError,
+  type AttachmentInput,
+  USER_ROOT,
+} from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
 import { readTranscript } from "./agent/transcript";
 import { ScheduleError, type ScheduleInput } from "./agent/schedules";
@@ -13,7 +18,7 @@ import {
 } from "./services/providers";
 import type { SettingsShape } from "./services/settings";
 import { BundleError } from "./move/bundle";
-import { VfsError } from "./vfs/vfs";
+import { joinPath, type Vfs, VfsError, type VfsStat } from "./vfs/vfs";
 
 class HttpError extends Error {
   constructor(
@@ -175,6 +180,12 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
 
   const live = neo.services();
 
+  if (is("POST", "/v1/uploads")) {
+    const name = url.searchParams.get("name");
+    if (!name) throw new HttpError(400, "name is required");
+    const upload = await neo.upload(name, request.body ?? new Blob([]).stream());
+    return json({ upload }, 201);
+  }
   if (is("POST", "/v1/messages")) {
     const input = await body<{
       text?: string;
@@ -321,36 +332,40 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     });
 
   if (path === "/v1/files") {
-    const filePath = url.searchParams.get("path");
-    if (!filePath) throw new HttpError(400, "path is required");
+    const given = url.searchParams.get("path");
+    if (!given) throw new HttpError(400, "path is required");
+    const relative = joinPath("/", given);
+    const filePath = relative === "/" ? USER_ROOT : USER_ROOT + relative;
+    const outside = (p: string) => p.slice(USER_ROOT.length) || "/";
     if (method === "GET") {
+      if (relative === "/") await live.vfs.mkdir(USER_ROOT, { recursive: true });
       const stat = await live.vfs.stat(filePath);
       if (stat.kind === "directory")
         return json({
-          path: stat.path,
-          entries: await live.vfs.readdir(stat.path, { limit: 1000 }),
+          path: relative,
+          entries: (await live.vfs.readdir(stat.path, { limit: 1000 })).map(
+            (e) => ({ ...e, path: outside(e.path) }),
+          ),
         });
-      return new Response(await live.vfs.readStream(stat.path), {
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(stat.size),
-        },
-      });
-    }
-    if (method === "PUT") {
-      const stat = await live.vfs.writeStream(
-        filePath,
-        request.body ?? new Blob([]).stream(),
-        { createParents: true },
-      );
-      return json({ written: stat.path, size: stat.size });
+      return fileResponse(live.vfs, stat);
     }
     if (method === "DELETE") {
+      if (relative === "/") throw new HttpError(400, "path is a folder");
       await live.vfs.rm(filePath, {
         recursive: url.searchParams.get("recursive") === "1",
       });
-      return json({ removed: filePath });
+      return json({ removed: relative });
     }
+  }
+  if (is("GET", "/v1/attachments")) {
+    const given = url.searchParams.get("path");
+    if (!given) throw new HttpError(400, "path is required");
+    const filePath = joinPath("/", given);
+    if (!filePath.startsWith(`${ATTACHMENTS_ROOT}/`))
+      throw new HttpError(404, "Not an attachment");
+    const stat = await live.vfs.stat(filePath);
+    if (stat.kind !== "file") throw new HttpError(404, "Not an attachment");
+    return fileResponse(live.vfs, stat);
   }
 
   if (neo.host.test && is("POST", "/v1/test/script")) {
@@ -448,6 +463,15 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
 function attachmentsOf(input: { attachments?: unknown }): AttachmentInput[] {
   if (input.attachments === undefined) return [];
   if (!Array.isArray(input.attachments))
-    throw new HttpError(400, "attachments is a list of { path, name?, mimeType? }");
+    throw new HttpError(400, "attachments is a list of { id, mimeType? }");
   return input.attachments as AttachmentInput[];
+}
+
+async function fileResponse(vfs: Vfs, stat: VfsStat): Promise<Response> {
+  return new Response(await vfs.readStream(stat.path), {
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(stat.size),
+    },
+  });
 }

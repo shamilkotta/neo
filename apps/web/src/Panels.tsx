@@ -383,7 +383,7 @@ function FilesPanel({ client }: PanelProps) {
   const up = path.replace(/\/[^/]+$/, "") || "/";
   return (
     <>
-      <p className="muted">Neo's workspace · {path}</p>
+      <p className="muted">Your files · {path}</p>
       {error && <p className="err">{error}</p>}
       {path !== "/" && (
         <div className="row">

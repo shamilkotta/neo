@@ -432,8 +432,7 @@ describe("files", () => {
     await idle(neo);
     const tool = (await transcript(neo)).find((i) => i.type === "tool");
     expect(tool.output).toContain("1 /notes/todo.txt");
-    const listing = await neo.call("GET", "/v1/files?path=/notes");
-    expect(listing.entries.map((e: any) => e.name)).toEqual(["todo.txt"]);
+    await expect(neo.call("GET", "/v1/files?path=/notes")).rejects.toThrow();
   });
 });
 
@@ -495,15 +494,16 @@ describe("file store", () => {
     const bytes = new Uint8Array(size);
     for (let i = 0; i < size; i += 65536)
       crypto.getRandomValues(bytes.subarray(i, Math.min(i + 65536, size)));
-    const put = await fetch(`${neo.url()}/v1/files?path=/big/data.bin`, {
-      method: "PUT",
+    const put = await fetch(`${neo.url()}/v1/uploads?name=data.bin`, {
+      method: "POST",
       headers: { authorization: "Bearer t" },
       body: bytes,
     });
-    expect(await put.json()).toEqual({ written: "/big/data.bin", size });
+    const { upload } = await put.json();
+    expect(upload).toMatchObject({ name: "data.bin", size });
     const got = new Uint8Array(
       await (
-        await fetch(`${neo.url()}/v1/files?path=/big/data.bin`, {
+        await fetch(`${neo.url()}/v1/files?path=/.staging/${upload.id}/data.bin`, {
           headers: { authorization: "Bearer t" },
         })
       ).arrayBuffer(),
@@ -540,21 +540,24 @@ describe("bounded memory", () => {
 
   test("whole-file reads over the cap are refused with a clear message", async () => {
     const big = new Uint8Array(5 * 1024 * 1024).fill(97);
-    await fetch(`${neo.url()}/v1/files?path=/big.txt`, {
-      method: "PUT",
-      headers: { authorization: "Bearer t" },
-      body: big,
-    });
+    const { upload } = await (
+      await fetch(`${neo.url()}/v1/uploads?name=big.txt`, {
+        method: "POST",
+        headers: { authorization: "Bearer t" },
+        body: big,
+      })
+    ).json();
+    const path = `/user/.staging/${upload.id}/big.txt`;
     await script([
       {
         tool: "edit",
-        args: { path: "/big.txt", edits: [{ oldText: "a", newText: "b" }] },
+        args: { path, edits: [{ oldText: "a", newText: "b" }] },
       },
       {
         tool: "bash",
         args: {
           command:
-            "mkdir -p /n && touch /n/x.md /n/y.md && echo /n/*.md && cat /big.txt | wc -c",
+            `mkdir -p /n && touch /n/x.md /n/y.md && echo /n/*.md && cat ${path} | wc -c`,
         },
       },
       { text: "done" },

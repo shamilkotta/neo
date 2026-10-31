@@ -21,7 +21,8 @@ export type VfsErrorCode =
   | "exists"
   | "not_empty"
   | "invalid"
-  | "too_large";
+  | "too_large"
+  | "read_only";
 
 export class VfsError extends Error {
   constructor(
@@ -124,6 +125,43 @@ const PENDING = "host_vfs_pending_blobs";
 const TRASH = "host_vfs_trash_blobs";
 const HOST_TABLES = `CREATE TABLE IF NOT EXISTS ${PENDING} (key TEXT PRIMARY KEY) STRICT;
   CREATE TABLE IF NOT EXISTS ${TRASH} (key TEXT PRIMARY KEY) STRICT`;
+
+
+export function readOnly(vfs: Vfs, roots: string[]): Vfs {
+  const inside = (p: string) =>
+    roots.some((r) => p === r || p.startsWith(`${r}/`));
+  const holds = (p: string) =>
+    inside(p) || roots.some((r) => p === "/" || r.startsWith(`${p}/`));
+  const guard = (path: string, test: (p: string) => boolean) => {
+    const p = normalizePath(path);
+    if (test(p)) throw new VfsError("read_only", p, `${p} is read-only`);
+  };
+  const checks: Record<string, (args: unknown[]) => void> = {
+    writeFile: ([p]) => guard(p as string, inside),
+    writeStream: ([p]) => guard(p as string, inside),
+    appendFile: ([p]) => guard(p as string, inside),
+    truncate: ([p]) => guard(p as string, inside),
+    mkdir: ([p]) => guard(p as string, inside),
+    copyFile: ([, to]) => guard(to as string, inside),
+    rm: ([p]) => guard(p as string, holds),
+    rename: ([from, to]) => {
+      guard(from as string, holds);
+      guard(to as string, inside);
+    },
+  };
+  return new Proxy(vfs, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver);
+      if (typeof value !== "function") return value;
+      const check = typeof key === "string" ? checks[key] : undefined;
+      if (!check) return value.bind(target);
+      return async (...args: unknown[]) => {
+        check(args);
+        return value.apply(target, args);
+      };
+    },
+  });
+}
 
 export async function* rechunk(
   stream: ReadableStream<Uint8Array>,

@@ -413,6 +413,7 @@ const FILE_ERROR_CODES: Record<VfsError["code"], FileErrorCode> = {
   not_empty: "invalid",
   invalid: "invalid",
   too_large: "invalid",
+  read_only: "permission_denied",
 };
 
 async function attempt<T>(

@@ -21,9 +21,12 @@ import {
 } from "@earendil-works/pi-durable/tools";
 import { type AgentRecord, Agents, DEFAULT_AGENT_ID } from "./agent/agents";
 import {
+  ATTACHMENTS_ROOT,
   type AttachmentInput,
   inlineCheck,
-  placeAttachments,
+  placeUploads,
+  stageUpload,
+  type Upload,
   sweepStaging,
 } from "./agent/attachments";
 import { fileTools } from "./agent/tools/files";
@@ -62,7 +65,7 @@ import type { SqliteDatabase } from "./sql";
 import { VfsShell } from "./vfs/bash";
 import { measured } from "./vfs/blobs";
 import { VfsExecutionEnv } from "./vfs/env";
-import { joinPath, rechunk, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
+import { joinPath, readOnly, rechunk, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
 
 export const NEO_VERSION = "0.1.0";
 export const PI_PREFIX = "pi_";
@@ -485,9 +488,13 @@ export class Neo {
         ? await live.mailbox.byClientId(rest.clientId)
         : undefined;
       if (existing) return existing;
-      rest.attachments = await placeAttachments(live.vfs, files);
+      rest.attachments = await placeUploads(live.vfs, files);
     }
     return live.mailbox.send(agentId, rest);
+  }
+
+  upload(name: string, body: ReadableStream<Uint8Array>): Promise<Upload> {
+    return stageUpload(this.services().vfs, name, body);
   }
 
   async pause(agentId: string): Promise<void> {
@@ -516,7 +523,9 @@ export class Neo {
     const { db } = this.host;
     const vfs = new Vfs(db, this.host.blobs, this.now);
     await vfs.repair();
-    const shell = new VfsShell(vfs);
+    // The agent's tools may not change attachments (history points at them).
+    const agentVfs = readOnly(vfs, [ATTACHMENTS_ROOT]);
+    const shell = new VfsShell(agentVfs);
     const secrets = new Secrets(db, this.host.masterKey, this.now);
     await secrets.init();
     const providers = new Providers(db, secrets, this.now);
@@ -546,7 +555,7 @@ export class Neo {
         registry,
         env: ({ cwd }) =>
           new VfsExecutionEnv(
-            vfs,
+            agentVfs,
             cwd ?? "/",
             `neo-vfs:${this.instanceId_}`,
             shell,
