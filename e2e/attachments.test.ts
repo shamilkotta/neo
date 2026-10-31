@@ -17,7 +17,6 @@ const script = (steps: unknown[]) =>
 const seen = async () =>
   (await neo.call("GET", "/v1/test/seen")).seen as string[];
 
-/** A PNG header of the given size (enough for the type and size checks; the faux model takes anything). */
 function png(
   width: number,
   height: number,
@@ -59,7 +58,6 @@ describe("attachments from the person", () => {
     expect(sent).toContain('"type":"image"');
     expect(await exists(upload.path)).toBe(false);
     expect(await exists(attached.path)).toBe(true);
-    // Pi keeps the image in its transcript; Neo's turn row keeps only its path.
     const turn = await client.turn(items[0].turnId);
     expect(turn.messages[0]!.attachments[0]!.path).toBe(attached.path);
   });
@@ -169,7 +167,6 @@ describe("files from the agent", () => {
       size: 18,
       caption: "This week's totals",
     });
-    // A copy: changing the original leaves what was sent.
     await client.writeFile("/out/report.csv", "changed");
     const blob = await client.fileBlob(tool.file.path);
     expect(await blob.text()).toBe("name,total\nneo,42\n");

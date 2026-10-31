@@ -65,21 +65,12 @@ import { VfsExecutionEnv } from "./vfs/env";
 import { joinPath, rechunk, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
 
 export const NEO_VERSION = "0.1.0";
-/** Pi's tables share the instance database under this prefix. */
 export const PI_PREFIX = "pi_";
-/** While work runs, the alarm rings at least this often, so a host that dies mid-turn is woken to resume it. */
 export const RECOVERY_MS = 60_000;
-/** Exists only while an import loads (host_* never travels): a host that finds it at open wipes the half-load. */
 const IMPORT_MARKER = "host_import";
 
-/**
- * The lifecycle of an instance on a host. Only `active` runs. A move seals the source (`sealed`:
- * nothing runs, ready to export), imports it elsewhere, then retires the source (`moved`). `empty`
- * is only seen while an import loads.
- */
 export type InstanceState = "empty" | "active" | "sealed" | "moved";
 
-/** The running services of an active instance. */
 export interface Live {
   harness: Harness;
   vfs: Vfs;
@@ -94,11 +85,6 @@ export interface Live {
   watches: AgentEventStream[];
 }
 
-/**
- * One Neo instance on one host. Everything durable is in the host's database (and blob store);
- * this object only holds connections and caches, so the same instance continues on any host that
- * opens its data.
- */
 export class Neo {
   readonly events: Events;
   readonly now: () => number;
@@ -106,11 +92,9 @@ export class Neo {
   private state_: InstanceState = "empty";
   private instanceId_: string | undefined;
   private readonly context: Context = BACKGROUND_CONTEXT;
-  /** The alarm time last set, so an unchanged time is not written again (a DO write each time). */
   private armed: number | undefined | null = null;
   private arming: Promise<void> = Promise.resolve();
   private waking: Promise<void> | undefined;
-  /** What each agent's conversation was last configured with. */
   private readonly configured = new Map<string, string>();
   private readonly conversationAgents = new Map<number, string>();
 
@@ -122,7 +106,6 @@ export class Neo {
   static async open(host: HostPorts): Promise<Neo> {
     const neo = new Neo(host);
     if (await hasTable(host.db, IMPORT_MARKER)) {
-      // An import stopped part way (crash, eviction): start again from nothing.
       await wipeDatabase(host.db);
       await host.blobs.clear();
     }
@@ -132,7 +115,6 @@ export class Neo {
         ((await getMeta(host.db, "state")) as InstanceState | undefined) ??
         "empty";
     } else {
-      // A new host: a new instance. (A host that waits for an import will skip this.)
       await neo.init();
       return neo;
     }
@@ -148,14 +130,12 @@ export class Neo {
     return this.instanceId_;
   }
 
-  /** How many times the instance has moved, plus one: each import takes the next. */
   async epoch(): Promise<number | undefined> {
     if (this.state_ === "empty") return undefined;
     const value = await getMeta(this.host.db, "epoch").catch(() => undefined);
     return value === undefined ? undefined : Number(value);
   }
 
-  /** The running services; throws unless the instance is active. */
   services(): Live {
     if (!this.live)
       throw new StateError(this.state_, `The instance is ${this.state_}`);
@@ -166,7 +146,6 @@ export class Neo {
     return handleApi(this, request);
   }
 
-  /** Creates a new instance in an empty database. */
   async init(): Promise<void> {
     if (this.state_ !== "empty")
       throw new StateError(this.state_, "This host already holds an instance");
@@ -181,13 +160,7 @@ export class Neo {
     await this.start();
   }
 
-  // ---- moving ----------------------------------------------------------------------------------
 
-  /**
-   * Stops all work so the instance can be exported: nothing drains, no schedule fires, and Pi stops
-   * its run at the next commit (aborting nothing that isn't replayed). A running turn stays
-   * `running`, and resumes wherever the instance opens next.
-   */
   async seal(): Promise<void> {
     if (this.state_ !== "active")
       throw new StateError(
@@ -199,7 +172,6 @@ export class Neo {
     await this.events.emit("instance.sealed");
   }
 
-  /** Cancels a move: the sealed instance runs here again. */
   async unseal(): Promise<void> {
     if (this.state_ !== "sealed")
       throw new StateError(this.state_, "The instance is not sealed");
@@ -208,17 +180,12 @@ export class Neo {
     await this.events.emit("instance.unsealed");
   }
 
-  /** The target confirmed the import: this copy is retired and never runs again. */
   async markMoved(): Promise<void> {
     if (this.state_ !== "sealed")
       throw new StateError(this.state_, "Seal and export the instance first");
     await this.setState("moved");
   }
 
-  /**
-   * The sealed instance as a `.neo` bundle, streamed. With a passphrase the bundle carries the
-   * data key, so secrets (provider keys) keep working on the target; without one they are dropped.
-   */
   async exportBundle(passphrase?: string): Promise<ReadableStream<Uint8Array>> {
     if (this.state_ !== "sealed" && this.state_ !== "moved")
       throw new StateError(this.state_, "Seal the instance before exporting it");
@@ -238,7 +205,6 @@ export class Neo {
       yield header;
       let count = 0;
       for await (const record of dumpDatabase(db)) {
-        // The data key at rest is wrapped by this host's master key; the header carries it instead.
         if (record.t === "rows" && record.table === "neo_meta") {
           const key = record.columns.indexOf("key");
           record.rows = record.rows.filter((row) => row[key] !== "dek");
@@ -246,7 +212,6 @@ export class Neo {
         count++;
         yield record;
       }
-      // The bytes of large files, one object at a time, in pieces.
       for (let after = ""; ; ) {
         const page = await db.all<{ key: string; size: number; hash: string }>(
           `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
@@ -273,12 +238,6 @@ export class Neo {
     return encodeBundle(records());
   }
 
-  /**
-   * Loads a bundle in place of this host's instance, which must be new (no messages, providers,
-   * memories or files): a host makes one on first open, so that is what a move target holds. A
-   * host the instance moved away from (`moved`) takes it back from a later epoch. The
-   * instance then runs here with the next epoch, and resumes a turn that was running at the seal.
-   */
   async importBundle(
     body: ReadableStream<Uint8Array>,
     passphrase?: string,
@@ -290,7 +249,6 @@ export class Neo {
         "Import needs a new instance (this one has been used)",
       );
     const bundle = await readBundle(decodeBundle(body)[Symbol.asyncIterator]());
-    // A retired copy takes back only its own instance, from a later move.
     if (
       homecoming &&
       (bundle.header.instanceId !== this.instanceId_ ||
@@ -302,7 +260,6 @@ export class Neo {
       );
     if (bundle.header.dek && !passphrase)
       throw new BundleError("This bundle's secrets need its passphrase");
-    // Check the passphrase before touching anything.
     const dek =
       bundle.header.dek && passphrase
         ? await unwrapDek(bundle.header.dek, passphrase)
@@ -336,13 +293,11 @@ export class Neo {
         throw new BundleError("The bundle's header and data disagree");
       const secrets = new Secrets(db, this.host.masterKey, this.now);
       if (dek) await secrets.storeDek(dek);
-      // Without the key the stored secrets are unreadable; a new key is made on start.
       else await db.run(`DELETE FROM neo_secrets`);
       await setMeta(db, "epoch", String(bundle.header.epoch));
       await setMeta(db, "state", "active");
       await db.exec(`DROP TABLE ${IMPORT_MARKER}`);
     } catch (error) {
-      // Back to a new instance, as if the import never started.
       await wipeDatabase(db);
       await this.host.blobs.clear();
       await this.init();
@@ -362,7 +317,6 @@ export class Neo {
     };
   }
 
-  /** Nothing in it yet a person made: an import may replace it. */
   private async isNew(): Promise<boolean> {
     if (this.state_ !== "active") return false;
     const used = await this.host.db.get(
@@ -371,13 +325,7 @@ export class Neo {
     return used === undefined;
   }
 
-  // ---- time ------------------------------------------------------------------------------------
 
-  /**
-   * Sets the host's alarm to the earliest thing that needs a process: Pi's next sleep, a recovery
-   * ring while work runs, and the next schedule (reminders, routines and the heartbeat are all
-   * schedules). Calls are serialized; an unchanged time is not set again.
-   */
   arm(extra?: Wake): Promise<void> {
     this.arming = this.arming
       .catch(() => {})
@@ -408,13 +356,11 @@ export class Neo {
     await this.host.alarm.set(at);
   }
 
-  /** The host's alarm rang: resume Pi, fire what is due, then arm again. */
   wake(): Promise<void> {
     this.waking ??= (async () => {
       try {
         const live = this.live;
         if (!live) return;
-        // A recovery ring first, in case this wake is cut off (a Durable Object can be evicted).
         this.armed = null;
         await this.host.alarm.set(this.now() + RECOVERY_MS);
         live.harness.resume();
@@ -456,22 +402,18 @@ export class Neo {
     }
   }
 
-  /** A schedule changed: the alarm follows, and clients reload. */
   async schedulesChanged(agentId: string): Promise<void> {
     await this.arm();
     await this.events.emit("schedule.changed", {}, agentId);
   }
 
-  /** The person's timezone changed: wall-clock schedules move with it. */
   async timezoneChanged(): Promise<void> {
     const live = this.services();
     await live.schedules.retime(await live.settings.get("timezone"));
     await this.arm();
   }
 
-  // ---- agent ---------------------------------------------------------------------------------
 
-  /** The agent's conversation, configured with its current model, thinking level and instructions. */
   async conversation(agentId: string): Promise<Conversation> {
     const live = this.services();
     const agent = await live.agents.get(agentId);
@@ -482,7 +424,6 @@ export class Neo {
         this.context,
       );
     if (!conversation) {
-      // The default agent's chat is Pi's root conversation.
       conversation = await live.harness.root(this.context);
       await live.agents.setConversation(
         agentId,
@@ -506,7 +447,6 @@ export class Neo {
     return conversation;
   }
 
-  /** The model an agent without its own uses: the first available one. */
   async defaultModel(): Promise<ModelRef | undefined> {
     const live = this.services();
     if (this.host.test) return { provider: "faux", modelId: "m" };
@@ -531,10 +471,6 @@ export class Neo {
     return this.services().agents.get(id);
   }
 
-  /**
-   * Sends a message to the agent, after checking it has a model. Its uploaded files move into a
-   * folder of their own first (a retry with the same clientId finds the message and moves nothing).
-   */
   async send(
     agentId: string,
     input: Parameters<Mailbox["send"]>[1] & { files?: AttachmentInput[] },
@@ -569,7 +505,6 @@ export class Neo {
     await this.stop();
   }
 
-  // ---- internals -----------------------------------------------------------------------------
 
   private async setState(state: InstanceState): Promise<void> {
     this.state_ = state;
@@ -594,7 +529,6 @@ export class Neo {
     const schedules = new Schedules(db, this.now);
     const history = new History(db);
 
-    // Pi closes its storage's database on close; Neo owns the database, so Pi's handle does not.
     const piDb: SqliteDatabase = {
       exec: (sql) => db.exec(sql),
       run: (sql, ...p) => db.run(sql, ...p),
@@ -620,7 +554,6 @@ export class Neo {
         identity: { attribution: { name: "neo", url: "https://github.com/" } },
         settings: {
           compaction: { enabled: true },
-          // A failed turn must not hold the messages behind it (Neo's queue is separate anyway).
           afterFailedRun: "continue",
           retry: { maxRetries: 3 },
         },
@@ -664,7 +597,6 @@ export class Neo {
           }
           return { inline, notes };
         },
-        // Bounded by the inline check (Pi's image limits): the one file held whole.
         readImage: async (path, mimeType) => ({
           type: "image",
           data: toBase64(await vfs.readFile(path)),
@@ -743,7 +675,6 @@ export class Neo {
     await this.arm();
   }
 
-  /** Streams the agent's running turn (text deltas, tool steps) to connected clients. */
   private async watch(agentId: string): Promise<void> {
     const live = this.services();
     const conversation = await this.conversation(agentId);
@@ -775,7 +706,6 @@ export class Neo {
       turn.id,
       turn.status === "completed",
     );
-    // The turn's messages become searchable now, a page at a time, never all at once.
     await live.history
       .sync(turn.agentId, await this.conversation(turn.agentId))
       .catch(() => {});
@@ -800,10 +730,6 @@ export class Neo {
   }
 }
 
-/**
- * `edit` reads the whole file, and Pi's tool reports a refused read only by its error code. This
- * checks the size first, so the model learns why and reads the file in parts instead.
- */
 function sizedEdit<T extends { execute: (...args: any[]) => any }>(
   edit: T,
   vfs: Vfs,
@@ -837,5 +763,4 @@ export class StateError extends Error {
   }
 }
 
-/** Something the person has to set up first. */
 export class SetupError extends Error {}

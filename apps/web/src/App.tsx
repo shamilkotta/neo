@@ -5,7 +5,6 @@ import { apiUrl, forgetToken, loadToken, saveToken } from "./config";
 import { Panel, TABS, type Tab } from "./Panels";
 import { useNeo } from "./useNeo";
 
-/** Which panel each durable event type refreshes. */
 const PANEL_EVENTS: Record<string, Tab[]> = {
   "schedule.changed": ["Schedules"],
   "schedule.fired": ["Schedules"],
@@ -78,7 +77,6 @@ function Instance({
   client: NeoClient;
   onForget: () => void;
 }) {
-  // One client for the life of this screen.
   const [client] = useState(initial);
   const [tab, setTab] = useState<Tab | null>(null);
   const [versions, setVersions] = useState<Record<string, number>>({});
@@ -96,7 +94,6 @@ function Instance({
   const { status } = neo;
   const running = !!status?.turn;
   const paused = !!status?.agent?.paused;
-  // A wrong or revoked token: back to the connect screen.
   useEffect(() => {
     if (neo.error === "Unauthorized") onForget();
   }, [neo.error, onForget]);

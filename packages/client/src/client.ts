@@ -28,16 +28,11 @@ export class NeoApiError extends Error {
 }
 
 export interface NeoClientOptions {
-  /** The instance's base URL: `http://127.0.0.1:7420` or `https://<worker>/i/<name>`. */
   url: string;
   token: string;
   fetch?: typeof fetch;
 }
 
-/**
- * A typed client for one Neo instance, for every app (web, desktop, mobile, CLI) and the tests.
- * Runs anywhere `fetch` does.
- */
 export class NeoClient {
   private readonly base: string;
   private readonly fetcher: typeof fetch;
@@ -71,12 +66,10 @@ export class NeoClient {
 
   status = () => this.call<Status>("GET", "/v1/status");
 
-  // ---- moving: seal → export → import on the target → complete (or unseal to cancel) ----
   seal = () => this.call<{ state: string }>("POST", "/v1/move/seal", {});
   unseal = () => this.call<{ state: string }>("POST", "/v1/move/unseal", {});
   complete = () =>
     this.call<{ state: string }>("POST", "/v1/move/complete", {});
-  /** The sealed instance as a `.neo` bundle (gzip), streamed. */
   exportBundle = async (
     passphrase?: string,
   ): Promise<ReadableStream<Uint8Array>> => {
@@ -86,7 +79,6 @@ export class NeoClient {
     });
     return response.body!;
   };
-  /** Loads a bundle into this (new) instance. The body may be a stream, a Blob or bytes. */
   importBundle = async (
     bundle: BodyInit,
     passphrase?: string,
@@ -97,7 +89,6 @@ export class NeoClient {
         ...(passphrase ? { "x-neo-passphrase": passphrase } : {}),
       },
       body: bundle,
-      // A stream body needs half-duplex where fetch follows the standard.
       ...(bundle instanceof ReadableStream ? { duplex: "half" } : {}),
     } as RequestInit);
     return (await response.json()) as ImportResult;
@@ -126,8 +117,6 @@ export class NeoClient {
     return response;
   }
 
-  // ---- conversation ----
-  /** Sends a message; `attachments` are files uploaded first (`upload`). */
   send = (
     text: string,
     options: { clientId?: string; attachments?: AttachmentInput[] } = {},
@@ -136,10 +125,6 @@ export class NeoClient {
       text,
       ...options,
     }).then((r) => r.message);
-  /**
-   * Uploads a file to attach to a message, streamed, into `/.staging/` (sending moves it into
-   * place; one never sent is removed after a day).
-   */
   upload = async (file: Blob, name: string): Promise<AttachmentInput> => {
     const path = `/.staging/${crypto.randomUUID()}/${name.replace(/[/\\]/g, "_")}`;
     await this.raw(`/v1/files${query({ path })}`, {
@@ -153,7 +138,6 @@ export class NeoClient {
       ...(file.type ? { mimeType: file.type } : {}),
     };
   };
-  /** A file's bytes (an attachment to show or download). */
   fileBlob = async (path: string): Promise<Blob> =>
     (
       await this.raw(`/v1/files${query({ path })}`, { method: "GET" })
@@ -169,7 +153,6 @@ export class NeoClient {
   pause = () => this.call<{ paused: boolean }>("POST", "/v1/pause");
   resume = () => this.call<{ paused: boolean }>("POST", "/v1/resume");
 
-  // ---- queue ----
   queue = () =>
     this.call<{ queue: MailboxMessage[] }>("GET", "/v1/queue").then(
       (r) => r.queue,
@@ -187,7 +170,6 @@ export class NeoClient {
       order,
     }).then((r) => r.queue);
 
-  // ---- schedules ----
   schedules = () =>
     this.call<{ schedules: Schedule[] }>("GET", "/v1/schedules").then(
       (r) => r.schedules,
@@ -197,7 +179,6 @@ export class NeoClient {
       enabled,
     }).then((r) => r.schedule);
 
-  // ---- agent, settings, models ----
   agent = () =>
     this.call<{ agent: AgentRecord }>("GET", "/v1/agent").then((r) => r.agent);
   updateAgent = (change: AgentChange) =>
@@ -237,8 +218,6 @@ export class NeoClient {
       "/v1/models",
     );
 
-  // ---- files ----
-  /** A directory listing, or a file's text. */
   async file(path: string): Promise<
     | {
         kind: "directory";
@@ -286,10 +265,6 @@ export class NeoClient {
       if (!r.ok) throw new NeoApiError(r.status, "Write failed", {});
     });
 
-  /**
-   * Follows the event stream: durable events after `after` (then as they happen) and live turn
-   * events. Reconnects on its own, resuming after the last durable event. Returns a stop function.
-   */
   events(
     handlers: {
       durable?: (e: NeoEvent) => void;
@@ -354,7 +329,6 @@ function query(params: Record<string, string | number | undefined>): string {
     : "";
 }
 
-/** Parses a server-sent event stream into frames; comments (pings) are skipped. */
 async function* sseFrames(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<{ event: string; data: string }> {

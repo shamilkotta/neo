@@ -9,7 +9,6 @@ import type {
 } from "@neo/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** The running turn as it streams: the answer so far and the tools still running. */
 export interface LiveTurn {
   active: boolean;
   text: string;
@@ -18,10 +17,6 @@ export interface LiveTurn {
 
 const IDLE: LiveTurn = { active: false, text: "", tools: [] };
 
-/**
- * Everything the chat shows for one instance, kept current from the event stream: status,
- * transcript (with older pages on demand), queue, and the live turn.
- */
 export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
   const [status, setStatus] = useState<Status>();
   const [items, setItems] = useState<Map<number, TranscriptItem>>(new Map());
@@ -41,7 +36,6 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
       });
       setItems((current) => {
         const next = new Map(current);
-        // A fresh newest page replaces what it covers (items can change while a turn runs).
         if (!before) {
           const min = page.items[0]?.entryId ?? Number.POSITIVE_INFINITY;
           for (const id of next.keys()) if (id >= min) next.delete(id);
@@ -69,7 +63,6 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
     }
   }, [client, loadTranscript]);
 
-  // Many events arrive together; one refresh covers them.
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const soon = useCallback(() => {
     clearTimeout(timer.current);
@@ -102,8 +95,6 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
       cancelled = true;
       stop();
     };
-    // Subscribe once per client.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
 
   const sorted = [...items.values()].sort((a, b) => a.entryId - b.entryId);
@@ -120,7 +111,6 @@ export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
   };
 }
 
-/** Applies one of Pi's live events (run, message, tool) to the streaming view. */
 function applyLive(
   current: LiveTurn,
   event: LiveEvent,

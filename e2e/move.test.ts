@@ -26,7 +26,6 @@ const script = (neo: Instance, steps: unknown[]) =>
   neo.call("POST", "/v1/test/script", { steps });
 const send = (neo: Instance, text: string) =>
   neo.call("POST", "/v1/messages", { text });
-/** Waits in the queue behind a running turn, which the API itself never does. */
 const enqueue = (neo: Instance, text: string) =>
   neo.call("POST", "/v1/test/messages", { text });
 
@@ -54,7 +53,6 @@ function randomBytes(size: number): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** Starts a turn that stops inside a tool, with another message queued behind it. */
 async function startLongTurn(neo: Instance, label: string) {
   await script(neo, [{ gate: label }, { text: "unused" }]);
   await send(neo, `long job ${label}`);
@@ -66,11 +64,9 @@ async function startLongTurn(neo: Instance, label: string) {
   await enqueue(neo, `queued behind ${label}`);
 }
 
-/** The steps `neo move` takes, through the client every app uses. */
 async function move(from: Instance, to: Instance, passphrase?: string) {
   const source = client(from);
   await source.seal();
-  // Buffered here only to keep the test simple; the CLI spools to disk.
   const bundle = await new Response(
     await source.exportBundle(passphrase),
   ).arrayBuffer();
@@ -83,7 +79,7 @@ describe("move", () => {
   test(`an instance moves ${onCloudflare ? "bun → cloudflare → bun" : "bun → bun"} with a turn running`, async () => {
     const first = await open("bun");
     const small = new TextEncoder().encode("remember the milk\n");
-    const big = randomBytes(3 * 1024 * 1024 + 7); // a blob object
+    const big = randomBytes(3 * 1024 * 1024 + 7);
     await putFile(first, "/notes/todo.txt", small);
     await putFile(first, "/big/data.bin", big);
     await first.call("PUT", "/v1/providers/anthropic", {
@@ -100,7 +96,6 @@ describe("move", () => {
     expect((await first.call("GET", "/v1/status")).state).toBe("moved");
     await expect(send(first, "still there?")).rejects.toThrow();
 
-    // The interrupted turn resumes on the new host: the gate replays, then the queue runs.
     await script(second, [
       { text: "resumed after move" },
       { text: "then the queue" },
@@ -120,7 +115,6 @@ describe("move", () => {
       ["anthropic", true],
     ]);
 
-    // The retired source takes the instance back (a later epoch), and nothing else.
     const stranger = await open();
     await client(stranger).seal();
     const other = await new Response(await client(stranger).exportBundle()).arrayBuffer();
@@ -135,7 +129,6 @@ describe("move", () => {
       expect((await answers(first)).slice(-2)).toEqual(["home", "queue"]);
       return;
     }
-    // And back, again mid-turn, without a passphrase: the key is dropped.
     await startLongTurn(second, "g2");
     const third = await open("bun");
     expect(await move(second, third)).toEqual({

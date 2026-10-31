@@ -1,9 +1,3 @@
-/**
- * Bodies are streamed wherever the bytes can flow through (files, sites, bundles). Some must be
- * whole to be used: a webhook body is checked against its signature, a page goes to a model, a
- * zip needs its central directory. Those are read with a cap, so no sender can make Neo buffer
- * more than the cap: the read stops (and cancels the body) as soon as it would go over.
- */
 
 export class TooLargeError extends Error {
   constructor(readonly limit: number) {
@@ -15,7 +9,6 @@ export function emptyStream(): ReadableStream<Uint8Array> {
   return new ReadableStream({ start: (controller) => controller.close() });
 }
 
-/** The whole body, up to `limit` bytes; more throws `TooLargeError` unless `truncate` is set. */
 export async function readCapped(
   body: ReadableStream<Uint8Array> | null,
   limit: number,
@@ -52,7 +45,6 @@ export async function readCapped(
   return { bytes, truncated };
 }
 
-/** A request's or response's body as bytes, up to `limit`. */
 export async function bytesCapped(
   message: Request | Response,
   limit: number,
@@ -65,7 +57,6 @@ export async function bytesCapped(
   return (await readCapped(message.body, limit)).bytes;
 }
 
-/** A body as text, up to `limit` bytes. */
 export async function textCapped(
   message: Request | Response,
   limit: number,
@@ -73,7 +64,6 @@ export async function textCapped(
   return new TextDecoder().decode(await bytesCapped(message, limit));
 }
 
-/** A body as JSON, up to `limit` bytes. */
 export async function jsonCapped<T = unknown>(
   message: Request | Response,
   limit: number,
@@ -81,18 +71,11 @@ export async function jsonCapped<T = unknown>(
   return JSON.parse(await textCapped(message, limit)) as T;
 }
 
-/** Common caps. */
 export const LIMITS = {
-  /** A JSON reply from a service Neo calls. */
   json: 4 * 1024 * 1024,
-  /** A JSON request to the API (it may carry small inline attachments; send big files with `PUT /v1/files` and attach them by path). */
   apiJson: 16 * 1024 * 1024,
-  /** Audio to transcribe. */
   audio: 25 * 1024 * 1024,
-  /** A webhook delivery (signed over the whole body). */
   webhook: 1024 * 1024,
-  /** A file a chat platform hands over, or a skill zip. */
   download: 32 * 1024 * 1024,
-  /** An error body kept for a message. */
   error: 16 * 1024,
 };

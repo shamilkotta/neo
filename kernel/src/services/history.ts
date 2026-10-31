@@ -4,8 +4,6 @@ import { INPUT_ENTRY, type InputEntryData } from "../agent/mailbox";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 
 export const HISTORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
-  // The conversation's messages as text, indexed for search. Derived from Pi's transcript (an
-  // export can drop it; `sync` rebuilds it), so searching never loads the transcript into memory.
   await tx.exec(`CREATE TABLE neo_history (
     id INTEGER PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -26,7 +24,6 @@ export const HISTORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   END`);
 };
 
-/** One message of the history: what the person or the agent said, and the tools a reply called. */
 export interface HistoryLine {
   messageId: number;
   role: "user" | "assistant";
@@ -41,11 +38,9 @@ interface Row {
   steps: string;
 }
 
-/** Entries read from Pi per page while catching up: memory stays at one page. */
 const SYNC_PAGE = 200;
 
 export function lineOf(entry: EntryRecord): HistoryLine | undefined {
-  // A turn's input: the messages as they were sent, not the combined prompt.
   if (entry.kind === INPUT_ENTRY) {
     const data = entry.data as InputEntryData | undefined;
     const text = (data?.messages ?? [])
@@ -79,7 +74,6 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
     .filter((p) => p.type === "text")
     .map((p) => p.text)
     .join("");
-  // Work steps: the tools called, never raw reasoning.
   const steps = parts
     .filter((p) => p.type === "toolCall")
     .map(
@@ -94,17 +88,11 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
   };
 }
 
-/**
- * The searchable history of each agent's conversation, across resets and compactions (the model
- * may no longer see older messages; they stay in storage, and this finds them).
- */
 export class History {
-  /** One catch-up at a time per agent. */
   private readonly syncing = new Map<string, Promise<void>>();
 
   constructor(private readonly db: SqliteDatabase) {}
 
-  /** Indexes entries newer than the last indexed one, a page at a time. */
   sync(agentId: string, conversation: Conversation): Promise<void> {
     const running = this.syncing.get(agentId);
     if (running) return running;
@@ -154,7 +142,6 @@ export class History {
     }
   }
 
-  /** Messages with every term (prefix match), newest first, before `before`. */
   async search(
     agentId: string,
     query: string,
@@ -207,7 +194,6 @@ export class History {
     return row ? toLine(row) : undefined;
   }
 
-  /** A page of messages before `before`, oldest first, and the cursor for the page before it. */
   async page(
     agentId: string,
     before: number | undefined,

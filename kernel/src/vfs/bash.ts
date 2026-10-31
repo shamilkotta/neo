@@ -8,11 +8,6 @@ import {
   WHOLE_READ_MAX,
 } from "./vfs";
 
-/**
- * A shell for agents on every host: just-bash (a bash interpreter in TypeScript with the usual
- * text tools) running over the instance VFS. It behaves the same on a laptop and in a Durable
- * Object, and everything it writes moves with the instance. No real processes, no network.
- */
 
 const POSIX: Record<VfsError["code"], [string, string]> = {
   not_found: ["ENOENT", "no such file or directory"],
@@ -69,7 +64,6 @@ function bytes(content: string | Uint8Array, encoding?: string): Uint8Array {
 }
 
 export class VfsBashFs implements IFileSystem {
-  /** Files refused for size during the current command: commands report any read error as "No such file". */
   readonly tooLarge = new Set<string>();
 
   constructor(private readonly vfs: Vfs) {}
@@ -87,7 +81,6 @@ export class VfsBashFs implements IFileSystem {
       const data = await this.whole(path);
       const encoding =
         typeof options === "string" ? options : options?.encoding;
-      // Not String.fromCharCode(...data): spreading a large file overflows the call stack.
       if (encoding === "binary" || encoding === "latin1")
         return new TextDecoder("latin1").decode(data);
       return new TextDecoder().decode(data);
@@ -166,10 +159,6 @@ export class VfsBashFs implements IFileSystem {
   resolvePath(base: string, path: string) {
     return joinPath(base, path);
   }
-  /**
-   * just-bash allows an empty answer here, and matches wildcards with readdir instead. Listing
-   * every path would hold the whole tree in memory before each command.
-   */
   getAllPaths() {
     return [];
   }

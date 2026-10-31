@@ -17,11 +17,6 @@ export const SECRETS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/**
- * Secrets of one instance. Every value is encrypted with the instance's data key (DEK). The DEK is
- * stored in `neo_meta`, encrypted with the host's master key. A move re-encrypts only the DEK:
- * the bundle carries it under a passphrase, and the target stores it under its own master key.
- */
 export class Secrets {
   private dek: CryptoKey | undefined;
   private dekRaw: Uint8Array | undefined;
@@ -33,7 +28,6 @@ export class Secrets {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** Loads the DEK, creating it on a new instance. A wrong master key fails here. */
   async init(): Promise<void> {
     const row = await this.db.get<{ value: string }>(
       `SELECT value FROM neo_meta WHERE key = 'dek'`,
@@ -55,7 +49,6 @@ export class Secrets {
     );
   }
 
-  /** The raw DEK, only for wrapping it into a bundle. */
   rawDek(): Uint8Array {
     if (!this.dekRaw) throw new Error("Secrets are not initialized");
     return this.dekRaw;
@@ -76,7 +69,6 @@ export class Secrets {
     return this.getRaw(name);
   }
 
-  /** The stored value, without resolving a vault reference. */
   async getRaw(name: string): Promise<string | undefined> {
     const row = await this.db.get<{ value: string }>(
       `SELECT value FROM neo_secrets WHERE name = ?`,
@@ -90,7 +82,6 @@ export class Secrets {
     this.cachedValues = undefined;
   }
 
-  /** Names only; values never leave through listing. */
   async list(): Promise<{ name: string; updatedAt: number }[]> {
     const rows = await this.db.all<{ name: string; updated_at: number }>(
       `SELECT name, updated_at FROM neo_secrets ORDER BY name`,
@@ -98,7 +89,6 @@ export class Secrets {
     return rows.map((r) => ({ name: r.name, updatedAt: r.updated_at }));
   }
 
-  /** Every secret value (6+ characters), for redacting tool output. Cached until a secret changes. */
   async values(): Promise<string[]> {
     if (this.cachedValues) return this.cachedValues;
     const names = await this.list();
@@ -107,7 +97,6 @@ export class Secrets {
       const value = await this.getRaw(name);
       if (!value || value.length < 6) continue;
       values.push(value);
-      // Header and credential secrets are stored as JSON; redact their inner values too.
       try {
         const parsed = JSON.parse(value) as unknown;
         if (parsed && typeof parsed === "object")
@@ -128,7 +117,6 @@ export class Secrets {
   }
 }
 
-/** A host master key from base64 text (32 bytes). */
 export async function masterKeyFromBase64(text: string): Promise<CryptoKey> {
   return aesKey(fromBase64(text.trim()));
 }

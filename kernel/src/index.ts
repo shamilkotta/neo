@@ -1,4 +1,3 @@
-// @neo/kernel: everything host-agnostic. Imports no node:*, bun:* or cloudflare:*.
 export * from "./host";
 export * from "./neo";
 export * from "./schema";

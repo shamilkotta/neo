@@ -16,7 +16,6 @@ const Window = Type.Object({
   }),
 });
 
-/** The fields a schedule is written with, shared by create and update. */
 const Prompt = Type.String({
   minLength: 1,
   maxLength: 4000,
@@ -86,10 +85,6 @@ const fields = {
   ),
 };
 
-/**
- * How the agent acts on its own time: one-off reminders, repeating routines and its heartbeat are
- * all schedules, created and changed with the same tools.
- */
 export function scheduleTools(services: ToolServices) {
   const view = async (s: Schedule) => {
     const timezone = s.timezone ?? (await services.settings.get("timezone"));
@@ -127,7 +122,6 @@ export function scheduleTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const timezone = await services.settings.get("timezone");
-        // The tool task's id: a call replayed after a restart creates one schedule.
         const schedule = await attempt(() =>
           services.schedules.create(
             c.agentId,
@@ -198,7 +192,6 @@ export function scheduleTools(services: ToolServices) {
         const removed = await attempt(() =>
           services.schedules.remove(c.agentId, args.scheduleId),
         );
-        // A replay after a crash finds it gone already: that is still a success.
         if (!removed)
           return json({ deleted: args.scheduleId, note: "it was not there" });
         await services.changed(c.agentId);

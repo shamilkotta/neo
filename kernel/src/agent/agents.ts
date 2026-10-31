@@ -17,7 +17,6 @@ export const AGENTS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/** The one agent of this iteration. Rows are keyed by id so more agents need no migration. */
 export const DEFAULT_AGENT_ID = "neo";
 
 interface Row {
@@ -40,7 +39,6 @@ export class Agents {
     private readonly now: () => number,
   ) {}
 
-  /** Creates the default agent on a new instance. */
   async ensure(id = DEFAULT_AGENT_ID, name = "Neo"): Promise<AgentRecord> {
     const time = this.now();
     await this.db.run(

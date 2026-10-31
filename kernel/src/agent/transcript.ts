@@ -12,11 +12,6 @@ export type { TranscriptItem } from "@neo/client";
 const OUTPUT_LIMIT = 4_000;
 const context = BACKGROUND_CONTEXT;
 
-/**
- * A page of the transcript, oldest first, ending before `before` (an entry id) or at the newest.
- * Each item carries the turn it belongs to; quiet turns (a quiet schedule with nothing to say) are left
- * out, as are system entries.
- */
 export async function readTranscript(
   conversation: Conversation,
   mailbox: Mailbox,
@@ -27,7 +22,6 @@ export async function readTranscript(
   before: number | null;
 }> {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-  // Newest first, then reversed; one extra page back finds the input that owns the first entries.
   const entries: EntryRecord[] = [];
   let cursor: Parameters<Conversation["entries"]>[2];
   let more = false;

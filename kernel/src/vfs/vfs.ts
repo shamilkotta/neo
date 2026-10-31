@@ -8,28 +8,10 @@ import {
   zeroStream,
 } from "./blobs";
 
-/**
- * The workspace filesystem. Its tree lives in the instance database, so it moves with the
- * instance; the bytes of large files live in the host's blob store (a folder on disk, R2).
- *
- * - `vfs_nodes` holds one row per file or directory, keyed by its absolute normalized path.
- * - A small file (at most `INLINE_MAX`) is stored inline, in `vfs_chunks` (content-addressed,
- *   reference counted, so identical small files are stored once).
- * - A larger file is one object in the blob store; `vfs_blobs` holds its key, size, hash and how
- *   many files share it (a copy shares the object). Objects are never changed: a new version of a
- *   file is a new object, and the old one is deleted once nothing uses it.
- * - The root `/` always exists and has no row.
- */
 
 export const CHUNK_SIZE = 512 * 1024;
-/** Up to this size a file stays in the database; above it, it goes to the blob store. */
 export const INLINE_MAX = 256 * 1024;
 export const MAX_FILE_SIZE = 64 * 1024 * 1024;
-/**
- * The most a whole-file read holds in memory (`readFile`, `readText`: the edit tool, the shell).
- * Hosts can be small (a Durable Object has 128 MB in all), so anything larger is read in parts:
- * `readStream`, `open` (ranges), or line readers with a limit.
- */
 export const WHOLE_READ_MAX = 4 * 1024 * 1024;
 
 export type VfsErrorCode =
@@ -85,7 +67,6 @@ export const VFS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     data BLOB NOT NULL,
     refs INTEGER NOT NULL
   ) STRICT`);
-  // Large files live in the blob store; the database keeps their key.
   await tx.exec(`CREATE TABLE vfs_blobs (
     key TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
@@ -94,7 +75,6 @@ export const VFS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/** Normalizes an absolute POSIX path: resolves `.` and `..`, removes duplicate and trailing slashes. */
 export function normalizePath(path: string): string {
   if (!path.startsWith("/"))
     throw new VfsError("invalid", path, `Path must be absolute: ${path}`);
@@ -140,15 +120,11 @@ function toBytes(value: unknown): Uint8Array {
 
 const encoder = new TextEncoder();
 
-// Host-local (never exported) bookkeeping for the blob store, so a crash leaks nothing:
-// objects being written (deleted by `repair` if their file never committed), and objects no
-// file uses any more (deleted after the commit that dropped them, or by `repair`).
 const PENDING = "host_vfs_pending_blobs";
 const TRASH = "host_vfs_trash_blobs";
 const HOST_TABLES = `CREATE TABLE IF NOT EXISTS ${PENDING} (key TEXT PRIMARY KEY) STRICT;
   CREATE TABLE IF NOT EXISTS ${TRASH} (key TEXT PRIMARY KEY) STRICT`;
 
-/** Regroups a byte stream into pieces of exactly `size` bytes (the last may be shorter). */
 export async function* rechunk(
   stream: ReadableStream<Uint8Array>,
   size: number,
@@ -179,17 +155,14 @@ export async function* rechunk(
   if (filled > 0) yield buffer.slice(0, filled);
 }
 
-/** An opened file (see `Vfs.open`). */
 export interface VfsFile {
   stat: VfsStat;
   chunks(): AsyncIterable<Uint8Array>;
   read(offset: number, length: number): Promise<Uint8Array>;
 }
 
-/** Paths that changed in one committed operation (a directory path covers its subtree). */
 export type VfsListener = (paths: string[]) => void;
 
-/** New content for a file: inline bytes, or a blob already written to the store. */
 type Content =
   | { inline: Uint8Array }
   | { blob: { key: string; size: number; hash: string } };
@@ -203,7 +176,6 @@ export class Vfs {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** Reports every change made through this Vfs, after its commit. */
   subscribe(listener: VfsListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -214,7 +186,6 @@ export class Vfs {
       try {
         listener(paths);
       } catch {
-        // A listener's failure must not fail the write that already committed.
       }
     }
   }
@@ -242,10 +213,6 @@ export class Vfs {
     );
   }
 
-  /**
-   * A whole file in memory, at most `WHOLE_READ_MAX`. Prefer `readStream` or `open` for anything
-   * that may be large.
-   */
   async readFile(path: string): Promise<Uint8Array> {
     const p = normalizePath(path);
     const row = await this.fileRow(this.db, p);
@@ -259,17 +226,11 @@ export class Vfs {
     return this.assemble(this.db, row);
   }
 
-  /** A file's bytes as a stream: memory stays at one piece whatever the file's size. */
   async readStream(path: string): Promise<ReadableStream<Uint8Array>> {
     const p = normalizePath(path);
     return this.contentStream(await this.fileRow(this.db, p));
   }
 
-  /**
-   * A file as it is now, for ranges and piecewise reads: a range reads only those bytes. It reads
-   * the content the file had when opened; if the file is rewritten and the old content is gone, a
-   * read fails rather than mix versions.
-   */
   async open(path: string): Promise<VfsFile> {
     const p = normalizePath(path);
     const row = await this.fileRow(this.db, p);
@@ -327,7 +288,6 @@ export class Vfs {
     return new TextDecoder().decode(await this.readFile(path));
   }
 
-  /** Writes a whole file. The parent must exist unless `createParents` is set. */
   async writeFile(
     path: string,
     content: string | Uint8Array,
@@ -340,11 +300,6 @@ export class Vfs {
     await this.writeStream(path, bytesStream(bytes), options);
   }
 
-  /**
-   * Writes a file from a stream. A small file is stored inline; a larger one streams into the
-   * blob store as it arrives (memory stays at one piece), and the file appears, replacing any old
-   * one, in one transaction at the end. A failed write deletes what it stored.
-   */
   async writeStream(
     path: string,
     stream: ReadableStream<Uint8Array>,
@@ -360,7 +315,6 @@ export class Vfs {
     return this.stat(p);
   }
 
-  /** Copies a file without reading it: the copy shares the source's content. */
   async copyFile(
     from: string,
     to: string,
@@ -397,7 +351,6 @@ export class Vfs {
     this.emit([target]);
   }
 
-  /** Deletes the objects of writes a crash cut off, and of files a crash left unreleased. */
   async repair(): Promise<void> {
     await this.db.exec(HOST_TABLES);
     const cut = await this.db.all<{ key: string }>(
@@ -408,7 +361,6 @@ export class Vfs {
     await this.emptyTrash();
   }
 
-  /** Appends: a small file is rewritten; a large one gets a new object (objects never change). */
   async appendFile(path: string, content: string | Uint8Array): Promise<void> {
     const p = normalizePath(path);
     const extra =
@@ -484,7 +436,6 @@ export class Vfs {
         created.push(p);
         return;
       }
-      // Recursive: create every missing ancestor, top down; an existing ancestor must be a directory.
       const missing = [p];
       for (
         let cursor = parentOf(p);
@@ -508,7 +459,6 @@ export class Vfs {
     if (created.length > 0) this.emit(created);
   }
 
-  /** Entries of a directory in name order, starting after `after` (for paging). */
   async readdir(
     path: string,
     options: { after?: string; limit?: number } = {},
@@ -564,7 +514,6 @@ export class Vfs {
     if (removed) this.emit([p]);
   }
 
-  /** Renames a file or directory. A file replaces an existing file at the destination. */
   async rename(from: string, to: string): Promise<void> {
     const source = normalizePath(from);
     const target = normalizePath(to);
@@ -622,7 +571,6 @@ export class Vfs {
     this.emit([source, target]);
   }
 
-  /** Every path below a directory, depth first in name order (for `listFiles` and exports). */
   async walk(path: string): Promise<VfsStat[]> {
     const p = normalizePath(path);
     await this.requireDirectory(this.db, p);
@@ -635,12 +583,7 @@ export class Vfs {
     return rows.map(toStat);
   }
 
-  // ---- internals -------------------------------------------------------------------------
 
-  /**
-   * Stores new content: inline when it ends within `INLINE_MAX`, else as a new object. Only the
-   * first `INLINE_MAX` bytes are held to decide; past that, the rest streams to the store.
-   */
   private async store(
     p: string,
     stream: ReadableStream<Uint8Array>,
@@ -705,11 +648,6 @@ export class Vfs {
     return { blob: { key, ...body.result() } };
   }
 
-  /**
-   * Makes `content` the file at `p`, replacing what was there. With `expected`, only if the file
-   * is still that row (an append or truncate read it); otherwise a concurrent write won, and this
-   * one fails rather than lose it.
-   */
   private async commit(
     p: string,
     content: Content,
@@ -793,7 +731,6 @@ export class Vfs {
     );
   }
 
-  /** Drops a file's hold on its content; content nothing holds goes (objects after the commit). */
   private async release(tx: SqliteExecutor, row: NodeRow): Promise<void> {
     if (row.kind !== "file") return;
     await this.releaseChunks(tx, JSON.parse(row.chunks) as string[]);
@@ -816,7 +753,6 @@ export class Vfs {
     }
   }
 
-  /** Deletes the objects that committed changes left unused. */
   private async emptyTrash(): Promise<void> {
     await this.db.exec(HOST_TABLES);
     const trash = await this.db.all<{ key: string }>(
@@ -846,7 +782,6 @@ export class Vfs {
     );
   }
 
-  /** The first `length` bytes of a file, as a stream. */
   private async rangeStream(
     row: NodeRow,
     length: number,
@@ -918,7 +853,6 @@ export class Vfs {
     return toBytes(chunk.data);
   }
 
-  /** A path whose parents must all be directories; `/` always is. */
   private async requireDirectory(db: SqliteExecutor, p: string): Promise<void> {
     if (p === "/") return;
     const row = await db.get<{ kind: string }>(

@@ -17,7 +17,6 @@ export type {
 } from "@neo/client";
 
 export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
-  // Everything that wakes an agent on a clock: one-off reminders, routines, the heartbeat.
   await tx.exec(`CREATE TABLE neo_schedules (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -49,7 +48,6 @@ export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(
     `CREATE INDEX neo_schedules_due ON neo_schedules (next_at) WHERE next_at IS NOT NULL`,
   );
-  // One row per due time: what happened to it. The unique key makes a fire record once.
   await tx.exec(`CREATE TABLE neo_schedule_runs (
     id TEXT PRIMARY KEY,
     schedule_id TEXT NOT NULL,
@@ -62,7 +60,6 @@ export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/** A turn made only of quiet schedule messages ends hidden when the answer is exactly this. */
 export const QUIET_REPLY = "QUIET_OK";
 
 export const HEARTBEAT_PROMPT = `This is your periodic heartbeat; nobody sent a message.
@@ -70,7 +67,6 @@ Look at what you know: your memories, your schedules (list_schedules), files you
 If something needs doing now, do it, and say briefly what you did or what the person should know.
 If something should happen regularly, create a schedule for it instead of relying on the heartbeat.`;
 
-/** The built-in heartbeat every agent has. On by default: this is how the agent acts on its own. */
 export const HEARTBEAT: ScheduleInput = {
   name: "Heartbeat",
   prompt: HEARTBEAT_PROMPT,
@@ -85,11 +81,8 @@ export const HEARTBEAT: ScheduleInput = {
 export const SCHEDULE_LIMIT = 100;
 export const MIN_INTERVAL_MINUTES = 5;
 const MAX_AHEAD = 366 * 24 * 60 * 60_000;
-/** A recurring schedule with `missed: "skip"` still runs when it is at most this late. */
 const GRACE_MS = 10 * 60_000;
-/** Fires handled in one pass; the rest go in the next one, armed at once. */
 const BATCH = 50;
-/** A failed send (no model, an error) is tried again after these delays, then given up. */
 const RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000];
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -122,39 +115,19 @@ interface Row {
   updated_at: number;
 }
 
-/** What firing needs from the rest of Neo. */
 export interface ScheduleDelivery {
-  /** Puts the message in the agent's queue (deduplicated by `clientId`); throws when it cannot (no model). */
   send(agentId: string, input: SendInput): Promise<MailboxMessage>;
-  /** Not paused, no turn running, nothing queued. */
   idle(agentId: string): Promise<boolean>;
-  /** The message is still waiting to start (queued). */
   waiting(messageId: string): Promise<boolean>;
   timezone(): Promise<string>;
 }
 
-/**
- * The one clock of an agent's own initiative. A reminder, a routine and the heartbeat are rows of
- * the same table, fired by the same pass:
- *
- * - The host has one alarm; `Neo.arm` sets it to `next()` (with Pi's own wake).
- * - `fire()` takes every row whose `next_at` passed, decides (send or skip, with a reason), sends
- *   the message with the clientId `schedule:<id>:<due>`, then records the run and moves `next_at`
- *   in one transaction that only applies if `next_at` is still that due time.
- * - A crash between the send and the record fires again: the clientId returns the same message
- *   and the run's unique key records it once. Nothing is lost, nothing doubles.
- * - The next time is computed from now, so a host that was down for a day fires each schedule
- *   once (or skips it, by its `missed` setting), never once per missed occurrence.
- * - All times are absolute in the database; wall-clock schedules follow the person's timezone and
- *   are recomputed when it changes. Moving the instance moves the schedules.
- */
 export class Schedules {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly now: () => number,
   ) {}
 
-  // ---- reads ---------------------------------------------------------------------------------
 
   async get(agentId: string, id: string): Promise<Schedule | undefined> {
     const row = await this.db.get<Row>(
@@ -165,7 +138,6 @@ export class Schedules {
     return row ? toSchedule(row) : undefined;
   }
 
-  /** Active ones first (soonest first), then the rest, newest first. */
   async list(
     agentId: string,
     which: "active" | "all" = "all",
@@ -178,7 +150,6 @@ export class Schedules {
     return rows.map(toSchedule);
   }
 
-  /** The earliest time anything is due. */
   async next(): Promise<number | undefined> {
     const row = await this.db.get<{ at: number | null }>(
       `SELECT min(next_at) AS at FROM neo_schedules WHERE next_at IS NOT NULL`,
@@ -186,11 +157,7 @@ export class Schedules {
     return row?.at ?? undefined;
   }
 
-  // ---- changes -------------------------------------------------------------------------------
 
-  /**
-   * Creates a schedule. `originKey` (a tool call's task id) makes a replayed call create one.
-   */
   async create(
     agentId: string,
     input: ScheduleInput,
@@ -251,7 +218,6 @@ export class Schedules {
     return (await this.get(agentId, created.id))!;
   }
 
-  /** The agent's built-in schedule `key`, created with `defaults` the first time. */
   async ensureSystem(
     agentId: string,
     key: string,
@@ -273,7 +239,6 @@ export class Schedules {
     return row ? toSchedule(row) : undefined;
   }
 
-  /** Changes a schedule; its next time is computed again from now. */
   async update(
     agentId: string,
     id: string,
@@ -284,7 +249,6 @@ export class Schedules {
     if (!current) return undefined;
     const time = this.now();
     const fields = resolve(current, change, time, timezone);
-    // A new timing restarts the count and the anchor; other changes keep them.
     const retimed =
       JSON.stringify(fields.spec) !== JSON.stringify(current.spec);
     await this.db.run(
@@ -316,7 +280,6 @@ export class Schedules {
     return this.get(agentId, id);
   }
 
-  /** Deletes a schedule. Built-in ones can only be turned off. */
   async remove(agentId: string, id: string): Promise<boolean> {
     const current = await this.get(agentId, id);
     if (!current) return false;
@@ -331,7 +294,6 @@ export class Schedules {
     return true;
   }
 
-  /** The person's timezone changed: every schedule that follows it gets its next time again. */
   async retime(timezone: string): Promise<void> {
     const time = this.now();
     const rows = await this.db.all<Row>(
@@ -347,7 +309,6 @@ export class Schedules {
     }
   }
 
-  /** Makes an active schedule due now, or `ago` ms in the past (tests). */
   async dueNow(agentId: string, id: string, ago = 1): Promise<boolean> {
     const row = await this.db.get(
       `UPDATE neo_schedules SET next_at = ? WHERE id = ? AND agent_id = ? AND next_at IS NOT NULL RETURNING id`,
@@ -358,12 +319,7 @@ export class Schedules {
     return row !== undefined;
   }
 
-  // ---- firing --------------------------------------------------------------------------------
 
-  /**
-   * Fires everything due. Returns the runs it recorded and whether more are due (the caller
-   * arms at once). One schedule failing never stops the others.
-   */
   async fire(
     delivery: ScheduleDelivery,
   ): Promise<{ runs: (ScheduleRun & { agentId: string })[]; more: boolean }> {
@@ -379,7 +335,6 @@ export class Schedules {
         const run = await this.fireOne(row, delivery, personTz);
         if (run) runs.push({ ...run, agentId: row.agent_id });
       } catch {
-        // A broken row (bad stored spec): turn it off rather than ring forever.
         await this.db.run(
           `UPDATE neo_schedules SET next_at = NULL, enabled = 0 WHERE id = ?`,
           row.id,
@@ -422,7 +377,6 @@ export class Schedules {
       row.last_message_id &&
       (await delivery.waiting(row.last_message_id))
     )
-      // The last one has not even started: a second copy would only pile up behind it.
       reason = "previous_pending";
     if (reason) status = "skipped";
     else {
@@ -437,7 +391,6 @@ export class Schedules {
             ...(late > 5 * 60_000 ? { late } : {}),
             ...(schedule.quiet ? { quiet: true } : {}),
           },
-          // The due time is part of the id: firing the same occurrence twice sends one message.
           clientId: `schedule:${schedule.id}:${dueAt}`,
         });
       } catch (error) {
@@ -456,8 +409,6 @@ export class Schedules {
       timezone,
       false,
     );
-    // A failed send is tried again a few times (a reminder must not be lost to a passing error),
-    // unless the schedule's own next time comes first.
     const retry = status === "failed" && row.failures < RETRY_MS.length;
     if (retry) {
       const at = time + RETRY_MS[row.failures]!;
@@ -468,7 +419,6 @@ export class Schedules {
     const runId = ulid(time);
     let recorded = false;
     await this.db.transaction(async (tx) => {
-      // Only if nobody moved it meanwhile (an edit, another pass): then this occurrence is ours.
       const moved = await tx.get(
         `UPDATE neo_schedules SET next_at = ?, last_at = ?, run_count = run_count + ?,
            last_message_id = coalesce(?, last_message_id), failures = ?,
@@ -510,7 +460,6 @@ export class Schedules {
     };
   }
 
-  // ---- internals -----------------------------------------------------------------------------
 
   private async anchor(id: string): Promise<number> {
     return (await this.db.get<{ a: number }>(
@@ -528,12 +477,7 @@ export class Schedules {
   }
 }
 
-// ---- timing ----------------------------------------------------------------------------------
 
-/**
- * The next time `schedule` fires after `from` (or at `from` for a new `once`), or null when it is
- * done: disabled, out of runs, past its end. `fresh` means it has not fired for this timing yet.
- */
 export function nextTime(
   schedule: Schedule,
   anchorAt: number,
@@ -556,7 +500,6 @@ export function nextTime(
     if (schedule.window) at = intoWindow(at, schedule.window, tz);
   } else {
     at = cronNext(spec.expr, tz, from);
-    // Cron already picks its hours; a window on top only filters.
     for (
       let i = 0;
       at !== null &&
@@ -583,7 +526,6 @@ function cronNext(
   return next ? next.getTime() : null;
 }
 
-/** Moved forward to the window's next opening when it falls outside (minute steps, a day at most). */
 function intoWindow(
   at: number,
   window: { start: string; end: string },
@@ -594,7 +536,6 @@ function intoWindow(
   const now = minutesOfDay(at, timezone);
   const wait = (start - now + 24 * 60) % (24 * 60);
   const moved = Math.floor(at / 60_000) * 60_000 + wait * 60_000;
-  // A DST change in between can be off by an hour: settle on the next minute inside.
   for (let t = moved - 60 * 60_000, i = 0; i < 180; i++, t += 60_000)
     if (t >= at && inWindow(window, t, timezone)) return t;
   return moved;
@@ -612,7 +553,6 @@ export function inWindow(
   return start < end ? now >= start && now < end : now >= start || now < end;
 }
 
-// ---- input -----------------------------------------------------------------------------------
 
 interface Fields {
   name: string;
@@ -628,7 +568,6 @@ interface Fields {
   endsAt: number | null;
 }
 
-/** Checks an input against the current schedule (or none) and fills in the rest. */
 function resolve(
   current: Schedule | undefined,
   input: ScheduleInput,
@@ -743,7 +682,6 @@ function checkCron(expr: string, timezone: string, now: number): string {
   }
   if (first === null)
     throw new ScheduleError("That cron expression never fires");
-  // The tightest gap in the next few runs.
   let previous = first;
   for (let i = 0; i < 5; i++) {
     const next = cronNext(expr, timezone, previous);
@@ -757,7 +695,6 @@ function checkCron(expr: string, timezone: string, now: number): string {
   return expr;
 }
 
-/** A time: minutes from now, an ISO time with an offset, or a local wall time in `timezone`. */
 export function parseTime(
   input: { at?: string; inMinutes?: number },
   now: number,
@@ -786,7 +723,6 @@ export function parseTime(
   return zonedToUtc(y!, mo!, d!, h!, mi!, Number(match[6] ?? 0), timezone);
 }
 
-/** A wall time in `timezone` as epoch milliseconds (two passes settle a DST edge). */
 export function zonedToUtc(
   y: number,
   mo: number,
@@ -846,7 +782,6 @@ const toMinutes = (hhmm: string) => {
   return h! * 60 + m!;
 };
 
-/** How a schedule reads to the person and the model. */
 export function describeSpec(spec: ScheduleSpec, timezone: string): string {
   if (spec.kind === "once") return `once at ${new Date(spec.at).toISOString()}`;
   if (spec.kind === "every") return `every ${spec.minutes} minutes`;

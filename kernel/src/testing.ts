@@ -8,17 +8,11 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 
-/**
- * A scripted model for end-to-end tests (hosts enable it with NEO_TEST=1). Every host gets the
- * same provider and tools, so cross-host tests compare like with like.
- */
 export type ScriptStep =
   | { text: string }
   | { step: number }
   | { tool: string; args: Record<string, unknown> }
-  /** Calls the `gate` tool, which waits until the test releases `gate` (or the host closes). */
   | { gate: string }
-  /** Records the messages the model was sent in `seen`, then answers with `recall`. */
   | { recall: string };
 
 export const TEST_MODEL = { provider: "faux", modelId: "m" } as const;
@@ -26,9 +20,7 @@ export const TEST_MODEL = { provider: "faux", modelId: "m" } as const;
 export function createTestRuntime() {
   const log: string[] = [];
   const seen: string[] = [];
-  /** Step numbers whose `step` call waits until its host closes (to move mid-tool). */
   const control = { block: [] as number[] };
-  /** Gates the `gate` tool waits on; a release before the wait opens it in advance. */
   const gates = new Map<string, { open: boolean; waiters: (() => void)[] }>();
   const gateOf = (name: string) => {
     let g = gates.get(name);
@@ -80,8 +72,6 @@ export function createTestRuntime() {
       return { output: [{ type: "text", text: `step ${args.n} ok` }] };
     },
   });
-  // One queue per agent name, so agents running at the same time each get their own script.
-  // A request is routed by the "You are <name>" line Neo puts in every agent's system prompt.
   const queues = new Map<string, ScriptStep[]>();
   const respond = (step: ScriptStep, messages: unknown[]) => {
     if ("recall" in step) {
@@ -99,8 +89,6 @@ export function createTestRuntime() {
       stopReason: "toolUse",
     });
   };
-  // A key starting with "~" matches any text of the request (e.g. a task's prompt), and wins over
-  // an agent name, so an agent's tasks and chat can have separate scripts.
   const dispatch = (ctx: { messages: unknown[] }) => {
     const text = JSON.stringify(ctx.messages);
     const keys = [...queues.keys()].filter(
@@ -122,7 +110,6 @@ export function createTestRuntime() {
       : fauxAssistantMessage([fauxText("(no scripted response)")]);
   };
   faux.setResponses(Array.from({ length: 100_000 }, () => dispatch));
-  /** Queues steps for one agent (by name), or for any request without `agent`. */
   const script = (
     steps: ScriptStep[],
     options: { agent?: string; append?: boolean } = {},

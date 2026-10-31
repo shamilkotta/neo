@@ -44,7 +44,6 @@ const { values, positionals } = parseArgs({
   },
 });
 
-/** The instance a command talks to: --url/--token, or NEO_URL/NEO_TOKEN. */
 function target(): NeoClient {
   const url = values.url ?? process.env.NEO_URL;
   const token = values.token ?? process.env.NEO_TOKEN;
@@ -99,7 +98,6 @@ async function main() {
     case "import": {
       const file = rest[0];
       if (!file) throw new Error("Give the bundle file");
-      // A file body is sent with its length and read from disk as it goes.
       return print(await target().importBundle(Bun.file(file), passphrase));
     }
     case "move": {
@@ -111,12 +109,9 @@ async function main() {
       const source = new NeoClient({ url: from, token: fromToken });
       const dest = new NeoClient({ url: to, token: toToken });
       const before = await dest.status();
-      // The target decides (a new instance, or the host it moved away from); this only fails early.
       if (before.state === "sealed")
         throw new Error(`The target can't take an import (it is ${before.state})`);
       await source.seal();
-      // Spooled to disk, then sent with a known length: streamed (chunked) uploads aren't
-      // reliable everywhere, and the file survives a failed upload.
       const spool = mkdtempSync(join(tmpdir(), "neo-move-"));
       const file = join(spool, "instance.neo");
       let imported = false;
@@ -127,7 +122,6 @@ async function main() {
         await source.complete();
         print({ moved: result });
       } catch (error) {
-        // Once the target runs it, the source must never run again (it stays sealed).
         if (!imported) await source.unseal().catch(() => {});
         throw error;
       } finally {
