@@ -1,12 +1,16 @@
 import type {
+  Attachment,
   MailboxMessage,
   NeoClient,
   TranscriptItem,
   Turn,
 } from "@neo/client";
 import {
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -47,6 +51,80 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
+const size = (n: number) =>
+  n < 1024
+    ? `${n} B`
+    : n < 1024 * 1024
+      ? `${(n / 1024).toFixed(1)} KB`
+      : `${(n / 1024 / 1024).toFixed(1)} MB`;
+
+/** Images shown inline, at most this big (the browser holds the whole file to show it). */
+const PREVIEW_MAX = 20 * 1024 * 1024;
+const PREVIEW_TYPES = /^image\/(png|jpeg|gif|webp)$/;
+
+/**
+ * One attached file: a thumbnail for an image, a card for anything else, both with a download.
+ * Files need the bearer token, so they are fetched, not linked.
+ */
+function FileCard({
+  client,
+  file,
+  caption,
+}: {
+  client: NeoClient;
+  file: Attachment;
+  caption?: string | null;
+}) {
+  const [url, setUrl] = useState<string>();
+  const preview = PREVIEW_TYPES.test(file.mimeType) && file.size <= PREVIEW_MAX;
+  useEffect(() => {
+    if (!preview) return;
+    let made: string | undefined;
+    let gone = false;
+    client
+      .fileBlob(file.path)
+      .then((blob) => {
+        if (gone) return;
+        made = URL.createObjectURL(blob);
+        setUrl(made);
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [client, file.path, preview]);
+  const download = async () => {
+    try {
+      const href = url ?? URL.createObjectURL(await client.fileBlob(file.path));
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = file.name;
+      a.click();
+      if (!url) setTimeout(() => URL.revokeObjectURL(href), 10_000);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div className="file">
+      {preview && url && (
+        <img src={url} alt={file.name} onClick={() => window.open(url)} />
+      )}
+      <div className="file-row">
+        <span className="file-name" title={file.path}>
+          {file.name}
+        </span>
+        <span className="muted">{size(file.size)}</span>
+        <button className="small" type="button" onClick={download}>
+          Download
+        </button>
+      </div>
+      {caption && <div className="file-caption">{caption}</div>}
+    </div>
+  );
+}
+
 const time = (at: number) =>
   new Date(at).toLocaleString([], {
     weekday: "short",
@@ -55,10 +133,12 @@ const time = (at: number) =>
   });
 
 function Item({
+  client,
   item,
   turns,
   results,
 }: {
+  client: NeoClient;
   item: TranscriptItem;
   turns: Record<string, Turn>;
   results: Map<string, TranscriptItem & { type: "tool" }>;
@@ -76,7 +156,14 @@ function Item({
                 <span className={`chip ${turn.status}`}>{turn.status}</span>
               )}
             </div>
-            <div className="bubble">{m.text}</div>
+            {m.text && <div className="bubble">{m.text}</div>}
+            {m.attachments?.length ? (
+              <div className="files">
+                {m.attachments.map((f) => (
+                  <FileCard key={f.path} client={client} file={f} />
+                ))}
+              </div>
+            ) : null}
             {turn?.error && <div className="err">{turn.error}</div>}
           </div>
         ))}
@@ -94,6 +181,16 @@ function Item({
         )}
         {item.toolCalls.map((call) => {
           const result = results.get(call.id);
+          if (result?.file)
+            return (
+              <div key={call.id} className="files">
+                <FileCard
+                  client={client}
+                  file={result.file}
+                  caption={result.file.caption}
+                />
+              </div>
+            );
           return (
             <details key={call.id} className="tool">
               <summary>
@@ -118,6 +215,7 @@ function Item({
 }
 
 export function Transcript(props: {
+  client: NeoClient;
   items: TranscriptItem[];
   turns: Record<string, Turn>;
   live: LiveTurn;
@@ -158,6 +256,7 @@ export function Transcript(props: {
       {props.items.map((item) => (
         <Item
           key={item.entryId}
+          client={props.client}
           item={item}
           turns={props.turns}
           results={results}
@@ -210,6 +309,7 @@ export function Queue({
         <div className="q" key={m.id}>
           <span className="chip">queued</span>
           <span className="t" title={m.text}>
+            {m.attachments.length > 0 && `📎${m.attachments.length} `}
             {m.text}
           </span>
           {running && (
@@ -265,25 +365,42 @@ export function Composer({
   onNeedsSetup: () => void;
 }) {
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [sending, setSending] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => {
     const el = input.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
+  const add = (list: FileList | File[] | null) => {
+    if (list?.length) setFiles((f) => [...f, ...Array.from(list)].slice(0, 10));
+  };
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     const value = text.trim();
-    if (!value) return;
-    setText("");
+    if ((!value && files.length === 0) || sending) return;
+    setSending(true);
     try {
-      await client.send(value, { clientId: `web-${crypto.randomUUID()}` });
+      // Each file streams up on its own first; the message then attaches them.
+      const attachments = [];
+      for (const file of files)
+        attachments.push(await client.upload(file, file.name || "file"));
+      await client.send(value, {
+        clientId: `web-${crypto.randomUUID()}`,
+        ...(attachments.length ? { attachments } : {}),
+      });
+      setText("");
+      setFiles([]);
     } catch (err) {
-      setText(value);
       const body = (err as { body?: { setup?: boolean } }).body;
       if (body?.setup) onNeedsSetup();
       alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
     }
     onSent();
   };
@@ -293,19 +410,81 @@ export function Composer({
       void submit();
     }
   };
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (e.clipboardData.files.length) {
+      e.preventDefault();
+      add(e.clipboardData.files);
+    }
+  };
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    add(e.dataTransfer.files);
+  };
   return (
-    <form id="composer" onSubmit={submit}>
-      <textarea
-        ref={input}
-        rows={1}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={onKey}
-        placeholder="Message Neo… (Enter to send, Shift+Enter for a new line)"
-      />
-      <button className="primary" type="submit">
-        Send
-      </button>
+    <form
+      id="composer"
+      className={dragging ? "dragging" : undefined}
+      onSubmit={submit}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      {files.length > 0 && (
+        <div className="pending">
+          {files.map((f, i) => (
+            <span className="chip" key={`${f.name}-${i}`}>
+              {f.name} · {size(f.size)}
+              {!sending && (
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => setFiles((all) => all.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="row">
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            add(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          title="Attach files"
+          disabled={sending}
+          onClick={() => picker.current?.click()}
+        >
+          📎
+        </button>
+        <textarea
+          ref={input}
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          onPaste={onPaste}
+          placeholder="Message Neo… (Enter to send, Shift+Enter for a new line)"
+        />
+        <button className="primary" type="submit" disabled={sending}>
+          {sending ? (files.length ? "Uploading…" : "Sending…") : "Send"}
+        </button>
+      </div>
     </form>
   );
 }

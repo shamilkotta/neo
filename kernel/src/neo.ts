@@ -20,6 +20,13 @@ import {
   createWriteTool,
 } from "@earendil-works/pi-durable/tools";
 import { type AgentRecord, Agents, DEFAULT_AGENT_ID } from "./agent/agents";
+import {
+  type AttachmentInput,
+  inlineCheck,
+  placeAttachments,
+  sweepStaging,
+} from "./agent/attachments";
+import { fileTools } from "./agent/tools/files";
 import { Mailbox, type MailboxMessage, type Turn } from "./agent/mailbox";
 import { promptSections } from "./agent/prompt";
 import { historyTools } from "./agent/tools/history";
@@ -412,6 +419,7 @@ export class Neo {
         await this.host.alarm.set(this.now() + RECOVERY_MS);
         live.harness.resume();
         await this.fireSchedules(live);
+        await sweepStaging(live.vfs, this.now()).catch(() => {});
       } finally {
         this.waking = undefined;
         this.armed = null;
@@ -523,16 +531,27 @@ export class Neo {
     return this.services().agents.get(id);
   }
 
-  /** Sends a message to the agent, after checking it has a model. */
+  /**
+   * Sends a message to the agent, after checking it has a model. Its uploaded files move into a
+   * folder of their own first (a retry with the same clientId finds the message and moves nothing).
+   */
   async send(
     agentId: string,
-    input: Parameters<Mailbox["send"]>[1],
+    input: Parameters<Mailbox["send"]>[1] & { files?: AttachmentInput[] },
   ): Promise<MailboxMessage> {
     const live = this.services();
     const agent = await live.agents.get(agentId);
     if (!agent.model && !(await this.defaultModel()))
       throw new SetupError("Add a model provider first (Settings → Providers)");
-    return live.mailbox.send(agentId, input);
+    const { files, ...rest } = input;
+    if (files?.length) {
+      const existing = rest.clientId
+        ? await live.mailbox.byClientId(rest.clientId)
+        : undefined;
+      if (existing) return existing;
+      rest.attachments = await placeAttachments(live.vfs, files);
+    }
+    return live.mailbox.send(agentId, rest);
   }
 
   async pause(agentId: string): Promise<void> {
@@ -629,6 +648,28 @@ export class Neo {
         turnSettled: (turn, messages) => this.turnSettled(turn, messages),
         paused: async (agentId) => (await agents.get(agentId)).paused,
         timezone: () => settings.get("timezone"),
+        checkImages: async (agentId, attachments) => {
+          const agent = await agents.get(agentId);
+          const model = agent.model ?? (await this.defaultModel());
+          const vision = model ? providers.vision(model) : true;
+          const inline = new Set<string>();
+          const notes = new Map<string, string>();
+          for (const a of attachments) {
+            const check = await inlineCheck(vfs, a, vision).catch(() => ({
+              inline: false as const,
+              note: "not shown: it could not be read",
+            }));
+            if (check.inline) inline.add(a.path);
+            else if (check.note) notes.set(a.path, check.note);
+          }
+          return { inline, notes };
+        },
+        // Bounded by the inline check (Pi's image limits): the one file held whole.
+        readImage: async (path, mimeType) => ({
+          type: "image",
+          data: toBase64(await vfs.readFile(path)),
+          mimeType,
+        }),
       },
       this.now,
     );
@@ -655,6 +696,7 @@ export class Neo {
       settings,
       agentOf: (id) => this.agentOf(id),
       conversation: (agentId) => this.conversation(agentId),
+      vfs,
       now: this.now,
     };
     registry.install(
@@ -681,6 +723,7 @@ export class Neo {
           ...memoryTools(tools),
           ...historyTools(tools),
           ...scheduleTools(tools),
+          ...fileTools(tools),
         ],
       }),
     );

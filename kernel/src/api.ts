@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { watchEvents } from "@earendil-works/pi-durable";
 import { type AgentChange, DEFAULT_AGENT_ID } from "./agent/agents";
+import { AttachmentError, type AttachmentInput } from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
 import { readTranscript } from "./agent/transcript";
 import { ScheduleError, type ScheduleInput } from "./agent/schedules";
@@ -86,6 +87,7 @@ async function respond(neo: Neo, request: Request): Promise<Response> {
       return json({ error: error.message, setup: true }, 409);
     if (
       error instanceof MailboxError ||
+      error instanceof AttachmentError ||
       error instanceof ScheduleError ||
       error instanceof BundleError
     )
@@ -185,12 +187,18 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
 
   // ---- conversation ----
   if (is("POST", "/v1/messages")) {
-    const input = await body<{ text?: string; clientId?: string }>(request);
-    if (typeof input.text !== "string")
+    const input = await body<{
+      text?: string;
+      clientId?: string;
+      attachments?: AttachmentInput[];
+    }>(request);
+    const files = attachmentsOf(input);
+    if (typeof input.text !== "string" && !files.length)
       throw new HttpError(400, "text is required");
     const message = await neo.send(agentId, {
-      text: input.text,
+      text: input.text ?? "",
       ...(input.clientId ? { clientId: input.clientId } : {}),
+      ...(files.length ? { files } : {}),
       steer: true,
     });
     return json({ message }, 202);
@@ -382,11 +390,21 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ seen: neo.host.test.seen });
   if (neo.host.test && is("POST", "/v1/test/messages")) {
     // Queued behind a running turn: the API always joins the turn.
-    const input = await body<{ text?: string }>(request);
+    const input = await body<{
+      text?: string;
+      attachments?: AttachmentInput[];
+    }>(request);
+    const files = attachmentsOf(input);
     if (typeof input.text !== "string")
       throw new HttpError(400, "text is required");
     return json(
-      { message: await neo.send(agentId, { text: input.text, steer: false }) },
+      {
+        message: await neo.send(agentId, {
+          text: input.text,
+          ...(files.length ? { files } : {}),
+          steer: false,
+        }),
+      },
       202,
     );
   }
@@ -448,4 +466,11 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   }
 
   throw new HttpError(404, "Not found");
+}
+
+function attachmentsOf(input: { attachments?: unknown }): AttachmentInput[] {
+  if (input.attachments === undefined) return [];
+  if (!Array.isArray(input.attachments))
+    throw new HttpError(400, "attachments is a list of { path, name?, mimeType? }");
+  return input.attachments as AttachmentInput[];
 }

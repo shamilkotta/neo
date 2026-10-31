@@ -134,6 +134,7 @@ function Instance({
         </header>
         {neo.error && <p className="err banner">{neo.error}</p>}
         <Transcript
+          client={client}
           items={neo.items}
           turns={neo.turns}
           live={neo.live}

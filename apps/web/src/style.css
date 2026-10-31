@@ -258,13 +258,81 @@ code {
 }
 #composer {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 10px 16px 14px;
   border-top: 1px solid var(--line);
   max-width: 812px;
   width: 100%;
   margin: 0 auto;
+}
+#composer .row {
+  display: flex;
+  gap: 8px;
   align-items: flex-end;
+}
+#composer.dragging {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+#composer .pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+#composer .pending .chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 8px;
+}
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--dim);
+  cursor: pointer;
+}
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.me .files {
+  justify-content: flex-end;
+}
+.file {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  max-width: 320px;
+  background: var(--panel);
+  font-size: 12px;
+}
+.file img {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  cursor: zoom-in;
+}
+.file-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-caption {
+  margin-top: 4px;
+  color: var(--dim);
 }
 #composer textarea {
   min-height: 42px;
