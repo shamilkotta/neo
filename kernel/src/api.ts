@@ -11,6 +11,7 @@ import {
   type ProviderConfig,
 } from "./services/providers";
 import type { SettingsShape } from "./services/settings";
+import { BundleError } from "./move/bundle";
 import { VfsError } from "./vfs/vfs";
 
 class HttpError extends Error {
@@ -30,7 +31,7 @@ class HttpError extends Error {
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, last-event-id",
+  "access-control-allow-headers": "authorization, content-type, last-event-id, x-neo-passphrase",
   "access-control-max-age": "86400",
 };
 
@@ -83,7 +84,11 @@ async function respond(neo: Neo, request: Request): Promise<Response> {
       return json({ error: error.message, state: error.state }, 409);
     if (error instanceof SetupError)
       return json({ error: error.message, setup: true }, 409);
-    if (error instanceof MailboxError || error instanceof ScheduleError)
+    if (
+      error instanceof MailboxError ||
+      error instanceof ScheduleError ||
+      error instanceof BundleError
+    )
       return json({ error: error.message }, 400);
     if (error instanceof VfsError)
       return json(
@@ -112,6 +117,7 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
       host: neo.host.name,
       state: neo.state,
       instanceId: neo.instanceId,
+      epoch: await neo.epoch(),
       capabilities: neo.host.capabilities,
       test: !!neo.host.test,
     };
@@ -140,6 +146,39 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
         "x-accel-buffering": "no",
       },
     });
+  }
+
+  // ---- moving (seal → export → import elsewhere → complete; unseal cancels) ----
+  if (is("POST", "/v1/move/seal")) {
+    await neo.seal();
+    return json({ state: neo.state });
+  }
+  if (is("POST", "/v1/move/unseal")) {
+    await neo.unseal();
+    return json({ state: neo.state });
+  }
+  if (is("POST", "/v1/move/export")) {
+    const { passphrase } = await body<{ passphrase?: string }>(request);
+    return new Response(await neo.exportBundle(passphrase || undefined), {
+      headers: {
+        "content-type": "application/x-neo-bundle",
+        "cache-control": "no-store",
+      },
+    });
+  }
+  if (is("POST", "/v1/move/import")) {
+    if (!request.body)
+      throw new HttpError(400, "The bundle is the request body");
+    return json(
+      await neo.importBundle(
+        request.body,
+        request.headers.get("x-neo-passphrase") || undefined,
+      ),
+    );
+  }
+  if (is("POST", "/v1/move/complete")) {
+    await neo.markMoved();
+    return json({ state: neo.state });
   }
 
   const live = neo.services();

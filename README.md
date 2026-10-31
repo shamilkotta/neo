@@ -2,7 +2,7 @@
 
 A minimal, always-on personal agent. The same kernel runs on Bun (laptop, VPS, VM, container) and in a
 Cloudflare Durable Object, uses any model provider, and keeps everything in one SQLite database plus a
-blob store, so an instance can later move between hosts. See [PLAN.md](PLAN.md).
+blob store, so an instance can move between hosts. See [PLAN.md](PLAN.md).
 
 Layout: `kernel/` (the core), `hosts/bun` and `hosts/cf` (where it runs), `apps/web` (the web chat),
 `packages/client` (the API types and a typed client for every app), `e2e/` (one suite for every host).
@@ -28,6 +28,11 @@ bun run types                  # after editing wrangler.jsonc
 ```
 
 Locally: put `NEO_MASTER_KEY` and `NEO_TOKEN` in `hosts/cf/.dev.vars`, then `bun run dev:cf`.
+
+## Move an instance
+
+`bun run hosts/bun/src/cli.ts move --from URL --from-token T --to URL --to-token T --passphrase P`
+moves it between hosts (Bun ↔ Cloudflare). All commands: [docs/MOVING.md](docs/MOVING.md).
 
 ## The web app
 

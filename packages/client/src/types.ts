@@ -184,7 +184,6 @@ export interface Schedule {
 export interface ScheduleInput {
   name?: string;
   prompt?: string;
-  /** One time: "2026-10-29T09:00" (local) or ISO with an offset. */
   at?: string;
   inMinutes?: number;
   everyMinutes?: number;
@@ -257,14 +256,22 @@ export interface Status {
   host: string;
   state: "empty" | "active" | "sealed" | "moved";
   instanceId: string | undefined;
+  epoch?: number;
   capabilities: { sockets: boolean; processes: boolean };
   test: boolean;
   agent?: { id: string; name: string; paused: boolean };
   model?: ModelRef | null;
   turn?: Turn | null;
   queued?: number;
-  /** The newest durable event: subscribe with `after` set to this. */
   latestEvent?: number;
+}
+
+// ---- moving (POST /v1/move/*) ----
+
+export interface ImportResult {
+  instanceId: string;
+  epoch: number;
+  secrets: "kept" | "dropped";
 }
 
 // ---- events (GET /v1/events, server-sent) ----

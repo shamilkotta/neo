@@ -76,7 +76,8 @@ export async function openText(
   return decoder.decode(await open(key, sealed, aad));
 }
 
-export const PASSPHRASE_ITERATIONS = 310_000;
+// Cloudflare Workers refuse PBKDF2 above 100,000 iterations (local workerd does not).
+export const PASSPHRASE_ITERATIONS = 100_000;
 
 /** A key from a passphrase (PBKDF2-SHA256), for bundles. */
 export async function passphraseKey(
