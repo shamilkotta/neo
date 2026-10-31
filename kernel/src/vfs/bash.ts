@@ -16,6 +16,7 @@ const POSIX: Record<VfsError["code"], [string, string]> = {
   exists: ["EEXIST", "file already exists"],
   not_empty: ["ENOTEMPTY", "directory not empty"],
   invalid: ["EINVAL", "invalid argument"],
+  read_only: ["EROFS", "read-only file system"],
   too_large: [
     "EFBIG",
     "file too large for the shell (it reads whole files; use the read tool with offset and limit)",

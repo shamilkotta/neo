@@ -1,11 +1,12 @@
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
-import type { Attachment, AttachmentInput } from "@neo/client";
+import type { Attachment, AttachmentInput, Upload } from "@neo/client";
 import { ulid } from "../ids";
-import { baseName, normalizePath, type Vfs, VfsError } from "../vfs/vfs";
-export type { Attachment, AttachmentInput } from "@neo/client";
+import { baseName, type Vfs, VfsError, type VfsStat } from "../vfs/vfs";
+export type { Attachment, AttachmentInput, Upload } from "@neo/client";
 
 export const ATTACHMENTS_ROOT = "/attachments";
-export const STAGING_ROOT = "/.staging";
+export const USER_ROOT = "/user";
+export const STAGING_ROOT = `${USER_ROOT}/.staging`;
 export const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ATTACHMENTS_SIZE = 256 * 1024 * 1024;
@@ -73,51 +74,44 @@ function uniqueName(name: string, taken: Set<string>): string {
 
 export class AttachmentError extends Error {}
 
-export async function placeAttachments(
+export async function stageUpload(
+  vfs: Vfs,
+  name: string,
+  body: ReadableStream<Uint8Array>,
+): Promise<Upload> {
+  const id = ulid();
+  const stat = await vfs.writeStream(
+    `${STAGING_ROOT}/${id}/${safeName(name)}`,
+    body,
+    { createParents: true, maxBytes: MAX_ATTACHMENTS_SIZE },
+  );
+  return { id, name: baseName(stat.path), size: stat.size };
+}
+
+export async function placeUploads(
   vfs: Vfs,
   inputs: AttachmentInput[],
-  folderId: string = ulid(),
 ): Promise<Attachment[]> {
-  if (inputs.length === 0) return [];
   if (inputs.length > MAX_ATTACHMENTS)
     throw new AttachmentError(`A message attaches at most ${MAX_ATTACHMENTS} files`);
-  const sources = [];
-  let total = 0;
+  const sources: Source[] = [];
   for (const input of inputs) {
-    if (typeof input?.path !== "string")
-      throw new AttachmentError("Each attachment needs a path");
-    const stat = await vfs.stat(input.path).catch((e) => {
-      if (e instanceof VfsError && e.code === "not_found")
-        throw new AttachmentError(`No file to attach at ${input.path}`);
-      throw e;
-    });
-    if (stat.kind !== "file")
-      throw new AttachmentError(`${input.path} is not a file`);
-    total += stat.size;
-    sources.push({ input, stat });
+    const id = input?.id;
+    if (typeof id !== "string" || !/^[0-9A-Z]{26}$/.test(id))
+      throw new AttachmentError("Each attachment needs an upload id");
+    const [file] = await vfs
+      .readdir(`${STAGING_ROOT}/${id}`, { limit: 2 })
+      .catch((e) => {
+        if (e instanceof VfsError && e.code === "not_found") return [];
+        throw e;
+      });
+    if (!file || file.kind !== "file")
+      throw new AttachmentError(`No upload ${id} (uploads expire after a day)`);
+    sources.push({ stat: file, mimeType: input.mimeType });
   }
-  if (total > MAX_ATTACHMENTS_SIZE)
-    throw new AttachmentError(
-      `The attachments are ${mb(total)}; a message attaches at most ${mb(MAX_ATTACHMENTS_SIZE)}`,
-    );
-  const folder = `${ATTACHMENTS_ROOT}/${folderId}`;
-  await vfs.mkdir(folder, { recursive: true });
-  const taken = new Set<string>();
-  const placed: Attachment[] = [];
-  for (const { input, stat } of sources) {
-    const name = uniqueName(safeName(input.name || baseName(stat.path)), taken);
-    const path = `${folder}/${name}`;
-    if (normalizePath(stat.path).startsWith(`${STAGING_ROOT}/`))
-      await vfs.rename(stat.path, path);
-    else await vfs.copyFile(stat.path, path);
-    const given = input.mimeType?.trim().toLowerCase();
-    const mimeType = await sniffedType(
-      vfs,
-      path,
-      given && /^[\w.+-]+\/[\w.+-]+$/.test(given) ? given : mimeTypeOf(name),
-    );
-    placed.push({ path, name, mimeType, size: stat.size });
-  }
+  const placed = await place(vfs, sources, ulid(), true);
+  for (const input of inputs)
+    await vfs.rm(`${STAGING_ROOT}/${input.id}`, { recursive: true }).catch(() => {});
   return placed;
 }
 
@@ -127,12 +121,56 @@ export async function placeOutgoing(
   callId: string,
   name?: string,
 ): Promise<Attachment> {
-  const [placed] = await placeAttachments(
+  const stat = await vfs.stat(path).catch((e) => {
+    if (e instanceof VfsError && e.code === "not_found")
+      throw new AttachmentError(`No file at ${path}`);
+    throw e;
+  });
+  if (stat.kind !== "file") throw new AttachmentError(`${path} is not a file`);
+  const [placed] = await place(
     vfs,
-    [{ path, ...(name ? { name } : {}) }],
+    [{ stat, name }],
     `out-${callId.replace(/[^\w-]/g, "_").slice(0, 80)}`,
+    false,
   );
   return placed!;
+}
+
+interface Source {
+  stat: VfsStat;
+  name?: string;
+  mimeType?: string;
+}
+
+async function place(
+  vfs: Vfs,
+  sources: Source[],
+  folderId: string,
+  move: boolean,
+): Promise<Attachment[]> {
+  const total = sources.reduce((n, s) => n + s.stat.size, 0);
+  if (total > MAX_ATTACHMENTS_SIZE)
+    throw new AttachmentError(
+      `The attachments are ${mb(total)}; a message attaches at most ${mb(MAX_ATTACHMENTS_SIZE)}`,
+    );
+  const folder = `${ATTACHMENTS_ROOT}/${folderId}`;
+  await vfs.mkdir(folder, { recursive: true });
+  const taken = new Set<string>();
+  const placed: Attachment[] = [];
+  for (const { stat, name: given, mimeType: claimed } of sources) {
+    const name = uniqueName(safeName(given || baseName(stat.path)), taken);
+    const path = `${folder}/${name}`;
+    if (move) await vfs.rename(stat.path, path);
+    else await vfs.copyFile(stat.path, path);
+    const type = claimed?.trim().toLowerCase();
+    const mimeType = await sniffedType(
+      vfs,
+      path,
+      type && /^[\w.+-]+\/[\w.+-]+$/.test(type) ? type : mimeTypeOf(name),
+    );
+    placed.push({ path, name, mimeType, size: stat.size });
+  }
+  return placed;
 }
 
 export async function sweepStaging(vfs: Vfs, now: number): Promise<void> {

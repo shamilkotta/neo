@@ -29,13 +29,20 @@ const send = (neo: Instance, text: string) =>
 const enqueue = (neo: Instance, text: string) =>
   neo.call("POST", "/v1/test/messages", { text });
 
-async function putFile(neo: Instance, path: string, bytes: Uint8Array<ArrayBuffer>) {
-  const response = await fetch(`${neo.url()}/v1/files?path=${path}`, {
-    method: "PUT",
+/** Uploads a file; returns its path in the files API. */
+async function putFile(
+  neo: Instance,
+  name: string,
+  bytes: Uint8Array<ArrayBuffer>,
+): Promise<string> {
+  const response = await fetch(`${neo.url()}/v1/uploads?name=${name}`, {
+    method: "POST",
     headers: { authorization: "Bearer t" },
     body: bytes,
   });
   expect(response.ok).toBe(true);
+  const { upload } = (await response.json()) as { upload: { id: string; name: string } };
+  return `/.staging/${upload.id}/${upload.name}`;
 }
 
 async function getFile(neo: Instance, path: string): Promise<Uint8Array> {
@@ -80,8 +87,8 @@ describe("move", () => {
     const first = await open("bun");
     const small = new TextEncoder().encode("remember the milk\n");
     const big = randomBytes(3 * 1024 * 1024 + 7);
-    await putFile(first, "/notes/todo.txt", small);
-    await putFile(first, "/big/data.bin", big);
+    const todo = await putFile(first, "todo.txt", small);
+    const data = await putFile(first, "data.bin", big);
     await first.call("PUT", "/v1/providers/anthropic", {
       kind: "anthropic",
       apiKey: "sk-test",
@@ -106,10 +113,10 @@ describe("move", () => {
       "resumed after move",
       "then the queue",
     ]);
-    expect(new TextDecoder().decode(await getFile(second, "/notes/todo.txt"))).toBe(
+    expect(new TextDecoder().decode(await getFile(second, todo))).toBe(
       "remember the milk\n",
     );
-    expect(Bun.hash(await getFile(second, "/big/data.bin"))).toBe(Bun.hash(big));
+    expect(Bun.hash(await getFile(second, data))).toBe(Bun.hash(big));
     const { providers } = await second.call("GET", "/v1/providers");
     expect(providers.map((p: any) => [p.id, p.hasKey])).toEqual([
       ["anthropic", true],
@@ -143,7 +150,7 @@ describe("move", () => {
       "home again",
       "queue again",
     ]);
-    expect(Bun.hash(await getFile(third, "/big/data.bin"))).toBe(Bun.hash(big));
+    expect(Bun.hash(await getFile(third, data))).toBe(Bun.hash(big));
     const after = await third.call("GET", "/v1/providers");
     expect(after.providers[0].hasKey).toBe(false);
   });
@@ -163,7 +170,7 @@ describe("move", () => {
 
   test("a wrong passphrase leaves the target new and usable", async () => {
     const source = await open();
-    await putFile(source, "/a.txt", new TextEncoder().encode("a"));
+    await putFile(source, "a.txt", new TextEncoder().encode("a"));
     await client(source).seal();
     const bundle = await new Response(
       await client(source).exportBundle("right"),
@@ -192,12 +199,12 @@ describe("move", () => {
       await new Response(await client(source).exportBundle()).arrayBuffer(),
     );
     const used = await open();
-    await putFile(used, "/mine.txt", new TextEncoder().encode("mine"));
+    const mine = await putFile(used, "mine.txt", new TextEncoder().encode("mine"));
     const refused = await client(used)
       .importBundle(bundle)
       .catch((e) => e);
     expect(refused.status).toBe(409);
-    expect(new TextDecoder().decode(await getFile(used, "/mine.txt"))).toBe(
+    expect(new TextDecoder().decode(await getFile(used, mine))).toBe(
       "mine",
     );
 

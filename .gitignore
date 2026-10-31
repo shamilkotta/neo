@@ -5,3 +5,8 @@ node_modules
 .neo
 dist
 .dev.vars
+
+AGENTS.md
+GOALS.md
+PLAN.md
+CONTEXT.md

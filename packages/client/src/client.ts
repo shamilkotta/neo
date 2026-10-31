@@ -2,6 +2,7 @@ import type {
   AgentChange,
   AgentRecord,
   AttachmentInput,
+  Upload,
   AvailableModel,
   ImportResult,
   LiveEvent,
@@ -125,22 +126,22 @@ export class NeoClient {
       text,
       ...options,
     }).then((r) => r.message);
-  upload = async (file: Blob, name: string): Promise<AttachmentInput> => {
-    const path = `/.staging/${crypto.randomUUID()}/${name.replace(/[/\\]/g, "_")}`;
-    await this.raw(`/v1/files${query({ path })}`, {
-      method: "PUT",
-      headers: { "content-type": "application/octet-stream" },
-      body: file,
-    });
-    return {
-      path,
-      name,
-      ...(file.type ? { mimeType: file.type } : {}),
-    };
+  upload = async (
+    file: Blob,
+    name: string,
+  ): Promise<Upload & AttachmentInput> => {
+    const { upload } = (await (
+      await this.raw(`/v1/uploads${query({ name })}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: file,
+      })
+    ).json()) as { upload: Upload };
+    return { ...upload, ...(file.type ? { mimeType: file.type } : {}) };
   };
   fileBlob = async (path: string): Promise<Blob> =>
     (
-      await this.raw(`/v1/files${query({ path })}`, { method: "GET" })
+      await this.raw(`/v1/attachments${query({ path })}`, { method: "GET" })
     ).blob();
   transcript = (options: { before?: number; limit?: number } = {}) =>
     this.call<TranscriptPage>("GET", `/v1/transcript${query(options)}`);
@@ -256,14 +257,6 @@ export class NeoClient {
       };
     return { kind: "file", path, text: await response.text() };
   }
-  writeFile = (path: string, text: string) =>
-    this.fetcher(`${this.base}/v1/files${query({ path })}`, {
-      method: "PUT",
-      headers: { authorization: `Bearer ${this.options.token}` },
-      body: text,
-    }).then((r) => {
-      if (!r.ok) throw new NeoApiError(r.status, "Write failed", {});
-    });
 
   events(
     handlers: {
