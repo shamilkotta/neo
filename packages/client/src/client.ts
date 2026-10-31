@@ -2,6 +2,7 @@ import type {
   AgentChange,
   AgentRecord,
   AvailableModel,
+  ImportResult,
   LiveEvent,
   MailboxMessage,
   ModelRef,
@@ -68,6 +69,61 @@ export class NeoClient {
   }
 
   status = () => this.call<Status>("GET", "/v1/status");
+
+  // ---- moving: seal → export → import on the target → complete (or unseal to cancel) ----
+  seal = () => this.call<{ state: string }>("POST", "/v1/move/seal", {});
+  unseal = () => this.call<{ state: string }>("POST", "/v1/move/unseal", {});
+  complete = () =>
+    this.call<{ state: string }>("POST", "/v1/move/complete", {});
+  /** The sealed instance as a `.neo` bundle (gzip), streamed. */
+  exportBundle = async (
+    passphrase?: string,
+  ): Promise<ReadableStream<Uint8Array>> => {
+    const response = await this.raw("/v1/move/export", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(passphrase ? { passphrase } : {}),
+    });
+    return response.body!;
+  };
+  /** Loads a bundle into this (new) instance. The body may be a stream, a Blob or bytes. */
+  importBundle = async (
+    bundle: BodyInit,
+    passphrase?: string,
+  ): Promise<ImportResult> => {
+    const response = await this.raw("/v1/move/import", {
+      headers: {
+        "content-type": "application/x-neo-bundle",
+        ...(passphrase ? { "x-neo-passphrase": passphrase } : {}),
+      },
+      body: bundle,
+      // A stream body needs half-duplex where fetch follows the standard.
+      ...(bundle instanceof ReadableStream ? { duplex: "half" } : {}),
+    } as RequestInit);
+    return (await response.json()) as ImportResult;
+  };
+
+  private async raw(path: string, init: RequestInit): Promise<Response> {
+    const response = await this.fetcher(this.base + path, {
+      method: "POST",
+      ...init,
+      headers: {
+        authorization: `Bearer ${this.options.token}`,
+        ...(init.headers as Record<string, string>),
+      },
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      throw new NeoApiError(
+        response.status,
+        String(data.error ?? response.statusText),
+        data,
+      );
+    }
+    return response;
+  }
 
   // ---- conversation ----
   send = (text: string, options: { clientId?: string } = {}) =>

@@ -29,6 +29,21 @@ import { scheduleTools } from "./agent/tools/schedules";
 import { HEARTBEAT, Schedules } from "./agent/schedules";
 import { handleApi } from "./api";
 import type { HostPorts } from "./host";
+import { toBase64 } from "./crypto";
+import {
+  BLOB_PIECE,
+  BUNDLE_FORMAT,
+  BUNDLE_VERSION,
+  BundleError,
+  type BundleHeader,
+  type BundleRecord,
+  decodeBundle,
+  encodeBundle,
+  readBundle,
+  unwrapDek,
+  wrapDek,
+} from "./move/bundle";
+import { dumpDatabase, loadDatabase, wipeDatabase } from "./move/snapshot";
 import { createSchema, getMeta, hasTable, setMeta } from "./schema";
 import { Events } from "./services/events";
 import { History } from "./services/history";
@@ -38,18 +53,22 @@ import { Secrets } from "./services/secrets";
 import { Settings } from "./services/settings";
 import type { SqliteDatabase } from "./sql";
 import { VfsShell } from "./vfs/bash";
+import { measured } from "./vfs/blobs";
 import { VfsExecutionEnv } from "./vfs/env";
-import { joinPath, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
+import { joinPath, rechunk, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
 
 export const NEO_VERSION = "0.1.0";
 /** Pi's tables share the instance database under this prefix. */
 export const PI_PREFIX = "pi_";
 /** While work runs, the alarm rings at least this often, so a host that dies mid-turn is woken to resume it. */
 export const RECOVERY_MS = 60_000;
+/** Exists only while an import loads (host_* never travels): a host that finds it at open wipes the half-load. */
+const IMPORT_MARKER = "host_import";
 
 /**
- * The lifecycle of an instance on a host. Only `active` runs. `sealed` and `moved` are for moving
- * an instance between hosts (next phase); `empty` is a host waiting for an import.
+ * The lifecycle of an instance on a host. Only `active` runs. A move seals the source (`sealed`:
+ * nothing runs, ready to export), imports it elsewhere, then retires the source (`moved`). `empty`
+ * is only seen while an import loads.
  */
 export type InstanceState = "empty" | "active" | "sealed" | "moved";
 
@@ -95,6 +114,11 @@ export class Neo {
 
   static async open(host: HostPorts): Promise<Neo> {
     const neo = new Neo(host);
+    if (await hasTable(host.db, IMPORT_MARKER)) {
+      // An import stopped part way (crash, eviction): start again from nothing.
+      await wipeDatabase(host.db);
+      await host.blobs.clear();
+    }
     if (await hasTable(host.db, "neo_meta")) {
       neo.instanceId_ = await getMeta(host.db, "instance_id");
       neo.state_ =
@@ -115,6 +139,13 @@ export class Neo {
 
   get instanceId(): string | undefined {
     return this.instanceId_;
+  }
+
+  /** How many times the instance has moved, plus one: each import takes the next. */
+  async epoch(): Promise<number | undefined> {
+    if (this.state_ === "empty") return undefined;
+    const value = await getMeta(this.host.db, "epoch").catch(() => undefined);
+    return value === undefined ? undefined : Number(value);
   }
 
   /** The running services; throws unless the instance is active. */
@@ -141,6 +172,196 @@ export class Neo {
       await new Settings(this.host.db).update({ timezone: this.host.timezone });
     await this.setState("active");
     await this.start();
+  }
+
+  // ---- moving ----------------------------------------------------------------------------------
+
+  /**
+   * Stops all work so the instance can be exported: nothing drains, no schedule fires, and Pi stops
+   * its run at the next commit (aborting nothing that isn't replayed). A running turn stays
+   * `running`, and resumes wherever the instance opens next.
+   */
+  async seal(): Promise<void> {
+    if (this.state_ !== "active")
+      throw new StateError(
+        this.state_,
+        `Only an active instance can be sealed (it is ${this.state_})`,
+      );
+    await this.stop();
+    await this.setState("sealed");
+    await this.events.emit("instance.sealed");
+  }
+
+  /** Cancels a move: the sealed instance runs here again. */
+  async unseal(): Promise<void> {
+    if (this.state_ !== "sealed")
+      throw new StateError(this.state_, "The instance is not sealed");
+    await this.setState("active");
+    await this.start();
+    await this.events.emit("instance.unsealed");
+  }
+
+  /** The target confirmed the import: this copy is retired and never runs again. */
+  async markMoved(): Promise<void> {
+    if (this.state_ !== "sealed")
+      throw new StateError(this.state_, "Seal and export the instance first");
+    await this.setState("moved");
+  }
+
+  /**
+   * The sealed instance as a `.neo` bundle, streamed. With a passphrase the bundle carries the
+   * data key, so secrets (provider keys) keep working on the target; without one they are dropped.
+   */
+  async exportBundle(passphrase?: string): Promise<ReadableStream<Uint8Array>> {
+    if (this.state_ !== "sealed" && this.state_ !== "moved")
+      throw new StateError(this.state_, "Seal the instance before exporting it");
+    const { db, blobs } = this.host;
+    const secrets = new Secrets(db, this.host.masterKey, this.now);
+    await secrets.init();
+    const header: BundleHeader = {
+      t: BUNDLE_FORMAT,
+      version: BUNDLE_VERSION,
+      instanceId: this.instanceId_!,
+      epoch: Number((await getMeta(db, "epoch")) ?? 1) + 1,
+      createdAt: this.now(),
+      source: { host: this.host.name },
+      ...(passphrase ? { dek: await wrapDek(secrets.rawDek(), passphrase) } : {}),
+    };
+    async function* records(): AsyncGenerator<BundleRecord> {
+      yield header;
+      let count = 0;
+      for await (const record of dumpDatabase(db)) {
+        // The data key at rest is wrapped by this host's master key; the header carries it instead.
+        if (record.t === "rows" && record.table === "neo_meta") {
+          const key = record.columns.indexOf("key");
+          record.rows = record.rows.filter((row) => row[key] !== "dek");
+        }
+        count++;
+        yield record;
+      }
+      // The bytes of large files, one object at a time, in pieces.
+      for (let after = ""; ; ) {
+        const page = await db.all<{ key: string; size: number; hash: string }>(
+          `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
+          after,
+        );
+        if (page.length === 0) break;
+        for (const blob of page) {
+          const stream = await blobs.get(blob.key);
+          if (!stream)
+            throw new Error(`A file's content is missing (${blob.key})`);
+          count++;
+          yield { t: "blob", ...blob };
+          for await (const piece of rechunk(stream, BLOB_PIECE)) {
+            count++;
+            yield { t: "blob-data", data: toBase64(piece) };
+          }
+          count++;
+          yield { t: "blob-end" };
+        }
+        after = page.at(-1)!.key;
+      }
+      yield { t: "end", records: count };
+    }
+    return encodeBundle(records());
+  }
+
+  /**
+   * Loads a bundle in place of this host's instance, which must be new (no messages, providers,
+   * memories or files): a host makes one on first open, so that is what a move target holds. A
+   * host the instance moved away from (`moved`) takes it back from a later epoch. The
+   * instance then runs here with the next epoch, and resumes a turn that was running at the seal.
+   */
+  async importBundle(
+    body: ReadableStream<Uint8Array>,
+    passphrase?: string,
+  ): Promise<{ instanceId: string; epoch: number; secrets: "kept" | "dropped" }> {
+    const homecoming = this.state_ === "moved";
+    if (!homecoming && this.state_ !== "empty" && !(await this.isNew()))
+      throw new StateError(
+        this.state_,
+        "Import needs a new instance (this one has been used)",
+      );
+    const bundle = await readBundle(decodeBundle(body)[Symbol.asyncIterator]());
+    // A retired copy takes back only its own instance, from a later move.
+    if (
+      homecoming &&
+      (bundle.header.instanceId !== this.instanceId_ ||
+        bundle.header.epoch <= ((await this.epoch()) ?? 0))
+    )
+      throw new StateError(
+        this.state_,
+        "This host retired another instance (or a later copy of this one)",
+      );
+    if (bundle.header.dek && !passphrase)
+      throw new BundleError("This bundle's secrets need its passphrase");
+    // Check the passphrase before touching anything.
+    const dek =
+      bundle.header.dek && passphrase
+        ? await unwrapDek(bundle.header.dek, passphrase)
+        : undefined;
+    const { db } = this.host;
+    await this.stop();
+    this.state_ = "empty";
+    this.instanceId_ = undefined;
+    this.configured.clear();
+    this.conversationAgents.clear();
+    await wipeDatabase(db);
+    await this.host.blobs.clear();
+    await db.exec(`CREATE TABLE ${IMPORT_MARKER} (started_at INTEGER) STRICT`);
+    try {
+      await loadDatabase(db, bundle.main());
+      for await (const blob of bundle.blobs()) {
+        const body = measured(
+          blob.stream,
+          Number.MAX_SAFE_INTEGER,
+          () => new Error(),
+        );
+        await this.host.blobs.put(blob.key, body.stream);
+        const got = body.result();
+        if (got.size !== blob.size || got.hash !== blob.hash)
+          throw new BundleError(
+            `The bundle is damaged: a file's content does not match (${blob.key})`,
+          );
+      }
+      await bundle.end();
+      if ((await getMeta(db, "instance_id")) !== bundle.header.instanceId)
+        throw new BundleError("The bundle's header and data disagree");
+      const secrets = new Secrets(db, this.host.masterKey, this.now);
+      if (dek) await secrets.storeDek(dek);
+      // Without the key the stored secrets are unreadable; a new key is made on start.
+      else await db.run(`DELETE FROM neo_secrets`);
+      await setMeta(db, "epoch", String(bundle.header.epoch));
+      await setMeta(db, "state", "active");
+      await db.exec(`DROP TABLE ${IMPORT_MARKER}`);
+    } catch (error) {
+      // Back to a new instance, as if the import never started.
+      await wipeDatabase(db);
+      await this.host.blobs.clear();
+      await this.init();
+      throw error;
+    }
+    this.instanceId_ = bundle.header.instanceId;
+    this.state_ = "active";
+    await this.start();
+    await this.events.emit("instance.imported", {
+      from: bundle.header.source.host,
+      epoch: bundle.header.epoch,
+    });
+    return {
+      instanceId: this.instanceId_,
+      epoch: bundle.header.epoch,
+      secrets: dek ? "kept" : "dropped",
+    };
+  }
+
+  /** Nothing in it yet a person made: an import may replace it. */
+  private async isNew(): Promise<boolean> {
+    if (this.state_ !== "active") return false;
+    const used = await this.host.db.get(
+      `SELECT 1 FROM neo_mailbox UNION ALL SELECT 1 FROM neo_providers UNION ALL SELECT 1 FROM neo_memories UNION ALL SELECT 1 FROM vfs_nodes WHERE kind = 'file' LIMIT 1`,
+    );
+    return used === undefined;
   }
 
   // ---- time ------------------------------------------------------------------------------------
@@ -527,6 +748,7 @@ export class Neo {
   private async stop(): Promise<void> {
     const live = this.live;
     if (!live) return;
+    this.armed = null;
     this.live = undefined;
     live.mailbox.close();
     for (const watch of live.watches) await watch.stop().catch(() => {});

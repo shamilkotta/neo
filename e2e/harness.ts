@@ -23,8 +23,12 @@ export interface Instance {
 const CF = process.env.NEO_CF_URL;
 const TOKEN = "t";
 
-export async function instance(): Promise<Instance> {
-  if (CF) {
+/** `on` picks the host; by default it is the host under test. */
+export async function instance(
+  on: "bun" | "cloudflare" = CF ? "cloudflare" : "bun",
+): Promise<Instance> {
+  if (on === "cloudflare") {
+    if (!CF) throw new Error("Set NEO_CF_URL to test on Cloudflare");
     const base = `${CF.replace(/\/$/, "")}/i/e2e-${crypto.randomUUID().slice(0, 8)}`;
     return {
       host: "cloudflare",
@@ -50,6 +54,9 @@ export async function instance(): Promise<Instance> {
     },
   };
 }
+
+/** Whether a Cloudflare host is under test (NEO_CF_URL). */
+export const onCloudflare = !!CF;
 
 /** Calls go through @neo/client, so the client every app uses is tested against every host. */
 function client(base: () => string) {

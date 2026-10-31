@@ -32,6 +32,7 @@
       },
       "dependencies": {
         "@earendil-works/chord": "1.4.0",
+        "@neo/client": "workspace:*",
         "@neo/kernel": "workspace:*",
         "@neo/web": "workspace:*",
       },
