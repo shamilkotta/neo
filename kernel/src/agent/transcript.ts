@@ -109,6 +109,11 @@ export async function readTranscript(
             ? `${output.slice(0, OUTPUT_LIMIT)}…`
             : output,
         isError: !!message.isError,
+        ...(message.toolName === "send_file" &&
+        !message.isError &&
+        message.details?.file
+          ? { file: message.details.file }
+          : {}),
       });
     }
   }

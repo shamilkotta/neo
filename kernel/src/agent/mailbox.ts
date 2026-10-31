@@ -6,7 +6,9 @@ import type {
   SubmissionId,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { ulid } from "../ids";
+import { type Attachment, attachmentsBlock } from "./attachments";
 import { QUIET_REPLY } from "./schedules";
 import type { Events } from "../services/events";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
@@ -33,6 +35,7 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     agent_id TEXT NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('user', 'schedule', 'system')),
     text TEXT NOT NULL,
+    attachments TEXT NOT NULL DEFAULT '[]',
     meta TEXT NOT NULL DEFAULT '{}',
     client_id TEXT UNIQUE,
     status TEXT NOT NULL CHECK (status IN ('queued', 'starting', 'running', 'completed', 'failed', 'interrupted', 'cancelled')),
@@ -80,6 +83,8 @@ export const INPUT_ENTRY = "neo.input";
 
 export interface SendInput {
   text: string;
+  /** Files already in place (`placeAttachments`). */
+  attachments?: Attachment[];
   source?: MessageSource;
   meta?: Record<string, unknown>;
   /** The client's id for the message; a retry with the same id is the same message. */
@@ -98,6 +103,25 @@ export interface MailboxHooks {
   paused(agentId: string): Promise<boolean>;
   /** How messages are dated in the prompt. */
   timezone(): Promise<string>;
+  /** Which attached images the agent's model is sent inline, and a note for those it is not. */
+  checkImages(
+    agentId: string,
+    attachments: Attachment[],
+  ): Promise<{ inline: Set<string>; notes: Map<string, string> }>;
+  /** An inline image's bytes, read when the turn is submitted. */
+  readImage(path: string, mimeType: string): Promise<ImageContent | undefined>;
+}
+
+/** A turn's input as stored: images by path, so their bytes are never kept in a row. */
+interface TurnInput {
+  content: string;
+  images?: InlineImage[];
+  entry: { kind: string; data: InputEntryData };
+}
+
+interface InlineImage {
+  path: string;
+  mimeType: string;
 }
 
 interface MessageRow {
@@ -105,6 +129,7 @@ interface MessageRow {
   agent_id: string;
   source: MessageSource;
   text: string;
+  attachments: string;
   meta: string;
   client_id: string | null;
   status: MessageStatus;
@@ -232,9 +257,19 @@ export class Mailbox {
 
   // ---- changes -------------------------------------------------------------------------------
 
+  async byClientId(clientId: string): Promise<MailboxMessage | undefined> {
+    const row = await this.db.get<MessageRow>(
+      `SELECT * FROM neo_mailbox WHERE client_id = ?`,
+      clientId,
+    );
+    return row ? toMessage(row) : undefined;
+  }
+
   async send(agentId: string, input: SendInput): Promise<MailboxMessage> {
     const text = input.text.trim();
-    if (!text) throw new MailboxError("The message is empty");
+    const attachments = input.attachments ?? [];
+    if (!text && attachments.length === 0)
+      throw new MailboxError("The message is empty");
     if (text.length > MAX_TEXT)
       throw new MailboxError(
         `The message is too long (${MAX_TEXT} characters)`,
@@ -256,12 +291,13 @@ export class Mailbox {
       }
       const time = this.now();
       const row = await this.db.get<MessageRow>(
-        `INSERT INTO neo_mailbox (id, agent_id, source, text, meta, client_id, status, position, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
+        `INSERT INTO neo_mailbox (id, agent_id, source, text, attachments, meta, client_id, status, position, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
         ulid(time),
         agentId,
         input.source ?? "user",
         text,
+        JSON.stringify(attachments),
         JSON.stringify(input.meta ?? {}),
         input.clientId ?? null,
         await this.nextPosition(agentId),
@@ -294,17 +330,16 @@ export class Mailbox {
       if (queued.length === 0) return;
       const time = this.now();
       const turnId = ulid(time);
-      const content = await this.prompt(queued);
+      const { content, images } = await this.prompt(agentId, queued);
       const data: InputEntryData = {
         turnId,
-        messages: queued.map((m) => ({
-          id: m.id,
-          source: m.source,
-          text: m.text,
-          at: m.createdAt,
-        })),
+        messages: queued.map(inputMessage),
       };
-      const input = { content, entry: { kind: INPUT_ENTRY, data } };
+      const input: TurnInput = {
+        content,
+        ...(images.length ? { images } : {}),
+        entry: { kind: INPUT_ENTRY, data },
+      };
       // The turn and its rows first, in one commit: a crash after this is a turn recovery submits.
       await this.db.transaction(async (tx) => {
         await tx.run(
@@ -348,15 +383,9 @@ export class Mailbox {
       const data: InputEntryData = {
         turnId: turn.id,
         steered: true,
-        messages: [
-          {
-            id: message.id,
-            source: message.source,
-            text: message.text,
-            at: message.createdAt,
-          },
-        ],
+        messages: [inputMessage(message)],
       };
+      const prompt = await this.prompt(agentId, [message], true);
       await this.db.run(
         `UPDATE neo_mailbox SET status = 'starting', turn_id = ?, steered = 1, started_at = ? WHERE id = ?`,
         turn.id,
@@ -369,7 +398,7 @@ export class Mailbox {
       const submission = await conversation.submit(
         {
           type: "input",
-          content: await this.prompt([message], true),
+          content: await this.content(prompt.content, prompt.images),
           requestId: `steer:${message.id}`,
           whenBusy: "steer",
           entry: { kind: INPUT_ENTRY, data: data as never },
@@ -501,14 +530,14 @@ export class Mailbox {
   private async submitTurn(
     agentId: string,
     turnId: string,
-    input: { content: string; entry: { kind: string; data: InputEntryData } },
+    input: TurnInput,
   ): Promise<void> {
     await this.hooks.beforeWork();
     const conversation = await this.hooks.conversation(agentId);
     const submission = await conversation.submit(
       {
         type: "input",
-        content: input.content,
+        content: await this.content(input.content, input.images ?? []),
         requestId: `turn:${turnId}`,
         entry: { kind: input.entry.kind, data: input.entry.data as never },
       },
@@ -675,17 +704,55 @@ export class Mailbox {
     return entry ? textOf(entry) : null;
   }
 
-  /** The model's view of the messages a turn starts with (OpenBot's combined delivery). */
+  /**
+   * The model's view of the messages a turn starts with (OpenBot's combined delivery). Every
+   * attachment is listed by path, so the agent can come back to it; images its model can see are
+   * also sent inline (by path here, read at submit).
+   */
   private async prompt(
+    agentId: string,
     messages: MailboxMessage[],
     steered = false,
-  ): Promise<string> {
+  ): Promise<{ content: string; images: InlineImage[] }> {
     const timezone = await this.hooks.timezone();
-    const parts = messages.map((m) => `${header(m, timezone)}\n${m.text}`);
-    if (steered)
-      return `[This message arrived while you were working. Take it into account.]\n${parts[0]}`;
-    if (parts.length === 1) return parts[0]!;
-    return `This turn starts with ${parts.length} messages. Read all of them before you answer.\n\n${parts.join("\n\n---\n\n")}`;
+    const images: InlineImage[] = [];
+    const parts: string[] = [];
+    for (const m of messages) {
+      let part = header(m, timezone);
+      if (m.text) part += `\n${m.text}`;
+      if (m.attachments.length) {
+        const { inline, notes } = await this.hooks.checkImages(
+          agentId,
+          m.attachments,
+        );
+        part += `\n${attachmentsBlock(m.attachments, inline, notes)}`;
+        for (const a of m.attachments)
+          if (inline.has(a.path))
+            images.push({ path: a.path, mimeType: a.mimeType });
+      }
+      parts.push(part);
+    }
+    const content = steered
+      ? `[This message arrived while you were working. Take it into account.]\n${parts[0]}`
+      : parts.length === 1
+        ? parts[0]!
+        : `This turn starts with ${parts.length} messages. Read all of them before you answer.\n\n${parts.join("\n\n---\n\n")}`;
+    return { content, images };
+  }
+
+  /** Pi's input: the text, then the inline images, read now. An image gone since is left out. */
+  private async content(
+    text: string,
+    images: InlineImage[],
+  ): Promise<string | (TextContent | ImageContent)[]> {
+    const read: ImageContent[] = [];
+    for (const image of images) {
+      const content = await this.hooks
+        .readImage(image.path, image.mimeType)
+        .catch(() => undefined);
+      if (content) read.push(content);
+    }
+    return read.length ? [{ type: "text", text }, ...read] : text;
   }
 
   private async nextPosition(agentId: string): Promise<number> {
@@ -784,12 +851,23 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function inputMessage(m: MailboxMessage): InputMessage {
+  return {
+    id: m.id,
+    source: m.source,
+    text: m.text,
+    ...(m.attachments.length ? { attachments: m.attachments } : {}),
+    at: m.createdAt,
+  };
+}
+
 function toMessage(row: MessageRow): MailboxMessage {
   return {
     id: row.id,
     agentId: row.agent_id,
     source: row.source,
     text: row.text,
+    attachments: JSON.parse(row.attachments) as Attachment[],
     meta: JSON.parse(row.meta) as Record<string, unknown>,
     clientId: row.client_id,
     status: row.status,

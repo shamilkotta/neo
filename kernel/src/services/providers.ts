@@ -216,6 +216,15 @@ export class Providers {
     }));
   }
 
+  /** Whether a model takes images (an unknown one is taken to). */
+  vision(model: ModelRef): boolean {
+    return (
+      this.current.getModel(model.provider, model.modelId)?.input.includes(
+        "image",
+      ) ?? true
+    );
+  }
+
   /** One plain completion (channel summaries, routing). Throws on a provider error. */
   async complete(
     model: ModelRef,

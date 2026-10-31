@@ -2,6 +2,7 @@ import type { Conversation } from "@earendil-works/pi-durable";
 import type { History } from "../../services/history";
 import type { Memories } from "../../services/memory";
 import type { Settings } from "../../services/settings";
+import type { Vfs } from "../../vfs/vfs";
 import type { Mailbox } from "../mailbox";
 import type { Schedules } from "../schedules";
 
@@ -17,6 +18,7 @@ export interface ToolServices {
   /** The agent whose conversation this is. */
   agentOf(conversationId: number): Promise<string>;
   conversation(agentId: string): Promise<Conversation>;
+  vfs: Vfs;
   now: () => number;
 }
 

@@ -48,7 +48,13 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
   // A turn's input: the messages as they were sent, not the combined prompt.
   if (entry.kind === INPUT_ENTRY) {
     const data = entry.data as InputEntryData | undefined;
-    const text = (data?.messages ?? []).map((m) => m.text).join("\n\n");
+    const text = (data?.messages ?? [])
+      .map((m) =>
+        [m.text, ...(m.attachments ?? []).map((f) => `[attached ${f.name}]`)]
+          .filter(Boolean)
+          .join("\n"),
+      )
+      .join("\n\n");
     if (!text.trim()) return undefined;
     return {
       messageId: entry.id as unknown as number,

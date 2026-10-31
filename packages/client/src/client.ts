@@ -1,6 +1,7 @@
 import type {
   AgentChange,
   AgentRecord,
+  AttachmentInput,
   AvailableModel,
   ImportResult,
   LiveEvent,
@@ -126,11 +127,37 @@ export class NeoClient {
   }
 
   // ---- conversation ----
-  send = (text: string, options: { clientId?: string } = {}) =>
+  /** Sends a message; `attachments` are files uploaded first (`upload`). */
+  send = (
+    text: string,
+    options: { clientId?: string; attachments?: AttachmentInput[] } = {},
+  ) =>
     this.call<{ message: MailboxMessage }>("POST", "/v1/messages", {
       text,
       ...options,
     }).then((r) => r.message);
+  /**
+   * Uploads a file to attach to a message, streamed, into `/.staging/` (sending moves it into
+   * place; one never sent is removed after a day).
+   */
+  upload = async (file: Blob, name: string): Promise<AttachmentInput> => {
+    const path = `/.staging/${crypto.randomUUID()}/${name.replace(/[/\\]/g, "_")}`;
+    await this.raw(`/v1/files${query({ path })}`, {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    });
+    return {
+      path,
+      name,
+      ...(file.type ? { mimeType: file.type } : {}),
+    };
+  };
+  /** A file's bytes (an attachment to show or download). */
+  fileBlob = async (path: string): Promise<Blob> =>
+    (
+      await this.raw(`/v1/files${query({ path })}`, { method: "GET" })
+    ).blob();
   transcript = (options: { before?: number; limit?: number } = {}) =>
     this.call<TranscriptPage>("GET", `/v1/transcript${query(options)}`);
   turn = (id: string) =>

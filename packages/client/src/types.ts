@@ -41,11 +41,33 @@ export type MessageStatus =
   | "cancelled";
 export type TurnStatus = "running" | "completed" | "failed" | "interrupted";
 
+/**
+ * A file sent with a message, or by the agent to the person: a file in the instance's VFS, under
+ * `/attachments/<id>/`. Its bytes are read with `GET /v1/files?path=`.
+ */
+export interface Attachment {
+  path: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/**
+ * What a message attaches when it is sent: a file already uploaded (`PUT /v1/files`). One under
+ * `/.staging/` is moved into place, any other is copied. Name and type default to the file's.
+ */
+export interface AttachmentInput {
+  path: string;
+  name?: string;
+  mimeType?: string;
+}
+
 export interface MailboxMessage {
   id: string;
   agentId: string;
   source: MessageSource;
   text: string;
+  attachments: Attachment[];
   meta: Record<string, unknown>;
   clientId: string | null;
   status: MessageStatus;
@@ -74,6 +96,7 @@ export interface InputMessage {
   id: string;
   source: MessageSource;
   text: string;
+  attachments?: Attachment[];
   at: number;
 }
 
@@ -104,6 +127,8 @@ export type TranscriptItem =
       name: string;
       output: string;
       isError: boolean;
+      /** A file the agent sent the person (`send_file`). */
+      file?: Attachment & { caption: string | null };
     }
   | { type: "compaction"; entryId: number; turnId: string | null }
   | { type: "reset"; entryId: number; turnId: string | null };
