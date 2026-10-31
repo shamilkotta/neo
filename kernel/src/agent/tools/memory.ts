@@ -30,10 +30,15 @@ export function memoryTools(services: ToolServices) {
     defineTool({
       name: "remember",
       description:
-        "Stage one short, durable memory for yourself. Use memoryId to correct or consolidate an existing memory. New entries are searchable unless inclusion is essential (in every prompt, within a budget); essential requests that do not fit stay searchable. The change commits only if the current turn completes.",
+        "Stage one short, durable memory for yourself. For a new memory, leave out memoryId. Pass memoryId only to correct or consolidate an existing memory, with an id returned by search_memories or list_memories; never make one up. New entries are searchable unless inclusion is essential (in every prompt, within a budget); essential requests that do not fit stay searchable. The change commits only if the current turn completes.",
       parameters: Type.Object({
         text: Type.String({ minLength: 1, maxLength: 500 }),
-        memoryId: Type.Optional(Type.String()),
+        memoryId: Type.Optional(
+          Type.String({
+            description:
+              "Only the id of an existing memory, from search_memories or list_memories. Omit for a new memory.",
+          }),
+        ),
         inclusion: Type.Optional(inclusion),
       }),
       replay: "safe",

@@ -428,7 +428,7 @@ export class Memories {
       (!current || current.agentId !== agentId || current.ownerKind !== "agent")
     )
       throw new MemoryError(
-        "This memory does not belong to the current agent.",
+        `No memory has the id "${input.memoryId}"; nothing was saved. Ids come only from search_memories or list_memories. To save a new memory, call remember again without memoryId.`,
       );
     if (
       current?.userControlled &&
