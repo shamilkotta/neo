@@ -137,6 +137,30 @@ describe("memory", () => {
     expect(seen.at(-1)).toContain("Biscuit");
   });
 
+  test("remember with a made-up memoryId fails clearly, and a retry without it saves", async () => {
+    await script([
+      {
+        tool: "remember",
+        args: {
+          memoryId: "person_name",
+          text: "The person's name is Shamil",
+          inclusion: "essential",
+        },
+      },
+      { tool: "remember", args: { text: "The person's name is Shamil" } },
+      { text: "noted" },
+    ]);
+    await send("my name is Shamil");
+    await idle(neo);
+    const failed = (await transcript(neo)).find(
+      (i) => i.type === "tool" && i.name === "remember" && i.isError,
+    );
+    expect(failed?.output).toContain("without memoryId");
+    expect((await memories()).map((m) => m.text)).toEqual([
+      "The person's name is Shamil",
+    ]);
+  });
+
   test("memories staged in an interrupted turn are dropped", async () => {
     await script([
       { tool: "remember", args: { text: "should not be kept" } },
