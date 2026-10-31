@@ -1,5 +1,6 @@
 {
   "name": "@neo/cf",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {
