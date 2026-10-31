@@ -19,19 +19,11 @@ import { BunBlobs } from "./blobs";
 import { type BunSqlite, openBunSqlite } from "./sqlite";
 
 export interface BunHostOptions {
-  /** Holds neo.db, blobs/, master.key and token. */
   dir: string;
-  /** Overrides the token file (or NEO_TOKEN). */
   token?: string;
-  /** The scripted test model (NEO_TEST=1). */
   test?: boolean;
 }
 
-/**
- * A Neo instance on Bun: a laptop, a VPS, a VM or a container. Its data is one folder:
- * `neo.db` (the instance), `blobs/` (large file bytes), and this host's own `master.key` and
- * `token`, which never travel with the instance.
- */
 export class BunHost extends NeoHost {
   private db: BunSqlite | undefined;
   private timer: BunAlarm | undefined;
@@ -61,7 +53,6 @@ export class BunHost extends NeoHost {
     };
   }
 
-  /** The API token: the option, NEO_TOKEN, or this host's token file (created on first start). */
   get token(): string {
     return (
       this.options.token ??
@@ -77,7 +68,6 @@ export class BunHost extends NeoHost {
   }
 }
 
-/** A file this host keeps for itself (never part of the instance), created on first use. */
 function hostSecret(path: string, create: () => string): string {
   if (!existsSync(path)) {
     writeFileSync(path, `${create()}\n`, { mode: 0o600 });

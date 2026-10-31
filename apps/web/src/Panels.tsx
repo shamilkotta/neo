@@ -28,13 +28,11 @@ export type Tab = (typeof TABS)[number];
 
 interface PanelProps {
   client: NeoClient;
-  /** Bumped when an event says this panel's data changed. */
   version: number;
   status?: Status;
   onForget: () => void;
 }
 
-/** Loads with `load`, again when `version` changes; shows errors in place. */
 function useLoad<T>(
   load: () => Promise<T>,
   deps: unknown[],
@@ -49,7 +47,6 @@ function useLoad<T>(
       },
       (e) => setError(e instanceof Error ? e.message : String(e)),
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
   useEffect(reload, [reload]);
   return [value, reload, error];

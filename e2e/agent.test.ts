@@ -21,7 +21,6 @@ const script = (steps: unknown[], append = false) =>
   neo.call("POST", "/v1/test/script", { steps, append });
 const send = (text: string, extra: Record<string, unknown> = {}) =>
   neo.call("POST", "/v1/messages", { text, ...extra }).then((r) => r.message);
-/** Waits in the queue behind a running turn, which the API itself never does. */
 const enqueue = (text: string) =>
   neo.call("POST", "/v1/test/messages", { text }).then((r) => r.message);
 
@@ -246,7 +245,6 @@ describe("schedules", () => {
       whenBusy: "skip",
       spec: { kind: "every", minutes: 60 },
     });
-    // Any time of day, so the test does not depend on the clock.
     await neo.call("PATCH", `/v1/test/schedules/${hb.id}`, { window: null });
     await script([{ text: "QUIET_OK" }]);
     await due(hb.id);
@@ -262,7 +260,6 @@ describe("schedules", () => {
       Date.now() + 55 * 60_000,
     );
     expect((await runs(hb.id)).map((r) => r.status)).toEqual(["sent", "sent"]);
-    // The person can only turn it off or on.
     expect(neo.call("PATCH", `/v1/schedules/${hb.id}`, {})).rejects.toThrow(
       /enabled/,
     );
@@ -358,7 +355,6 @@ describe("schedules", () => {
     await idle(neo);
     expect((await runs(skip.id)).map((r) => r.reason)).toEqual(["missed"]);
     expect((await runs(run.id)).map((r) => r.status)).toEqual(["sent"]);
-    // One message for a day of missed half-hours, and the model is told it is late.
     const inputs = (await transcript(neo)).filter((i) => i.type === "input");
     expect(inputs).toHaveLength(1);
     expect((await neo.call("GET", "/v1/test/seen")).seen.at(-1)).toContain(
@@ -395,7 +391,7 @@ describe("schedules", () => {
     expect(new Date(schedule.nextAt).getUTCHours()).toBe(9);
     await neo.call("PUT", "/v1/settings", { timezone: "Asia/Kolkata" });
     const moved = (await schedules()).find((s) => s.id === schedule.id);
-    expect(new Date(moved.nextAt).getUTCHours()).toBe(3); // 09:00 IST
+    expect(new Date(moved.nextAt).getUTCHours()).toBe(3);
     expect(new Date(moved.nextAt).getUTCMinutes()).toBe(30);
   });
 
@@ -443,7 +439,7 @@ describe("files", () => {
 
 describe("recovery", () => {
   test("a turn cut off mid-tool resumes after a restart", async () => {
-    if (!neo.restart) return; // Bun only: a Durable Object restart is not ours to cause
+    if (!neo.restart) return;
     await script([{ gate: "g" }, { text: "unused" }]);
     await send("long job");
     await until(
@@ -453,7 +449,6 @@ describe("recovery", () => {
     );
     await enqueue("queued behind it");
     await neo.restart();
-    // The new process has a new scripted model: the gate tool replays (replay-safe), then answers.
     await script([
       { text: "resumed after restart" },
       { text: "then the queue" },
@@ -496,7 +491,7 @@ describe("client", () => {
 
 describe("file store", () => {
   test("a large file streams into the blob store and back intact", async () => {
-    const size = 3 * 1024 * 1024 + 123; // past the inline limit: one blob object
+    const size = 3 * 1024 * 1024 + 123;
     const bytes = new Uint8Array(size);
     for (let i = 0; i < size; i += 65536)
       crypto.getRandomValues(bytes.subarray(i, Math.min(i + 65536, size)));

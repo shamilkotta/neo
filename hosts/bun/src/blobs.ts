@@ -2,7 +2,6 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type BlobStore, checkBlobKey } from "@neo/kernel";
 
-/** The `blobs` port on Bun: large files as plain files under one folder: `<dir>/<first two of key>/<key>`. */
 export class BunBlobs implements BlobStore {
   constructor(private readonly dir: string) {}
 
@@ -14,7 +13,6 @@ export class BunBlobs implements BlobStore {
   async put(key: string, body: ReadableStream<Uint8Array>): Promise<void> {
     const path = this.path(key);
     await mkdir(dirname(path), { recursive: true });
-    // Written to a temporary name and renamed: a crash never leaves half an object under its key.
     const temporary = `${path}.${crypto.randomUUID()}.tmp`;
     try {
       await Bun.write(temporary, new Response(body));

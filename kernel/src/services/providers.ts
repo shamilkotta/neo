@@ -31,11 +31,6 @@ export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/**
- * Built-in providers use pi-ai's catalog; their id is the pi-ai provider id. Each is imported on
- * its own (never pi-ai's all-providers barrel), so a Worker bundle carries only these SDKs. Any
- * other API (Ollama, LM Studio, vLLM, Groq, DeepSeek, ...) is an OpenAI-compatible provider.
- */
 export const BUILTIN_KINDS = [
   "anthropic",
   "openai",
@@ -57,7 +52,6 @@ const BUILTIN: Record<(typeof BUILTIN_KINDS)[number], () => Provider> = {
   openrouter: openrouterProvider,
 };
 
-/** Local model servers Neo looks for (OpenBot detects Ollama and LM Studio). */
 const LOCAL_SERVERS = [
   {
     id: "ollama",
@@ -73,7 +67,6 @@ const LOCAL_SERVERS = [
   },
 ];
 
-/** Finds local model servers that answer, as ready-to-save provider configs (no key). */
 export async function detectLocalProviders(
   fetcher: typeof fetch = fetch,
 ): Promise<ProviderConfig[]> {
@@ -93,7 +86,6 @@ export async function detectLocalProviders(
           models: models.map((id) => ({ id })),
         });
     } catch {
-      // Not running here (or this host cannot reach it, as in a Durable Object).
     }
   }
   return found;
@@ -101,13 +93,8 @@ export async function detectLocalProviders(
 
 export const providerSecretName = (id: string) => `provider:${id}`;
 
-/**
- * Model providers of an instance. `models()` is what the harness calls for every request, so a
- * change applies without restarting anything.
- */
 export class Providers {
   private current: Models;
-  /** Extra providers the host adds (the scripted test provider). Not stored. */
   private readonly extra: Provider[] = [];
 
   constructor(
@@ -126,8 +113,6 @@ export class Providers {
 
   async rebuild(): Promise<void> {
     const credentials = new InMemoryCredentialStore();
-    // No ambient environment: a key reaches a provider only from Neo's encrypted secrets, so the
-    // same instance behaves the same on every host.
     const models: MutableModels = createModels({
       credentials,
       authContext: {
@@ -206,7 +191,6 @@ export class Providers {
     await this.rebuild();
   }
 
-  /** Models that can be used now (their provider has a key or needs none). */
   async available(): Promise<{ provider: string; id: string; name: string }[]> {
     const models = await this.current.getAvailable();
     return models.map((m) => ({
@@ -216,7 +200,6 @@ export class Providers {
     }));
   }
 
-  /** Whether a model takes images (an unknown one is taken to). */
   vision(model: ModelRef): boolean {
     return (
       this.current.getModel(model.provider, model.modelId)?.input.includes(
@@ -225,7 +208,6 @@ export class Providers {
     );
   }
 
-  /** One plain completion (channel summaries, routing). Throws on a provider error. */
   async complete(
     model: ModelRef,
     prompt: string,

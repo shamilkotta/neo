@@ -1,12 +1,6 @@
 import { Database, type Statement } from "bun:sqlite";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@neo/kernel";
 
-/**
- * The `db` port on Bun: bun:sqlite behind chord's async facade.
- *
- * Bun has no node:sqlite, so this mirrors chord's NodeSqliteDatabase: one connection, operations
- * in call order, a transaction holds the queue until it settles.
- */
 
 class SerialQueue {
   private tail: Promise<unknown> = Promise.resolve();

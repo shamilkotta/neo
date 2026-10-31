@@ -4,8 +4,6 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  // The bundled web app (apps/web, built by `bun run build` here). The Worker runs first and
-  // serves it under each instance's path; see src/worker.ts.
   "assets": {
     "directory": "../../apps/web/dist",
     "binding": "ASSETS",
@@ -15,11 +13,8 @@
   "durable_objects": {
     "bindings": [{ "name": "INSTANCE", "class_name": "InstanceDO" }],
   },
-  // The bytes of large files; each instance keeps its objects under its Durable Object's id.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "neo-blobs" }],
-  // "1" enables the scripted test model and test routes.
   "vars": { "NEO_TEST": "0" },
-  // Set with `wrangler secret put` (and .dev.vars locally).
   "secrets": { "required": ["NEO_MASTER_KEY", "NEO_TOKEN"] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceDO"] }],
 }

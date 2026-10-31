@@ -17,7 +17,6 @@ import {
 } from "react";
 import type { LiveTurn } from "./useNeo";
 
-/** Markdown-lite: code blocks, inline code and bold; everything else is plain text. */
 function Markdown({ text }: { text: string }) {
   const parts = text.split(/```\w*\n?([\s\S]*?)```/g);
   return (
@@ -58,14 +57,9 @@ const size = (n: number) =>
       ? `${(n / 1024).toFixed(1)} KB`
       : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
-/** Images shown inline, at most this big (the browser holds the whole file to show it). */
 const PREVIEW_MAX = 20 * 1024 * 1024;
 const PREVIEW_TYPES = /^image\/(png|jpeg|gif|webp)$/;
 
-/**
- * One attached file: a thumbnail for an image, a card for anything else, both with a download.
- * Files need the bearer token, so they are fetched, not linked.
- */
 function FileCard({
   client,
   file,
@@ -229,7 +223,6 @@ export function Transcript(props: {
       .filter((i): i is TranscriptItem & { type: "tool" } => i.type === "tool")
       .map((i) => [i.toolCallId, i]),
   );
-  // Stay at the bottom while new things arrive, unless the person scrolled up.
   useLayoutEffect(() => {
     if (pinned.current && log.current)
       log.current.scrollTop = log.current.scrollHeight;
@@ -385,7 +378,6 @@ export function Composer({
     if ((!value && files.length === 0) || sending) return;
     setSending(true);
     try {
-      // Each file streams up on its own first; the message then attaches them.
       const attachments = [];
       for (const file of files)
         attachments.push(await client.upload(file, file.name || "file"));

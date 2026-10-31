@@ -4,7 +4,6 @@ import { AttachmentError, placeOutgoing } from "../attachments";
 import { joinPath, VfsError } from "../../vfs/vfs";
 import { refuse, type ToolServices } from "./shared";
 
-/** Files for the person: the chat shows them with a download. */
 export function fileTools(services: ToolServices) {
   return [
     defineTool({

@@ -18,7 +18,6 @@ const view = (m: Memory) => ({
   updatedAt: new Date(m.updatedAt).toISOString(),
 });
 
-/** OpenBot's memory tools: changes are staged and kept only when the turn completes. */
 export function memoryTools(services: ToolServices) {
   const turn = async (conversationId: number) => {
     const c = await caller(services, conversationId);

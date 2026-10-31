@@ -1,19 +1,6 @@
 import { fromBase64, toBase64 } from "../crypto";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "../sql";
 
-/**
- * A logical, host-independent copy of the instance database (ported from neo2).
- *
- * Why logical and not a file copy: a Durable Object has no file access (no `VACUUM INTO`, no
- * backup API), so the only copy that works on every host is reading rows through SQL. The same
- * records load into bun:sqlite and Durable Object SQLite.
- *
- * Rules:
- * - `sqlite_*`, `_cf_*` and `__*` (platform) and `host_*` (this host's own) never leave.
- * - Virtual tables travel as their CREATE statement only. Their shadow tables are skipped and the
- *   index is rebuilt on load, so every FTS5 table must use external content (`content=`).
- * - Indexes and triggers are created after the rows, so loading doesn't fire triggers.
- */
 
 export type SnapshotValue =
   | null
@@ -33,11 +20,9 @@ export type SnapshotRecord =
     }
   | { t: "rows"; table: string; columns: string[]; rows: SnapshotValue[][] };
 
-// `__*` covers platform tables such as local Miniflare's `__miniflare_do_name`.
 const PLATFORM_PREFIXES = ["sqlite_", "_cf_", "__"];
 const EXCLUDED_PREFIXES = [...PLATFORM_PREFIXES, "host_"];
 const ROW_BATCH = 200;
-/** One rows record holds about this much; a single larger row is a record of its own. */
 const RECORD_BYTES = 1024 * 1024;
 
 interface MasterRow {
@@ -80,7 +65,6 @@ function decodeValue(value: SnapshotValue): SqliteValue {
   if (value === null || typeof value === "number" || typeof value === "string")
     return value;
   if ("$b" in value) return fromBase64(value.$b);
-  // Bigints only appear beyond 2^53; DO SQL can't bind bigint, so narrow when it is safe.
   const big = BigInt(value.$i);
   return big <= BigInt(Number.MAX_SAFE_INTEGER) &&
     big >= BigInt(Number.MIN_SAFE_INTEGER)
@@ -88,7 +72,6 @@ function decodeValue(value: SnapshotValue): SqliteValue {
     : big;
 }
 
-/** Streams the database, a bounded record at a time. Call it while nothing writes (sealed). */
 export async function* dumpDatabase(
   db: SqliteExecutor,
 ): AsyncGenerator<SnapshotRecord> {
@@ -114,7 +97,6 @@ export async function* dumpDatabase(
     ).map((c) => c.name);
     const order = /WITHOUT\s+ROWID/i.test(item.sql!) ? "" : "ORDER BY rowid ";
     const query = `SELECT ${columns.map(quote).join(", ")} FROM ${quote(item.name)} ${order}LIMIT ? OFFSET ?`;
-    // Row sizes first (length() doesn't load a blob), so a record holds at most ~RECORD_BYTES.
     const sizeOf =
       columns.map((c) => `coalesce(length(${quote(c)}), 0)`).join(" + ") || "0";
     const sizes = `SELECT ${sizeOf} AS n FROM ${quote(item.name)} ${order}LIMIT ? OFFSET ?`;
@@ -139,17 +121,11 @@ export async function* dumpDatabase(
   }
 }
 
-/**
- * Loads a dump into an empty database, in batches of rows: one transaction per batch, because the
- * records arrive over the network and a Durable Object can't hold a transaction open across I/O.
- * The caller makes the whole load atomic with an import marker (see `Neo.importBundle`).
- */
 export async function loadDatabase(
   db: SqliteDatabase,
   records: AsyncIterable<SnapshotRecord>,
   batchRows = 500,
 ): Promise<void> {
-  // Indexes, triggers and FTS rebuilds wait for the rows (a handful of statements).
   const deferred: string[] = [];
   const rebuild: string[] = [];
   let batch: { sql: string; values: SqliteValue[] }[] = [];
@@ -200,7 +176,6 @@ export async function loadDatabase(
   });
 }
 
-/** Drops every table, index, trigger and view but the platform's, `host_*` included. */
 export async function wipeDatabase(db: SqliteDatabase): Promise<void> {
   const rows = await db.all<MasterRow>(
     `SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL`,
@@ -211,7 +186,6 @@ export async function wipeDatabase(db: SqliteDatabase): Promise<void> {
     for (const row of rows.filter(
       (r) => r.type === type && !keep(r.name) && !keep(r.tbl_name),
     )) {
-      // Shadow tables of a virtual table go with it.
       if (
         type === "table" &&
         !(await db.get(`SELECT 1 FROM sqlite_master WHERE name = ?`, row.name))

@@ -1,37 +1,21 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-/**
- * Where the bytes of large files live: a folder on disk (Bun), R2 (Cloudflare). The instance
- * database keeps only each file's key, size and hash, so the database stays small and a file of
- * any size streams in and out. A move copies the bytes through the bundle; keys are this host's
- * own business and never need to match between hosts.
- *
- * Objects are written once and never changed: a new version of a file is a new object.
- */
 export interface BlobStore {
-  /** Stores a new object from a stream (of unknown length). */
   put(key: string, body: ReadableStream<Uint8Array>): Promise<void>;
-  /** An object's bytes, or a range of them; null when it does not exist. */
   get(
     key: string,
     range?: { offset: number; length: number },
   ): Promise<ReadableStream<Uint8Array> | null>;
   delete(key: string): Promise<void>;
-  /** Deletes every object of this host (a failed import starts empty again). */
   clear(): Promise<void>;
 }
 
-/** Keys are made by Neo (UUIDs) but also arrive in bundles: never let one name a path. */
 export function checkBlobKey(key: string): void {
   if (!/^[A-Za-z0-9-]{8,64}$/.test(key))
     throw new Error(`Bad blob key: ${key}`);
 }
 
-/**
- * Passes a stream through, counting and hashing it; throws (failing the write) past `max` bytes.
- * `result()` is the size and SHA-256 hex once the stream has been read to the end.
- */
 export function measured(
   stream: ReadableStream<Uint8Array>,
   max: number,
@@ -40,7 +24,6 @@ export function measured(
   stream: ReadableStream<Uint8Array>;
   result(): { size: number; hash: string };
 } {
-  // Incremental: the stream is hashed as it passes, never held whole (Web Crypto cannot do this).
   const hash = sha256.create();
   let size = 0;
   let digest: string | undefined;
@@ -67,7 +50,6 @@ export function measured(
   };
 }
 
-/** One stream after another. */
 export function concatStreams(
   parts: (() => Promise<ReadableStream<Uint8Array>>)[],
 ): ReadableStream<Uint8Array> {
@@ -101,7 +83,6 @@ export function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
-/** `length` zero bytes, a piece at a time. */
 export function zeroStream(length: number): ReadableStream<Uint8Array> {
   let left = length;
   return new ReadableStream({
@@ -114,7 +95,6 @@ export function zeroStream(length: number): ReadableStream<Uint8Array> {
   });
 }
 
-/** Reads a whole stream (of a known, bounded size) into memory. */
 export async function collect(
   stream: ReadableStream<Uint8Array>,
   size?: number,

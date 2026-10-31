@@ -6,9 +6,7 @@ const READ_CHARS = 8_000;
 const PAGE = 20;
 const STEPS = 20;
 
-/** Searching and reading the conversation's whole history, through its index (`services/history.ts`). */
 export function historyTools(services: ToolServices) {
-  /** The index catches up with the transcript before each use. */
   const ready = async (conversationId: number) => {
     const c = await caller(services, conversationId);
     await services.history.sync(

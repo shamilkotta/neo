@@ -24,11 +24,6 @@ class HttpError extends Error {
   }
 }
 
-/**
- * Any origin may call the API: it is authorized by a bearer token in a header, never a cookie, so
- * a page cannot use the person's session without the token. This is what lets a standalone web
- * app (or desktop and mobile apps) talk to any instance.
- */
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
@@ -57,10 +52,6 @@ async function body<T>(request: Request): Promise<T> {
   }
 }
 
-/**
- * Neo's HTTP API, the same on every host: `/v1/...`, JSON, `Authorization: Bearer <token>`. The
- * kernel serves only the API; hosts serve the web app's files next to it.
- */
 export async function handleApi(neo: Neo, request: Request): Promise<Response> {
   if (request.method === "OPTIONS")
     return new Response(null, { status: 204, headers: CORS });
@@ -150,7 +141,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     });
   }
 
-  // ---- moving (seal → export → import elsewhere → complete; unseal cancels) ----
   if (is("POST", "/v1/move/seal")) {
     await neo.seal();
     return json({ state: neo.state });
@@ -185,7 +175,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
 
   const live = neo.services();
 
-  // ---- conversation ----
   if (is("POST", "/v1/messages")) {
     const input = await body<{
       text?: string;
@@ -214,7 +203,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     );
   }
   if (is("GET", "/v1/live")) {
-    // The running turn as it is now: the partial answer and tool calls not yet in the transcript.
     const conversation = await neo.conversation(agentId);
     const stream = await watchEvents(
       live.harness,
@@ -247,7 +235,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ paused: false });
   }
 
-  // ---- queue ----
   if (is("GET", "/v1/queue"))
     return json({ queue: await live.mailbox.queue(agentId) });
   if (is("PUT", "/v1/queue/order")) {
@@ -273,10 +260,8 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ steered: m[1] });
   }
 
-  // ---- schedules (reminders, routines, the heartbeat) ----
   if (is("GET", "/v1/schedules"))
     return json({ schedules: await live.schedules.list(agentId) });
-  // The agent manages its schedules; the person can only turn one on or off.
   if ((m = match("PATCH", /^\/v1\/schedules\/([\w-]+)$/))) {
     const input = await body<{ enabled?: boolean }>(request);
     if (typeof input.enabled !== "boolean")
@@ -292,7 +277,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ schedule });
   }
 
-  // ---- agent and settings ----
   if (is("GET", "/v1/agent"))
     return json({ agent: await live.agents.get(agentId) });
   if (is("PATCH", "/v1/agent")) {
@@ -313,7 +297,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     return json({ settings });
   }
 
-  // ---- models ----
   if (is("GET", "/v1/providers"))
     return json({ providers: await live.providers.list() });
   if (is("GET", "/v1/providers/detect"))
@@ -337,7 +320,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
       default: (await neo.defaultModel()) ?? null,
     });
 
-  // ---- files ----
   if (path === "/v1/files") {
     const filePath = url.searchParams.get("path");
     if (!filePath) throw new HttpError(400, "path is required");
@@ -356,7 +338,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
       });
     }
     if (method === "PUT") {
-      // Streamed into the file store as it arrives: an upload is never held whole in memory.
       const stat = await live.vfs.writeStream(
         filePath,
         request.body ?? new Blob([]).stream(),
@@ -372,7 +353,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     }
   }
 
-  // ---- test mode: script the fake model ----
   if (neo.host.test && is("POST", "/v1/test/script")) {
     const input = await body<{
       steps: Parameters<NonNullable<typeof neo.host.test>["script"]>[0];
@@ -389,7 +369,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   if (neo.host.test && is("GET", "/v1/test/seen"))
     return json({ seen: neo.host.test.seen });
   if (neo.host.test && is("POST", "/v1/test/messages")) {
-    // Queued behind a running turn: the API always joins the turn.
     const input = await body<{
       text?: string;
       attachments?: AttachmentInput[];
@@ -411,7 +390,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
   if (neo.host.test && is("GET", "/v1/test/memories"))
     return json({ memories: await live.memories.list(agentId) });
   if (neo.host.test && is("POST", "/v1/test/schedules")) {
-    // As the agent would: the API has no way to create one.
     const input = await body<ScheduleInput>(request);
     const schedule = await live.schedules.create(
       agentId,
@@ -440,7 +418,6 @@ async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
     neo.host.test &&
     (m = match("POST", /^\/v1\/test\/schedules\/([\w-]+)\/due$/))
   ) {
-    // Due now; the next wake fires it. "heartbeat" names the built-in one.
     const id =
       m[1] === "heartbeat"
         ? (await live.schedules.system(agentId, "heartbeat"))?.id

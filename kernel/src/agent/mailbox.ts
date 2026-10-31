@@ -29,7 +29,6 @@ export type {
 } from "@neo/client";
 
 export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
-  // Every message to an agent, from arrival to settle (OpenBot's mailbox deliveries).
   await tx.exec(`CREATE TABLE neo_mailbox (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -52,7 +51,6 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     `CREATE INDEX neo_mailbox_queue ON neo_mailbox (agent_id, status, position)`,
   );
   await tx.exec(`CREATE INDEX neo_mailbox_by_turn ON neo_mailbox (turn_id)`);
-  // One turn: the messages it started with (and any steered in), answered by one Pi run.
   await tx.exec(`CREATE TABLE neo_turns (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -71,7 +69,6 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   );
 };
 
-/** What the turn's input entry carries, so the transcript shows each message as it was sent. */
 export interface InputEntryData {
   turnId: string;
   steered?: boolean;
@@ -83,36 +80,26 @@ export const INPUT_ENTRY = "neo.input";
 
 export interface SendInput {
   text: string;
-  /** Files already in place (`placeAttachments`). */
   attachments?: Attachment[];
   source?: MessageSource;
   meta?: Record<string, unknown>;
-  /** The client's id for the message; a retry with the same id is the same message. */
   clientId?: string;
-  /** Join the running turn at its next step instead of waiting for it. */
   steer?: boolean;
 }
 
 export interface MailboxHooks {
-  /** The agent's Pi conversation, configured for its next request. */
   conversation(agentId: string): Promise<Conversation>;
-  /** Called before anything that can start work, so the host's recovery alarm is armed first. */
   beforeWork(): Promise<void>;
-  /** A turn ended. Memory commits here (or is dropped) before the next turn starts. */
   turnSettled(turn: Turn, messages: MailboxMessage[]): Promise<void>;
   paused(agentId: string): Promise<boolean>;
-  /** How messages are dated in the prompt. */
   timezone(): Promise<string>;
-  /** Which attached images the agent's model is sent inline, and a note for those it is not. */
   checkImages(
     agentId: string,
     attachments: Attachment[],
   ): Promise<{ inline: Set<string>; notes: Map<string, string> }>;
-  /** An inline image's bytes, read when the turn is submitted. */
   readImage(path: string, mimeType: string): Promise<ImageContent | undefined>;
 }
 
-/** A turn's input as stored: images by path, so their bytes are never kept in a row. */
 interface TurnInput {
   content: string;
   images?: InlineImage[];
@@ -160,22 +147,6 @@ interface TurnRow {
 const context = BACKGROUND_CONTEXT;
 const MAX_TEXT = 100_000;
 
-/**
- * The agent's message queue and its turns. Neo owns the queue (as OpenBot owns its mailbox), and
- * Pi owns a run: Pi only ever sees one input per turn, plus steers, so its own inbox stays empty.
- *
- * - **send**: a `queued` row, deduplicated by `clientId`, then `drain`.
- * - **drain** (idle and not paused): every queued row, in order, starts one turn together
- *   (`starting` → Pi submit with the turn id as request id → `running`).
- * - **steer**: a queued message joins the running turn at its next step (Pi `whenBusy: "steer"`).
- * - **stop**: Pi abort; the turn and its messages end `interrupted`, and the queue moves on.
- * - **settle**: Pi's submission settled; the turn and its rows end, `turnSettled` runs, then `drain`.
- * - **recover** (start): running turns are submitted again under their own id (Pi finds the one it
- *   admitted, or admits it now) and followed to the end; Pi resumes the run where it was.
- *
- * Every change runs in the agent's lane, one after another, so a send, a stop and a settle never
- * interleave.
- */
 export class Mailbox {
   private readonly lanes = new Map<string, Promise<unknown>>();
   private readonly tracking = new Set<string>();
@@ -193,7 +164,6 @@ export class Mailbox {
     this.closed = true;
   }
 
-  // ---- reads ---------------------------------------------------------------------------------
 
   async message(id: string): Promise<MailboxMessage | undefined> {
     const row = await this.db.get<MessageRow>(
@@ -203,7 +173,6 @@ export class Mailbox {
     return row ? toMessage(row) : undefined;
   }
 
-  /** What waits for the agent, in the order it will run. */
   async queue(agentId: string): Promise<MailboxMessage[]> {
     const rows = await this.db.all<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE agent_id = ? AND status = 'queued' ORDER BY position, created_at`,
@@ -236,7 +205,6 @@ export class Mailbox {
     return rows.map(toMessage);
   }
 
-  /** Quiet turns (a quiet schedule with nothing to say) are hidden from the transcript. */
   async quietTurns(ids: string[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
     const rows = await this.db.all<{ id: string }>(
@@ -255,7 +223,6 @@ export class Mailbox {
     return new Map(rows.map((r) => [r.id, toTurn(r)]));
   }
 
-  // ---- changes -------------------------------------------------------------------------------
 
   async byClientId(clientId: string): Promise<MailboxMessage | undefined> {
     const row = await this.db.get<MessageRow>(
@@ -321,7 +288,6 @@ export class Mailbox {
     return (await this.message(message.message.id))!;
   }
 
-  /** Starts a turn with everything queued, when the agent is idle and not paused. */
   drain(agentId: string): Promise<void> {
     return this.lane(agentId, async () => {
       if (this.closed || (await this.hooks.paused(agentId))) return;
@@ -340,7 +306,6 @@ export class Mailbox {
         ...(images.length ? { images } : {}),
         entry: { kind: INPUT_ENTRY, data },
       };
-      // The turn and its rows first, in one commit: a crash after this is a turn recovery submits.
       await this.db.transaction(async (tx) => {
         await tx.run(
           `INSERT INTO neo_turns (id, agent_id, status, input, started_at) VALUES (?, ?, 'running', ?, ?)`,
@@ -366,7 +331,6 @@ export class Mailbox {
     });
   }
 
-  /** Sends a queued message into the running turn now. Refused when no turn runs. */
   steer(agentId: string, messageId: string): Promise<void> {
     return this.lane(agentId, async () => {
       const message = await this.message(messageId);
@@ -394,7 +358,6 @@ export class Mailbox {
       );
       await this.hooks.beforeWork();
       const conversation = await this.hooks.conversation(agentId);
-      // The message's own id is the request id: Pi admits a steer once, even if this is retried.
       const submission = await conversation.submit(
         {
           type: "input",
@@ -419,7 +382,6 @@ export class Mailbox {
     });
   }
 
-  /** Stops the running turn. Its messages end interrupted; the queue moves on unless paused. */
   async stop(agentId: string): Promise<boolean> {
     const stopped = await this.lane(agentId, async () => {
       const turn = await this.currentTurn(agentId);
@@ -474,7 +436,6 @@ export class Mailbox {
     return message;
   }
 
-  /** Puts the queue in this order; ids left out keep their order after the named ones. */
   async reorder(agentId: string, order: string[]): Promise<MailboxMessage[]> {
     await this.lane(agentId, async () => {
       const queued = await this.queue(agentId);
@@ -495,10 +456,6 @@ export class Mailbox {
     return this.queue(agentId);
   }
 
-  /**
-   * Picks up what the last process left: turns that were running are submitted again (Pi dedupes
-   * by the turn id) and followed; steers likewise. Then the queue drains.
-   */
   async recover(agentId: string): Promise<void> {
     await this.lane(agentId, async () => {
       const running = await this.db.all<TurnRow>(
@@ -515,7 +472,6 @@ export class Mailbox {
         if (row.pi_submission !== null)
           this.trackSteer(agentId, row.id, row.pi_submission as SubmissionId);
         else
-          // Cut off before Pi admitted it: it waits in the queue again.
           await this.db.run(
             `UPDATE neo_mailbox SET status = 'queued', turn_id = NULL, steered = 0, started_at = NULL WHERE id = ?`,
             row.id,
@@ -525,7 +481,6 @@ export class Mailbox {
     await this.drain(agentId);
   }
 
-  // ---- internals -----------------------------------------------------------------------------
 
   private async submitTurn(
     agentId: string,
@@ -578,7 +533,6 @@ export class Mailbox {
     );
   }
 
-  /** Waits for a Pi submission in the background, once per key. */
   private follow(
     key: string,
     submissionId: SubmissionId,
@@ -593,7 +547,6 @@ export class Mailbox {
         const record = await submission.wait(context);
         if (!this.closed) await settled(record);
       } catch {
-        // The harness closed (shutdown, seal): the next start's recovery follows it again.
       } finally {
         this.tracking.delete(key);
       }
@@ -631,7 +584,6 @@ export class Mailbox {
         time,
         turnId,
       );
-      // Steered messages settle with their own submission; the rest with the turn.
       await tx.run(
         `UPDATE neo_mailbox SET status = ?, error = ?, settled_at = ? WHERE turn_id = ? AND steered = 0 AND status IN ('starting', 'running')`,
         status,
@@ -651,7 +603,6 @@ export class Mailbox {
         agentId,
       );
     }
-    // The next turn starts after this lane step: drain queues behind it.
     void this.drain(agentId);
   }
 
@@ -667,7 +618,6 @@ export class Mailbox {
     )
       return;
     if (record.status === "unanswered" && record.entry === undefined) {
-      // Withdrawn before it reached the transcript (a stop): it waits in the queue again.
       await this.db.run(
         `UPDATE neo_mailbox SET status = 'queued', turn_id = NULL, steered = 0, pi_submission = NULL, started_at = NULL WHERE id = ?`,
         messageId,
@@ -688,7 +638,6 @@ export class Mailbox {
     await this.events.emit("message.settled", { messageId, status }, agentId);
   }
 
-  /** The text of an answer entry. */
   private async entryText(
     agentId: string,
     entryId: unknown,
@@ -704,11 +653,6 @@ export class Mailbox {
     return entry ? textOf(entry) : null;
   }
 
-  /**
-   * The model's view of the messages a turn starts with (OpenBot's combined delivery). Every
-   * attachment is listed by path, so the agent can come back to it; images its model can see are
-   * also sent inline (by path here, read at submit).
-   */
   private async prompt(
     agentId: string,
     messages: MailboxMessage[],
@@ -740,7 +684,6 @@ export class Mailbox {
     return { content, images };
   }
 
-  /** Pi's input: the text, then the inline images, read now. An image gone since is left out. */
   private async content(
     text: string,
     images: InlineImage[],
@@ -763,7 +706,6 @@ export class Mailbox {
     return (row?.p ?? 0) + 1;
   }
 
-  /** Runs `work` after everything already in the agent's lane. */
   private lane<T>(agentId: string, work: () => Promise<T>): Promise<T> {
     const before = this.lanes.get(agentId) ?? Promise.resolve();
     const run = before.catch(() => {}).then(work);

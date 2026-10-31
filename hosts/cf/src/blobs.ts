@@ -1,13 +1,7 @@
 import { type BlobStore, checkBlobKey, rechunk } from "@neo/kernel";
 
-// R2 multipart parts must all be the same size (except the last), and at least 5 MiB.
 const PART = 5 * 1024 * 1024;
 
-/**
- * The `blobs` port on Cloudflare: large files in R2, under this Durable Object's own prefix (one bucket serves every instance).
- * A stream of unknown length goes up as a multipart upload, a part at a time, so memory stays at
- * about two parts; an object that fits in one part is a single put.
- */
 export class CloudflareBlobs implements BlobStore {
   constructor(
     private readonly bucket: R2Bucket,

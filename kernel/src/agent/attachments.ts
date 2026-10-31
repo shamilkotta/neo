@@ -4,16 +4,12 @@ import { ulid } from "../ids";
 import { baseName, normalizePath, type Vfs, VfsError } from "../vfs/vfs";
 export type { Attachment, AttachmentInput } from "@neo/client";
 
-/** Where attachments live: `/attachments/<id>/<name>`, one folder per message or sent file. */
 export const ATTACHMENTS_ROOT = "/attachments";
-/** Where uploads wait until a message attaches them. */
 export const STAGING_ROOT = "/.staging";
-/** Uploads never attached are removed after this long. */
 export const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ATTACHMENTS_SIZE = 256 * 1024 * 1024;
 
-/** Image types every provider takes inline. */
 const INLINE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 const TYPES: Record<string, string> = {
@@ -56,7 +52,6 @@ export function mimeTypeOf(name: string): string {
   return (ext && TYPES[ext]) || "application/octet-stream";
 }
 
-/** A file name safe as one path segment. */
 export function safeName(name: string): string {
   const clean = name
     .replace(/[/\\\u0000-\u001f]/g, "_")
@@ -66,7 +61,6 @@ export function safeName(name: string): string {
   return clean || "file";
 }
 
-/** `name` made unique among `taken` ("a.png", "a (2).png", ...). */
 function uniqueName(name: string, taken: Set<string>): string {
   let candidate = name;
   const dot = name.lastIndexOf(".");
@@ -79,10 +73,6 @@ function uniqueName(name: string, taken: Set<string>): string {
 
 export class AttachmentError extends Error {}
 
-/**
- * Moves (from staging) or copies the files a message attaches into a new folder of their own,
- * without reading them: a copy shares its source's content.
- */
 export async function placeAttachments(
   vfs: Vfs,
   inputs: AttachmentInput[],
@@ -131,10 +121,6 @@ export async function placeAttachments(
   return placed;
 }
 
-/**
- * Copies one file the agent sends the person into a folder of its own, named by the tool call, so
- * a replayed call writes the same copy again.
- */
 export async function placeOutgoing(
   vfs: Vfs,
   path: string,
@@ -149,7 +135,6 @@ export async function placeOutgoing(
   return placed!;
 }
 
-/** Removes uploads that were never attached. */
 export async function sweepStaging(vfs: Vfs, now: number): Promise<void> {
   if (!(await vfs.exists(STAGING_ROOT))) return;
   for (const entry of await vfs.readdir(STAGING_ROOT, { limit: 1000 }))
@@ -157,7 +142,6 @@ export async function sweepStaging(vfs: Vfs, now: number): Promise<void> {
       await vfs.rm(entry.path, { recursive: true }).catch(() => {});
 }
 
-/** What a message's attachments tell the model, after the message's text. */
 export function attachmentsBlock(
   attachments: Attachment[],
   inline: Set<string>,
@@ -172,10 +156,6 @@ export function attachmentsBlock(
   return `<attachments>\n${lines.join("\n")}\n</attachments>`;
 }
 
-/**
- * Whether an attached image goes to the model inline, and if not, why. An inline image is the
- * one place a file is held whole in memory, so it must be small: within Pi's image limits.
- */
 export async function inlineCheck(
   vfs: Vfs,
   attachment: Attachment,
@@ -204,7 +184,6 @@ export async function inlineCheck(
   return { inline: true };
 }
 
-/** The width and height in an image's header (PNG, GIF, WebP, JPEG), without decoding it. */
 export function imageSize(
   b: Uint8Array,
 ): { width: number; height: number } | undefined {
@@ -239,7 +218,6 @@ export function imageSize(
         i++;
         continue;
       }
-      // SOF0-15, except DHT (C4), JPG (C8) and DAC (CC).
       if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
         return { width: u16(i + 7), height: u16(i + 5) };
       i += 2 + u16(i + 2);
@@ -248,7 +226,6 @@ export function imageSize(
   return undefined;
 }
 
-/** An image type claimed by the sender or the name is checked against the file's first bytes. */
 async function sniffedType(vfs: Vfs, path: string, claimed: string): Promise<string> {
   if (!claimed.startsWith("image/")) return claimed;
   const file = await vfs.open(path);
@@ -259,7 +236,6 @@ async function sniffedType(vfs: Vfs, path: string, claimed: string): Promise<str
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
   if (tag(0, "GIF8")) return "image/gif";
   if (tag(0, "RIFF") && tag(8, "WEBP")) return "image/webp";
-  // Not one of the inline types: whatever it is, it is not shown as one.
   return INLINE_TYPES.has(claimed) ? "application/octet-stream" : claimed;
 }
 

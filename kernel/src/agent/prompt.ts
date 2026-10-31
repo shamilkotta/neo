@@ -7,11 +7,6 @@ import {
 import type { Settings } from "../services/settings";
 import type { Agents } from "./agents";
 
-/**
- * The system prompt, as Pi sections (rendered in order).
- * Every section is stable between turns unless what it shows changed, so the provider's prompt
- * cache stays warm: the time of each message is in the message, never here.
- */
 export function promptSections(deps: {
   agents: Agents;
   memories: Memories;

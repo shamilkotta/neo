@@ -12,16 +12,8 @@ export const EVENTS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-/** Events kept for clients that reconnect with `after`; older ones are pruned. */
 const KEEP = 20_000;
 
-/**
- * Two streams on one SSE connection:
- * - durable events (`emit`): what changed (a message, a turn, the queue, memory). Stored in order,
- *   so a client resumes after a disconnect, a restart, or (later) a move.
- * - live events (`live`): the running turn's deltas. A client that reconnects reads the current
- *   transcript and live snapshot instead of replaying them.
- */
 export class Events {
   private readonly durable = new Set<(event: NeoEvent) => void>();
   private readonly ephemeral = new Set<(event: LiveEvent) => void>();
@@ -101,7 +93,6 @@ export class Events {
     return () => this.ephemeral.delete(listener);
   }
 
-  /** Server-sent events: the durable backlog after `after`, then durable and live events as they happen. */
   stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const cleanup: (() => void)[] = [];
@@ -125,7 +116,6 @@ export class Events {
             `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
           );
         };
-        // Buffer what happens while the backlog is read, so nothing falls between the two.
         const pending: NeoEvent[] = [];
         const buffer = this.subscribe((e) => pending.push(e));
         for (

@@ -28,17 +28,10 @@ import {
   type VfsStat,
 } from "./vfs";
 
-/**
- * Pi's `ExecutionEnv` over the SQLite VFS: the same files and behavior on every host.
- *
- * `exec` runs commands in the VFS shell (just-bash) when one is given: the same shell on every
- * host, with no real processes.
- */
 export class VfsExecutionEnv implements ExecutionEnv {
   constructor(
     private readonly vfs: Vfs,
     public cwd: string,
-    /** Equal ids see the same files: one per instance. */
     readonly id: string,
     private readonly shell?: VfsShell,
   ) {
@@ -73,7 +66,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
     context: Context,
   ) {
     return attempt(context, path, async () => {
-      // Only as many chunks as the lines asked for; without a limit, a whole-file read (capped).
       if (options?.maxLines === undefined)
         return splitLines(await this.vfs.readText(this.resolve(path)));
       const lines: string[] = [];
@@ -120,8 +112,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
   ): Promise<Result<BinaryReader, FileError>> {
     return attempt(context, path, async () => {
       const absolute = this.resolve(path);
-      // The reader keeps the chunks it opened, so a later rename or write doesn't change what it
-      // reads; it loads only the chunks a read touches.
       const stat = await this.vfs.stat(absolute);
       if (stat.kind === "directory")
         throw new VfsError("is_directory", absolute);
@@ -185,7 +175,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
   }
 
   writeFile(path: string, content: string | Uint8Array, context: Context) {
-    // Like Node's environment, a write creates missing parent directories.
     return attempt(context, path, () =>
       this.vfs.writeFile(this.resolve(path), content, { createParents: true }),
     );
@@ -204,7 +193,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
   }
 
   flushFile(path: string, context: Context) {
-    // Every write is already committed to SQLite.
     return attempt(
       context,
       path,
@@ -239,7 +227,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
       const stat = await this.vfs.stat(absolute);
       if (stat.kind !== "directory")
         throw new VfsError("not_directory", absolute);
-      // Pages by name, so an entry removed before its page is skipped and none is seen twice.
       let after: string | undefined;
       let done = false;
       let closed = false;
@@ -275,7 +262,6 @@ export class VfsExecutionEnv implements ExecutionEnv {
     });
   }
 
-  /** Every write goes through the Vfs, so changes are reported as they commit (`native`). */
   async watch(
     targets: readonly WatchTarget[],
     onChange: (change: WatchChange) => void,
@@ -471,10 +457,9 @@ function shellQuote(arg: string): string {
     : `'${arg.replaceAll("'", `'"'"'`)}'`;
 }
 
-/** Whether a change at `changed` concerns a watch target. */
 function watchedBy(target: WatchTarget, changed: string): boolean {
   if (changed === target.path || target.path.startsWith(`${changed}/`))
-    return true; // the target or an ancestor
+    return true;
   const prefix = target.path === "/" ? "/" : `${target.path}/`;
   if (!changed.startsWith(prefix)) return false;
   const below = changed.slice(prefix.length).split("/");
@@ -493,7 +478,6 @@ function splitLines(text: string): string[] {
   return lines;
 }
 
-/** A file's lines, decoded a chunk at a time (`terminated`: the line ended with a newline). */
 async function* fileLines(
   file: VfsFile,
 ): AsyncGenerator<{ text: string; terminated: boolean }> {

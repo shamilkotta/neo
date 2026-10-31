@@ -2,10 +2,6 @@ import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { WEB_DIST } from "@neo/web/dist-path";
 
-/**
- * Serves the bundled web app (apps/web, built to its dist/) next to the API: a file when one
- * matches, else index.html, so the app's own routes work. The app calls the API on this origin.
- */
 export function webApp(
   dir = WEB_DIST,
 ): (request: Request) => Promise<Response> {

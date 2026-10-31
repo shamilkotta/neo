@@ -14,9 +14,6 @@ export type {
 } from "@neo/client";
 
 export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
-  // OpenBot's memory model: an owner (an agent; later a channel or a chat workspace), an origin
-  // (the person wrote it, or an agent saved it), and a selection revision that an agent must name
-  // to change its inclusion. A choice the person made is theirs (`user_controlled`).
   await tx.exec(`CREATE TABLE neo_memories (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -32,7 +29,6 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(
     `CREATE INDEX neo_memories_by_agent ON neo_memories (agent_id, kind, id)`,
   );
-  // External content, so an export carries only neo_memories and the index is rebuilt on import.
   await tx.exec(
     `CREATE VIRTUAL TABLE neo_memories_fts USING fts5(text, content='neo_memories', content_rowid='rowid')`,
   );
@@ -46,7 +42,6 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     INSERT INTO neo_memories_fts(neo_memories_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
     INSERT INTO neo_memories_fts(rowid, text) VALUES (new.rowid, new.text);
   END`);
-  // A turn's remember/forget/selection calls, committed only when the turn completes.
   await tx.exec(`CREATE TABLE neo_memory_staged (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL,
@@ -60,10 +55,8 @@ export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   );
 };
 
-/** OpenBot's limits. */
 export const MEMORY_TEXT_LIMIT = 500;
 export const ESSENTIAL_BUDGET_BYTES = 8192;
-/** How many memories an agent can hold: a hard cap, not a target. */
 export const MEMORY_LIMIT = 128;
 export const OWNER_LIMITS: Record<Exclude<MemoryOwnerKind, "agent">, number> = {
   channel: 32,
@@ -104,7 +97,6 @@ export type StagedOp =
 
 export class MemoryError extends Error {}
 
-/** The essential memories as one block, the format the budget counts (OpenBot's). */
 export function serializeEssential(
   memories: Pick<Memory, "id" | "text" | "origin">[],
 ): string {
@@ -121,20 +113,13 @@ const bytes = (memories: Pick<Memory, "id" | "text" | "origin">[]) =>
 
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
-/**
- * Memories of agents, channels and chat workspaces. Essential ones are in every prompt (within
- * an 8 KiB budget); searchable ones are found with full-text search. An agent's own changes are
- * staged against its run and kept only when the run completes, as in OpenBot.
- */
 export class Memories {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly now: () => number = Date.now,
   ) {}
 
-  // ---- direct writes (the person, or a tool that writes at once) ------------------------------
 
-  /** `id` lets a replayed call write the same memory once. The person's own memory is manual. */
   async add(
     agentId: string,
     text: string,
@@ -228,7 +213,6 @@ export class Memories {
     );
   }
 
-  /** The person's edit. Setting the inclusion makes the choice theirs: agents cannot change it. */
   async update(
     agentId: string,
     id: string,
@@ -281,7 +265,6 @@ export class Memories {
     return n;
   }
 
-  /** Copies an agent's memories to another (a duplicated agent). */
   async duplicate(fromAgentId: string, toAgentId: string): Promise<void> {
     for (const m of await this.list(fromAgentId)) {
       const time = this.now();
@@ -300,7 +283,6 @@ export class Memories {
     }
   }
 
-  /** Any word of the query may match; best matches first. */
   async search(
     agentId: string,
     query: string,
@@ -324,7 +306,6 @@ export class Memories {
     return rows.map(toMemory);
   }
 
-  /** One page, oldest first; `after` is the last id of the previous page. */
   async page(
     agentId: string,
     after: string | null,
@@ -342,11 +323,7 @@ export class Memories {
     };
   }
 
-  // ---- staged writes (an agent's turn) ---------------------------------------------------------
 
-  /**
-   * The agent's memories as they will be once this run's staged changes commit, applied in order.
-   */
   private async projected(
     agentId: string,
     requestId: string,
@@ -404,7 +381,6 @@ export class Memories {
     );
   }
 
-  /** An agent's `remember`: staged, with OpenBot's checks for duplicates, budget and limit. */
   async stageRemember(
     agentId: string,
     requestId: string,
@@ -564,7 +540,6 @@ export class Memories {
     return { status: "staged" };
   }
 
-  /** Commits a run's staged changes when it completed, or drops them. */
   async finish(requestId: string, completed: boolean): Promise<number> {
     const rows = await this.db.all<{ agent_id: string; op: string }>(
       `SELECT agent_id, op FROM neo_memory_staged WHERE request_id = ? ORDER BY seq`,
@@ -578,7 +553,6 @@ export class Memories {
         try {
           applied += await this.apply(row.agent_id, op);
         } catch {
-          // A change that no longer fits (the person edited meanwhile) is dropped.
         }
       }
     }

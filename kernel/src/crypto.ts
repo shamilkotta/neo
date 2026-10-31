@@ -1,4 +1,3 @@
-// Web Crypto only, so the same code runs on Bun, Node and Workers.
 
 export function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -32,7 +31,6 @@ export async function aesKey(raw: Uint8Array): Promise<CryptoKey> {
   );
 }
 
-/** `base64(iv).base64(ciphertext)` */
 export async function seal(
   key: CryptoKey,
   plaintext: Uint8Array | string,
@@ -76,10 +74,8 @@ export async function openText(
   return decoder.decode(await open(key, sealed, aad));
 }
 
-// Cloudflare Workers refuse PBKDF2 above 100,000 iterations (local workerd does not).
 export const PASSPHRASE_ITERATIONS = 100_000;
 
-/** A key from a passphrase (PBKDF2-SHA256), for bundles. */
 export async function passphraseKey(
   passphrase: string,
   salt: Uint8Array,

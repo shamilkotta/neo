@@ -9,29 +9,14 @@ import {
 } from "../crypto";
 import type { SnapshotRecord } from "./snapshot";
 
-/**
- * A `.neo` bundle: gzip of newline-delimited JSON, streamed both ways (a Durable Object has 128 MB).
- *
- *   {"t":"neo-bundle", version, instanceId, epoch, ...}   header
- *   ...snapshot records of the instance database...
- *   for each blob: {"t":"blob", key, size, hash}, {"t":"blob-data", data}... (base64 pieces),
- *   {"t":"blob-end"}: the bytes stream through, and the target checks size and hash
- *   {"t":"end", "records": n}
- *
- * Secret values stay encrypted with the instance's data key (DEK) inside the rows. The header
- * carries the DEK encrypted with a key derived from the passphrase; without a passphrase the
- * bundle has no DEK and the target starts with no secrets.
- */
 export const BUNDLE_FORMAT = "neo-bundle";
 export const BUNDLE_VERSION = 1;
-/** Raw bytes per blob-data record. */
 export const BLOB_PIECE = 512 * 1024;
 
 export interface BundleHeader {
   t: typeof BUNDLE_FORMAT;
   version: number;
   instanceId: string;
-  /** The epoch the target takes. The source is retired from then on. */
   epoch: number;
   createdAt: number;
   source: { host: string };
@@ -136,10 +121,6 @@ export async function* decodeBundle(
   if (buffer.trim()) yield JSON.parse(buffer) as BundleRecord;
 }
 
-/**
- * Splits a decoded bundle into its parts, in stream order: read the header, then consume
- * `main()` fully, then `blobs()` (each blob's stream fully, before the next), then check `end()`.
- */
 export async function readBundle(records: AsyncIterator<BundleRecord>) {
   const first = await records.next().catch(() => ({ done: true, value: undefined }));
   const header = first.value as BundleHeader | undefined;
