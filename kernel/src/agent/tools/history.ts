@@ -10,8 +10,7 @@ export function historyTools(services: ToolServices) {
   const ready = async (conversationId: number) => {
     const c = await caller(services, conversationId);
     await services.history.sync(
-      c.agentId,
-      await services.conversation(c.agentId),
+      await services.conversation(),
     );
     return c;
   };
@@ -30,7 +29,7 @@ export function historyTools(services: ToolServices) {
       replay: "safe",
       execute: async (args, api) => {
         const c = await ready(api.conversationId);
-        const results = await services.history.search(c.agentId, args.query, {
+        const results = await services.history.search(args.query, {
           ...(args.before !== undefined ? { before: args.before } : {}),
           limit: args.limit ?? 8,
         });
@@ -55,7 +54,6 @@ export function historyTools(services: ToolServices) {
         const c = await ready(api.conversationId);
         if (args.messageId !== undefined) {
           const line = await services.history.message(
-            c.agentId,
             args.messageId,
           );
           if (!line) refuse("No such message.");
@@ -75,7 +73,7 @@ export function historyTools(services: ToolServices) {
               stepsFrom + STEPS < line!.steps.length ? stepsFrom + STEPS : null,
           });
         }
-        const page = await services.history.page(c.agentId, args.before, PAGE);
+        const page = await services.history.page(args.before, PAGE);
         return json({
           messages: page.lines.map((l) => ({
             messageId: l.messageId,

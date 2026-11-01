@@ -1,56 +1,63 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { serve } from "@neo/bun";
 import { NeoClient } from "@neo/client";
 
+// The suite runs against a Cloudflare host (`wrangler dev --var NEO_TEST:1`, or a deployed Worker):
+// NEO_CF_URL. A Worker is one instance at `/i`; in test mode each test picks its own with the
+// `x-neo-instance` header. `call` reaches the primary agent, `root` the instance.
 export interface Instance {
-  host: "bun" | "cloudflare";
+  host: "cloudflare";
   call<T = any>(method: string, path: string, body?: unknown): Promise<T>;
+  root<T = any>(method: string, path: string, body?: unknown): Promise<T>;
+  agent(id: string): { call<T = any>(method: string, path: string, body?: unknown): Promise<T> };
+  /** The instance's API base (`…/i`). */
   url(): string;
+  agentUrl(id?: string): string;
+  /** Where the web app is served. */
+  origin(): string;
+  /** fetch with this test's instance header. */
+  fetch: typeof fetch;
+  client(): NeoClient;
   restart?: () => Promise<void>;
   close(): Promise<void>;
 }
 
 const CF = process.env.NEO_CF_URL;
-const TOKEN = "t";
+export const TOKEN = "t";
+export const PRIMARY = "neo";
 
-export async function instance(
-  on: "bun" | "cloudflare" = CF ? "cloudflare" : "bun",
-): Promise<Instance> {
-  if (on === "cloudflare") {
-    if (!CF) throw new Error("Set NEO_CF_URL to test on Cloudflare");
-    const base = `${CF.replace(/\/$/, "")}/i/e2e-${crypto.randomUUID().slice(0, 8)}`;
+export async function instance(): Promise<Instance> {
+  if (!CF) throw new Error("Set NEO_CF_URL to run the suite (bun run test:cf)");
+  const origin = CF.replace(/\/$/, "");
+  const base = `${origin}/i`;
+  const name = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const fetcher = ((input: RequestInfo | URL, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set("x-neo-instance", name);
+    return fetch(input, { ...init, headers });
+  }) as typeof fetch;
+  const client = () => new NeoClient({ url: base, token: TOKEN, fetch: fetcher });
+  const root = client();
+  const agent = (id: string) => {
+    const one = root.agent(id);
     return {
-      host: "cloudflare",
-      call: client(() => base),
-      url: () => base,
-      close: async () => {},
+      call: <T>(method: string, path: string, body?: unknown) =>
+        one.call<T>(method, path, body),
     };
-  }
-  const dir = mkdtempSync(join(tmpdir(), "neo-e2e-"));
-  let running = await serve({ dir, port: 0, test: true, token: TOKEN });
+  };
   return {
-    host: "bun",
-    call: client(() => running.url),
-    url: () => running.url,
-    restart: async () => {
-      await running.stop();
-      running = await serve({ dir, port: 0, test: true, token: TOKEN });
-    },
-    close: async () => {
-      await running.stop();
-      rmSync(dir, { recursive: true, force: true });
-    },
+    host: "cloudflare",
+    call: agent(PRIMARY).call,
+    root: (method, path, body) => root.call(method, path, body),
+    agent,
+    url: () => base,
+    agentUrl: (id = PRIMARY) => `${base}/agents/${id}`,
+    origin: () => origin,
+    fetch: fetcher,
+    client,
+    close: async () => {},
   };
 }
 
-export const onCloudflare = !!CF;
-
-function client(base: () => string) {
-  return <T>(method: string, path: string, body?: unknown): Promise<T> =>
-    new NeoClient({ url: base(), token: TOKEN }).call<T>(method, path, body);
-}
+export const onCloudflare = true;
 
 export async function until<T>(
   check: () => Promise<T | undefined | false>,
@@ -69,7 +76,7 @@ export async function until<T>(
 export const idle = (neo: Instance) =>
   until(
     async () => {
-      const s = await neo.call("GET", "/v1/status");
+      const s = await neo.call("GET", "/status");
       return !s.turn && s.queued === 0 ? s : undefined;
     },
     8000,
@@ -78,13 +85,13 @@ export const idle = (neo: Instance) =>
 
 export const running = (neo: Instance) =>
   until(
-    async () => (await neo.call("GET", "/v1/status")).turn ?? undefined,
+    async () => (await neo.call("GET", "/status")).turn ?? undefined,
     5000,
     "a running turn",
   );
 
 export const transcript = async (neo: Instance) =>
-  (await neo.call("GET", "/v1/transcript")).items as any[];
+  (await neo.call("GET", "/transcript")).items as any[];
 export const answers = async (neo: Instance) =>
   (await transcript(neo))
     .filter((i) => i.type === "assistant" && i.text)

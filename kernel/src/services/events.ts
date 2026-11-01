@@ -7,7 +7,6 @@ export const EVENTS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at INTEGER NOT NULL,
     type TEXT NOT NULL,
-    agent_id TEXT,
     data TEXT NOT NULL
   ) STRICT`);
 };
@@ -27,17 +26,15 @@ export class Events {
   async emit(
     type: string,
     data: Record<string, unknown> = {},
-    agentId: string | null = null,
   ): Promise<NeoEvent> {
     const at = this.now();
     const row = await this.db.get<{ seq: number }>(
-      `INSERT INTO neo_events (at, type, agent_id, data) VALUES (?, ?, ?, ?) RETURNING seq`,
+      `INSERT INTO neo_events (at, type, data) VALUES (?, ?, ?) RETURNING seq`,
       at,
       type,
-      agentId,
       JSON.stringify(data),
     );
-    const event: NeoEvent = { seq: row!.seq, at, type, agentId, data };
+    const event: NeoEvent = { seq: row!.seq, at, type, data };
     for (const listener of [...this.durable]) {
       try {
         listener(event);
@@ -51,9 +48,9 @@ export class Events {
     return event;
   }
 
-  live(type: string, data: unknown, agentId: string | null = null): void {
+  live(type: string, data: unknown): void {
     if (this.ephemeral.size === 0) return;
-    const event: LiveEvent = { type, agentId, data };
+    const event: LiveEvent = { type, data };
     for (const listener of [...this.ephemeral]) {
       try {
         listener(event);
@@ -71,7 +68,6 @@ export class Events {
       seq: r.seq,
       at: r.at,
       type: r.type,
-      agentId: r.agent_id,
       data: JSON.parse(r.data),
     }));
   }
@@ -152,6 +148,5 @@ interface Row {
   seq: number;
   at: number;
   type: string;
-  agent_id: string | null;
   data: string;
 }

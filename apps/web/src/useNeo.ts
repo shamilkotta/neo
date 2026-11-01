@@ -1,9 +1,9 @@
 import type {
+  AgentClient,
+  AgentState,
   LiveEvent,
   MailboxMessage,
-  NeoClient,
   NeoEvent,
-  Status,
   TranscriptItem,
   Turn,
 } from "@neo/client";
@@ -17,8 +17,11 @@ export interface LiveTurn {
 
 const IDLE: LiveTurn = { active: false, text: "", tools: [] };
 
-export function useNeo(client: NeoClient, onDurable?: (e: NeoEvent) => void) {
-  const [status, setStatus] = useState<Status>();
+export function useNeo(
+  client: AgentClient,
+  onDurable?: (e: NeoEvent) => void,
+) {
+  const [status, setStatus] = useState<AgentState>();
   const [items, setItems] = useState<Map<number, TranscriptItem>>(new Map());
   const [turns, setTurns] = useState<Record<string, Turn>>({});
   const [older, setOlder] = useState<number | null>(null);

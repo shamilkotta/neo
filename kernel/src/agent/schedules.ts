@@ -19,7 +19,6 @@ export type {
 export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(`CREATE TABLE neo_schedules (
     id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL,
     name TEXT NOT NULL,
     prompt TEXT NOT NULL,
     spec TEXT NOT NULL,
@@ -43,7 +42,7 @@ export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
     ends_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    UNIQUE (agent_id, system)
+    UNIQUE (system)
   ) STRICT`);
   await tx.exec(
     `CREATE INDEX neo_schedules_due ON neo_schedules (next_at) WHERE next_at IS NOT NULL`,
@@ -90,7 +89,6 @@ export class ScheduleError extends Error {}
 
 interface Row {
   id: string;
-  agent_id: string;
   name: string;
   prompt: string;
   spec: string;
@@ -116,8 +114,8 @@ interface Row {
 }
 
 export interface ScheduleDelivery {
-  send(agentId: string, input: SendInput): Promise<MailboxMessage>;
-  idle(agentId: string): Promise<boolean>;
+  send(input: SendInput): Promise<MailboxMessage>;
+  idle(): Promise<boolean>;
   waiting(messageId: string): Promise<boolean>;
   timezone(): Promise<string>;
 }
@@ -129,23 +127,20 @@ export class Schedules {
   ) {}
 
 
-  async get(agentId: string, id: string): Promise<Schedule | undefined> {
+  async get(id: string): Promise<Schedule | undefined> {
     const row = await this.db.get<Row>(
-      `SELECT * FROM neo_schedules WHERE id = ? AND agent_id = ?`,
+      `SELECT * FROM neo_schedules WHERE id = ?`,
       id,
-      agentId,
     );
     return row ? toSchedule(row) : undefined;
   }
 
   async list(
-    agentId: string,
     which: "active" | "all" = "all",
   ): Promise<Schedule[]> {
     const rows = await this.db.all<Row>(
-      `SELECT * FROM neo_schedules WHERE agent_id = ? ${which === "active" ? "AND next_at IS NOT NULL" : ""}
+      `SELECT * FROM neo_schedules ${which === "active" ? "WHERE next_at IS NOT NULL" : ""}
        ORDER BY next_at IS NULL, next_at, updated_at DESC LIMIT 300`,
-      agentId,
     );
     return rows.map(toSchedule);
   }
@@ -159,7 +154,6 @@ export class Schedules {
 
 
   async create(
-    agentId: string,
     input: ScheduleInput,
     createdBy: Schedule["createdBy"],
     timezone: string,
@@ -173,8 +167,7 @@ export class Schedules {
       if (existing) return toSchedule(existing);
     }
     const active = await this.db.get<{ n: number }>(
-      `SELECT count(*) AS n FROM neo_schedules WHERE agent_id = ? AND next_at IS NOT NULL`,
-      agentId,
+      `SELECT count(*) AS n FROM neo_schedules WHERE next_at IS NOT NULL`,
     );
     if ((active?.n ?? 0) >= SCHEDULE_LIMIT)
       throw new ScheduleError(
@@ -183,12 +176,11 @@ export class Schedules {
     const time = this.now();
     const fields = resolve(undefined, input, time, timezone);
     const row = await this.db.get<Row>(
-      `INSERT INTO neo_schedules (id, agent_id, name, prompt, spec, anchor_at, timezone, window_start, window_end,
+      `INSERT INTO neo_schedules (id, name, prompt, spec, anchor_at, timezone, window_start, window_end,
          when_busy, missed, quiet, enabled, system, created_by, origin_key, next_at, max_runs, ends_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (agent_id, system) DO NOTHING RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (system) DO NOTHING RETURNING *`,
       ulid(time),
-      agentId,
       fields.name,
       fields.prompt,
       JSON.stringify(fields.spec),
@@ -209,43 +201,40 @@ export class Schedules {
       time,
       time,
     );
-    if (!row) return (await this.system(agentId, options.system!))!;
+    if (!row) return (await this.system(options.system!))!;
     const created = toSchedule(row);
     await this.setNext(
       created.id,
       nextTime(created, time, time, timezone, true),
     );
-    return (await this.get(agentId, created.id))!;
+    return (await this.get(created.id))!;
   }
 
   async ensureSystem(
-    agentId: string,
     key: string,
     defaults: ScheduleInput,
     timezone: string,
   ): Promise<Schedule> {
     return (
-      (await this.system(agentId, key)) ??
-      this.create(agentId, defaults, "system", timezone, { system: key })
+      (await this.system(key)) ??
+      this.create(defaults, "system", timezone, { system: key })
     );
   }
 
-  async system(agentId: string, key: string): Promise<Schedule | undefined> {
+  async system(key: string): Promise<Schedule | undefined> {
     const row = await this.db.get<Row>(
-      `SELECT * FROM neo_schedules WHERE agent_id = ? AND system = ?`,
-      agentId,
+      `SELECT * FROM neo_schedules WHERE system = ?`,
       key,
     );
     return row ? toSchedule(row) : undefined;
   }
 
   async update(
-    agentId: string,
     id: string,
     change: ScheduleInput,
     timezone: string,
   ): Promise<Schedule | undefined> {
-    const current = await this.get(agentId, id);
+    const current = await this.get(id);
     if (!current) return undefined;
     const time = this.now();
     const fields = resolve(current, change, time, timezone);
@@ -272,16 +261,16 @@ export class Schedules {
       time,
       id,
     );
-    const updated = (await this.get(agentId, id))!;
+    const updated = (await this.get(id))!;
     await this.setNext(
       id,
       nextTime(updated, await this.anchor(id), time, timezone, true),
     );
-    return this.get(agentId, id);
+    return this.get(id);
   }
 
-  async remove(agentId: string, id: string): Promise<boolean> {
-    const current = await this.get(agentId, id);
+  async remove(id: string): Promise<boolean> {
+    const current = await this.get(id);
     if (!current) return false;
     if (current.system)
       throw new ScheduleError(
@@ -309,12 +298,11 @@ export class Schedules {
     }
   }
 
-  async dueNow(agentId: string, id: string, ago = 1): Promise<boolean> {
+  async dueNow(id: string, ago = 1): Promise<boolean> {
     const row = await this.db.get(
-      `UPDATE neo_schedules SET next_at = ? WHERE id = ? AND agent_id = ? AND next_at IS NOT NULL RETURNING id`,
+      `UPDATE neo_schedules SET next_at = ? WHERE id = ? AND next_at IS NOT NULL RETURNING id`,
       this.now() - ago,
       id,
-      agentId,
     );
     return row !== undefined;
   }
@@ -322,18 +310,18 @@ export class Schedules {
 
   async fire(
     delivery: ScheduleDelivery,
-  ): Promise<{ runs: (ScheduleRun & { agentId: string })[]; more: boolean }> {
+  ): Promise<{ runs: ScheduleRun[]; more: boolean }> {
     const due = await this.db.all<Row>(
       `SELECT * FROM neo_schedules WHERE next_at IS NOT NULL AND next_at <= ? ORDER BY next_at LIMIT ?`,
       this.now(),
       BATCH + 1,
     );
-    const runs: (ScheduleRun & { agentId: string })[] = [];
+    const runs: ScheduleRun[] = [];
     const personTz = await delivery.timezone();
     for (const row of due.slice(0, BATCH)) {
       try {
         const run = await this.fireOne(row, delivery, personTz);
-        if (run) runs.push({ ...run, agentId: row.agent_id });
+        if (run) runs.push(run);
       } catch {
         await this.db.run(
           `UPDATE neo_schedules SET next_at = NULL, enabled = 0 WHERE id = ?`,
@@ -369,7 +357,7 @@ export class Schedules {
       reason = "outside_window";
     else if (
       schedule.whenBusy === "skip" &&
-      !(await delivery.idle(schedule.agentId))
+      !(await delivery.idle())
     )
       reason = "busy";
     else if (
@@ -381,7 +369,7 @@ export class Schedules {
     if (reason) status = "skipped";
     else {
       try {
-        message = await delivery.send(schedule.agentId, {
+        message = await delivery.send({
           source: "schedule",
           text: schedule.prompt,
           meta: {
@@ -791,7 +779,6 @@ export function describeSpec(spec: ScheduleSpec, timezone: string): string {
 function toSchedule(row: Row): Schedule {
   return {
     id: row.id,
-    agentId: row.agent_id,
     name: row.name,
     prompt: row.prompt,
     spec: JSON.parse(row.spec) as ScheduleSpec,
