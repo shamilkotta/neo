@@ -44,3 +44,16 @@ test("the API answers cross-origin requests (standalone apps)", async () => {
   expect(status.headers.get("access-control-allow-origin")).toBe("*");
   expect((await fetch(`${neo.url()}/v1/events?token=t`)).status).toBe(401);
 });
+
+test("unauthenticated requests are refused before an instance exists", async () => {
+  const base = neo.url();
+  expect((await fetch(`${base}/v1/status`)).status).toBe(401);
+  const wrong = await fetch(`${base}/v1/status`, {
+    headers: { authorization: "Bearer nope", origin: "https://app.example" },
+  });
+  expect(wrong.status).toBe(401);
+  expect(wrong.headers.get("access-control-allow-origin")).toBe("*");
+  expect(
+    (await fetch(`${base}/v1/status`, { method: "OPTIONS" })).status,
+  ).toBe(204);
+});

@@ -57,9 +57,21 @@ async function body<T>(request: Request): Promise<T> {
   }
 }
 
+export const preflight = () =>
+  new Response(null, { status: 204, headers: CORS });
+
+export function authorized(request: Request, token: string): boolean {
+  const given = request.headers
+    .get("authorization")
+    ?.replace(/^Bearer\s+/i, "");
+  return !!given && timingSafeEqual(given, token);
+}
+
+export const unauthorized = () =>
+  withCors(json({ error: "Unauthorized" }, 401));
+
 export async function handleApi(neo: Neo, request: Request): Promise<Response> {
-  if (request.method === "OPTIONS")
-    return new Response(null, { status: 204, headers: CORS });
+  if (request.method === "OPTIONS") return preflight();
   return withCors(await respond(neo, request));
 }
 
@@ -68,10 +80,7 @@ async function respond(neo: Neo, request: Request): Promise<Response> {
   const path = url.pathname;
   try {
     if (!path.startsWith("/v1/")) throw new HttpError(404, "Not found");
-    const given = request.headers
-      .get("authorization")
-      ?.replace(/^Bearer\s+/i, "");
-    if (!given || !timingSafeEqual(given, neo.host.token))
+    if (!authorized(request, neo.host.token))
       throw new HttpError(401, "Unauthorized");
     return await route(neo, request, url);
   } catch (error) {
