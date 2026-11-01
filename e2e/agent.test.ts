@@ -18,11 +18,11 @@ afterEach(async () => {
 });
 
 const script = (steps: unknown[], append = false) =>
-  neo.call("POST", "/v1/test/script", { steps, append });
+  neo.call("POST", "/test/script", { steps, append });
 const send = (text: string, extra: Record<string, unknown> = {}) =>
-  neo.call("POST", "/v1/messages", { text, ...extra }).then((r) => r.message);
+  neo.call("POST", "/messages", { text, ...extra }).then((r) => r.message);
 const enqueue = (text: string) =>
-  neo.call("POST", "/v1/test/messages", { text }).then((r) => r.message);
+  neo.call("POST", "/test/messages", { text }).then((r) => r.message);
 
 describe("turns", () => {
   test("a message runs one turn: tool steps, answer, transcript", async () => {
@@ -54,7 +54,7 @@ describe("turns", () => {
     await script([{ recall: "ok" }]);
     await send("what time is it");
     await idle(neo);
-    const { seen } = await neo.call("GET", "/v1/test/seen");
+    const { seen } = await neo.call("GET", "/test/seen");
     expect(seen.at(-1)).toContain("[Message from the person ·");
     expect(seen.at(-1)).toContain("what time is it");
   });
@@ -66,15 +66,15 @@ describe("queue", () => {
     await send("start work");
     await running(neo);
     const steered = await send("also do X");
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
+    await neo.call("POST", "/test/release", { gate: "g" });
     await idle(neo);
     expect(await answers(neo)).toEqual(["saw it"]);
-    const { seen } = await neo.call("GET", "/v1/test/seen");
+    const { seen } = await neo.call("GET", "/test/seen");
     expect(seen.at(-1)).toContain("also do X");
     expect(seen.at(-1)).toContain("arrived while you were working");
     const turn = await neo.call(
       "GET",
-      `/v1/turns/${(await neo.call("GET", "/v1/transcript")).items[0].turnId}`,
+      `/turns/${(await neo.call("GET", "/transcript")).items[0].turnId}`,
     );
     expect(turn.messages.map((m: any) => [m.text, m.status])).toEqual([
       ["start work", "completed"],
@@ -88,10 +88,10 @@ describe("queue", () => {
     await send("long job");
     await running(neo);
     await enqueue("after");
-    expect((await neo.call("POST", "/v1/stop")).stopped).toBe(true);
+    expect((await neo.call("POST", "/stop")).stopped).toBe(true);
     await idle(neo);
     const inputs = (await transcript(neo)).filter((i) => i.type === "input");
-    const { turns } = await neo.call("GET", "/v1/transcript");
+    const { turns } = await neo.call("GET", "/transcript");
     expect(turns[inputs[0].turnId].status).toBe("interrupted");
     expect(turns[inputs[1].turnId].status).toBe("completed");
     expect(await answers(neo)).toEqual(["next turn ran"]);
@@ -99,11 +99,11 @@ describe("queue", () => {
 
   test("pause holds the queue; resume drains it", async () => {
     await script([{ text: "ran after resume" }]);
-    await neo.call("POST", "/v1/pause");
+    await neo.call("POST", "/pause");
     await send("while paused");
     await Bun.sleep(150);
-    expect((await neo.call("GET", "/v1/status")).queued).toBe(1);
-    await neo.call("POST", "/v1/resume");
+    expect((await neo.call("GET", "/status")).queued).toBe(1);
+    await neo.call("POST", "/resume");
     await idle(neo);
     expect(await answers(neo)).toEqual(["ran after resume"]);
   });
@@ -111,7 +111,7 @@ describe("queue", () => {
 
 describe("memory", () => {
   const memories = async () =>
-    (await neo.call("GET", "/v1/test/memories")).memories as any[];
+    (await neo.call("GET", "/test/memories")).memories as any[];
 
   test("memories an agent saves commit when its turn completes, and are in the next prompt", async () => {
     await script([
@@ -132,7 +132,7 @@ describe("memory", () => {
     ]);
     await send("hello again");
     await idle(neo);
-    const { seen } = await neo.call("GET", "/v1/test/seen");
+    const { seen } = await neo.call("GET", "/test/seen");
     expect(seen.at(-1)).toContain("Biscuit");
   });
 
@@ -174,7 +174,7 @@ describe("memory", () => {
       5000,
       "remember ran",
     );
-    await neo.call("POST", "/v1/stop");
+    await neo.call("POST", "/stop");
     await idle(neo);
     expect(await memories()).toEqual([]);
   });
@@ -182,14 +182,14 @@ describe("memory", () => {
 
 describe("schedules", () => {
   const schedules = async () =>
-    (await neo.call("GET", "/v1/schedules")).schedules as any[];
+    (await neo.call("GET", "/schedules")).schedules as any[];
   const heartbeat = async () =>
     (await schedules()).find((s) => s.system === "heartbeat");
   const runs = async (id: string) =>
-    (await neo.call("GET", `/v1/test/schedules/${id}/runs`)).runs as any[];
+    (await neo.call("GET", `/test/schedules/${id}/runs`)).runs as any[];
   const due = (id: string, ago = 1) =>
-    neo.call("POST", `/v1/test/schedules/${id}/due?ago=${ago}`);
-  const wake = () => neo.call("POST", "/v1/test/wake");
+    neo.call("POST", `/test/schedules/${id}/due?ago=${ago}`);
+  const wake = () => neo.call("POST", "/test/wake");
 
   test("a reminder the agent creates comes back as a message, once", async () => {
     await script([
@@ -226,7 +226,7 @@ describe("schedules", () => {
 
   test("the alarm fires a due schedule by itself", async () => {
     await script([{ text: "woke up" }]);
-    await neo.call("POST", "/v1/test/schedules", {
+    await neo.call("POST", "/test/schedules", {
       prompt: "ping",
       inMinutes: 0.01,
     });
@@ -245,7 +245,7 @@ describe("schedules", () => {
       whenBusy: "skip",
       spec: { kind: "every", minutes: 60 },
     });
-    await neo.call("PATCH", `/v1/test/schedules/${hb.id}`, { window: null });
+    await neo.call("PATCH", `/test/schedules/${hb.id}`, { window: null });
     await script([{ text: "QUIET_OK" }]);
     await due(hb.id);
     await wake();
@@ -260,11 +260,11 @@ describe("schedules", () => {
       Date.now() + 55 * 60_000,
     );
     expect((await runs(hb.id)).map((r) => r.status)).toEqual(["sent", "sent"]);
-    expect(neo.call("PATCH", `/v1/schedules/${hb.id}`, {})).rejects.toThrow(
+    expect(neo.call("PATCH", `/schedules/${hb.id}`, {})).rejects.toThrow(
       /enabled/,
     );
-    expect(neo.call("DELETE", `/v1/schedules/${hb.id}`)).rejects.toThrow();
-    await neo.call("PATCH", `/v1/schedules/${hb.id}`, { enabled: false });
+    expect(neo.call("DELETE", `/schedules/${hb.id}`)).rejects.toThrow();
+    await neo.call("PATCH", `/schedules/${hb.id}`, { enabled: false });
     expect((await heartbeat()).nextAt).toBeNull();
   });
 
@@ -297,7 +297,7 @@ describe("schedules", () => {
 
   test("a routine repeats; one occurrence fires once however often the alarm rings", async () => {
     await script([{ text: "first" }]);
-    const { schedule } = await neo.call("POST", "/v1/test/schedules", {
+    const { schedule } = await neo.call("POST", "/test/schedules", {
       prompt: "routine",
       everyMinutes: 30,
     });
@@ -314,12 +314,12 @@ describe("schedules", () => {
 
   test("busy and backlog: the heartbeat skips, a routine does not pile up", async () => {
     const hb = await heartbeat();
-    await neo.call("PATCH", `/v1/test/schedules/${hb.id}`, { window: null });
-    const { schedule } = await neo.call("POST", "/v1/test/schedules", {
+    await neo.call("PATCH", `/test/schedules/${hb.id}`, { window: null });
+    const { schedule } = await neo.call("POST", "/test/schedules", {
       prompt: "routine",
       everyMinutes: 30,
     });
-    await neo.call("POST", "/v1/pause");
+    await neo.call("POST", "/pause");
     await due(hb.id);
     await due(schedule.id, 2000);
     await wake();
@@ -330,20 +330,20 @@ describe("schedules", () => {
       ["skipped", "previous_pending"],
       ["sent", null],
     ]);
-    expect((await neo.call("GET", "/v1/queue")).queue).toHaveLength(1);
+    expect((await neo.call("GET", "/queue")).queue).toHaveLength(1);
   });
 
   test("after downtime: missed skip skips, missed run runs once late", async () => {
     await script([{ recall: "ran late" }]);
     const skip = (
-      await neo.call("POST", "/v1/test/schedules", {
+      await neo.call("POST", "/test/schedules", {
         prompt: "skip me",
         everyMinutes: 30,
         missed: "skip",
       })
     ).schedule;
     const run = (
-      await neo.call("POST", "/v1/test/schedules", {
+      await neo.call("POST", "/test/schedules", {
         prompt: "run me",
         everyMinutes: 30,
       })
@@ -357,7 +357,7 @@ describe("schedules", () => {
     expect((await runs(run.id)).map((r) => r.status)).toEqual(["sent"]);
     const inputs = (await transcript(neo)).filter((i) => i.type === "input");
     expect(inputs).toHaveLength(1);
-    expect((await neo.call("GET", "/v1/test/seen")).seen.at(-1)).toContain(
+    expect((await neo.call("GET", "/test/seen")).seen.at(-1)).toContain(
       "was due",
     );
     for (const s of [skip, run])
@@ -368,7 +368,7 @@ describe("schedules", () => {
 
   test("bad schedules are refused with a reason", async () => {
     const bad = (input: unknown) =>
-      neo.call("POST", "/v1/test/schedules", input);
+      neo.call("POST", "/test/schedules", input);
     expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(
       /at most every 5 minutes/,
     );
@@ -383,13 +383,13 @@ describe("schedules", () => {
   });
 
   test("a cron follows the person's timezone when it changes", async () => {
-    await neo.call("PUT", "/v1/settings", { timezone: "UTC" });
-    const { schedule } = await neo.call("POST", "/v1/test/schedules", {
+    await neo.root("PUT", "/settings", { timezone: "UTC" });
+    const { schedule } = await neo.call("POST", "/test/schedules", {
       prompt: "x",
       cron: "0 9 * * *",
     });
     expect(new Date(schedule.nextAt).getUTCHours()).toBe(9);
-    await neo.call("PUT", "/v1/settings", { timezone: "Asia/Kolkata" });
+    await neo.root("PUT", "/settings", { timezone: "Asia/Kolkata" });
     const moved = (await schedules()).find((s) => s.id === schedule.id);
     expect(new Date(moved.nextAt).getUTCHours()).toBe(3);
     expect(new Date(moved.nextAt).getUTCMinutes()).toBe(30);
@@ -397,7 +397,7 @@ describe("schedules", () => {
 
   test("schedules survive a restart and still fire", async () => {
     if (!neo.restart) return;
-    const { schedule } = await neo.call("POST", "/v1/test/schedules", {
+    const { schedule } = await neo.call("POST", "/test/schedules", {
       prompt: "after restart",
       everyMinutes: 30,
     });
@@ -432,7 +432,7 @@ describe("files", () => {
     await idle(neo);
     const tool = (await transcript(neo)).find((i) => i.type === "tool");
     expect(tool.output).toContain("1 /notes/todo.txt");
-    await expect(neo.call("GET", "/v1/files?path=/notes")).rejects.toThrow();
+    await expect(neo.call("GET", "/files?path=/notes")).rejects.toThrow();
   });
 });
 
@@ -452,13 +452,13 @@ describe("recovery", () => {
       { text: "resumed after restart" },
       { text: "then the queue" },
     ]);
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
+    await neo.call("POST", "/test/release", { gate: "g" });
     await idle(neo);
     expect(await answers(neo)).toEqual([
       "resumed after restart",
       "then the queue",
     ]);
-    const { turns } = await neo.call("GET", "/v1/transcript");
+    const { turns } = await neo.call("GET", "/transcript");
     expect(Object.values(turns).map((t: any) => t.status)).toEqual([
       "completed",
       "completed",
@@ -469,8 +469,8 @@ describe("recovery", () => {
 describe("client", () => {
   test("NeoClient follows the event stream", async () => {
     const { NeoClient } = await import("@neo/client");
-    const status = await neo.call("GET", "/v1/status");
-    const client = new NeoClient({ url: neo.url(), token: "t" });
+    const status = await neo.call("GET", "/status");
+    const client = neo.client().agent("neo");
     const seen: string[] = [];
     const stop = client.events(
       {
@@ -494,7 +494,7 @@ describe("file store", () => {
     const bytes = new Uint8Array(size);
     for (let i = 0; i < size; i += 65536)
       crypto.getRandomValues(bytes.subarray(i, Math.min(i + 65536, size)));
-    const put = await fetch(`${neo.url()}/v1/uploads?name=data.bin`, {
+    const put = await neo.fetch(`${neo.agentUrl()}/uploads?name=data.bin`, {
       method: "POST",
       headers: { authorization: "Bearer t" },
       body: bytes,
@@ -503,7 +503,7 @@ describe("file store", () => {
     expect(upload).toMatchObject({ name: "data.bin", size });
     const got = new Uint8Array(
       await (
-        await fetch(`${neo.url()}/v1/files?path=/.staging/${upload.id}/data.bin`, {
+        await neo.fetch(`${neo.agentUrl()}/files?path=/.staging/${upload.id}/data.bin`, {
           headers: { authorization: "Bearer t" },
         })
       ).arrayBuffer(),
@@ -541,7 +541,7 @@ describe("bounded memory", () => {
   test("whole-file reads over the cap are refused with a clear message", async () => {
     const big = new Uint8Array(5 * 1024 * 1024).fill(97);
     const { upload } = await (
-      await fetch(`${neo.url()}/v1/uploads?name=big.txt`, {
+      await neo.fetch(`${neo.agentUrl()}/uploads?name=big.txt`, {
         method: "POST",
         headers: { authorization: "Bearer t" },
         body: big,

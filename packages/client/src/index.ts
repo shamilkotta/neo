@@ -1,2 +1,7 @@
 export * from "./types";
-export { NeoApiError, NeoClient, type NeoClientOptions } from "./client";
+export {
+  AgentClient,
+  NeoApiError,
+  NeoClient,
+  type NeoClientOptions,
+} from "./client";

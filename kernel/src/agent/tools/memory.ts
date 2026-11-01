@@ -45,7 +45,6 @@ export function memoryTools(services: ToolServices) {
         const c = await turn(api.conversationId);
         return json(
           await services.memories.stageRemember(
-            c.agentId,
             c.turnId,
             api.callId,
             {
@@ -67,7 +66,6 @@ export function memoryTools(services: ToolServices) {
         const c = await turn(api.conversationId);
         return json(
           await services.memories.stageForget(
-            c.agentId,
             c.turnId,
             api.callId,
             args.memoryId,
@@ -87,7 +85,6 @@ export function memoryTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const found = await services.memories.search(
-          c.agentId,
           args.query,
           args.limit ?? 5,
         );
@@ -105,13 +102,12 @@ export function memoryTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const page = await services.memories.page(
-          c.agentId,
           args.after ?? null,
         );
         return json({
           memories: page.memories.map(view),
           nextCursor: page.nextCursor,
-          total: await services.memories.count(c.agentId),
+          total: await services.memories.count(),
           limit: MEMORY_LIMIT,
         });
       },
@@ -135,7 +131,6 @@ export function memoryTools(services: ToolServices) {
         const c = await turn(api.conversationId);
         return json(
           await services.memories.stageSelection(
-            c.agentId,
             c.turnId,
             api.callId,
             args.changes,

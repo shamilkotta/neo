@@ -8,25 +8,55 @@ export interface ModelRef {
 export type ThinkingLevel =
   "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export interface AgentRecord {
+export interface AgentProfile {
   id: string;
   name: string;
-  model: ModelRef | null;
-  thinking: ThinkingLevel | null;
-  conversationId: number | null;
-  paused: boolean;
+  title: string | null;
+  description: string | null;
+  instructions: string | null;
+  primary: boolean;
+  createdBy: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface AgentChange {
-  name?: string;
-  model?: ModelRef | null;
-  thinking?: ThinkingLevel | null;
+export interface AgentStatus {
+  working: boolean;
+  queued: number;
+  paused: boolean;
+  at: number;
 }
 
+export interface AgentSummary extends AgentProfile {
+  status: AgentStatus | null;
+}
 
-export type MessageSource = "user" | "schedule" | "system";
+/** A message between two agents of one instance (Durable Object to Durable Object). */
+export interface AgentMessage {
+  id: string;
+  kind: "message" | "no-answer";
+  instance: string;
+  to: string;
+  from: { id: string; name: string };
+  text: string;
+  replyTo: string | null;
+  expectsReply: boolean;
+  sentAt: number;
+}
+
+export interface NewAgent {
+  name: string;
+  title?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+}
+
+export type ProfileChange = Partial<
+  Pick<AgentProfile, "name" | "title" | "description" | "instructions">
+>;
+
+
+export type MessageSource = "user" | "schedule" | "system" | "agent";
 export type MessageStatus =
   | "queued"
   | "starting"
@@ -57,7 +87,6 @@ export interface AttachmentInput {
 
 export interface MailboxMessage {
   id: string;
-  agentId: string;
   source: MessageSource;
   text: string;
   attachments: Attachment[];
@@ -75,7 +104,6 @@ export interface MailboxMessage {
 
 export interface Turn {
   id: string;
-  agentId: string;
   status: TurnStatus;
   answer: string | null;
   error: string | null;
@@ -136,7 +164,6 @@ export type MemoryOwnerKind = "agent" | "channel" | "connection";
 
 export interface Memory {
   id: string;
-  agentId: string;
   ownerKind: MemoryOwnerKind;
   kind: MemoryKind;
   origin: MemoryOrigin;
@@ -155,7 +182,6 @@ export type ScheduleSpec =
 
 export interface Schedule {
   id: string;
-  agentId: string;
   name: string;
   prompt: string;
   spec: ScheduleSpec;
@@ -206,6 +232,8 @@ export interface ScheduleRun {
 
 export interface SettingsShape {
   timezone: string;
+  model: ModelRef | null;
+  thinking: ThinkingLevel | null;
 }
 
 export type ProviderKind =
@@ -246,11 +274,17 @@ export interface Status {
   epoch?: number;
   capabilities: { sockets: boolean; processes: boolean };
   test: boolean;
-  agent?: { id: string; name: string; paused: boolean };
   model?: ModelRef | null;
-  turn?: Turn | null;
-  queued?: number;
+  agents?: AgentSummary[];
   latestEvent?: number;
+}
+
+export interface AgentState {
+  agent: AgentProfile & { paused: boolean };
+  state: "empty" | "active" | "sealed" | "moved";
+  turn: Turn | null;
+  queued: number;
+  latestEvent: number;
 }
 
 
@@ -265,12 +299,10 @@ export interface NeoEvent {
   seq: number;
   at: number;
   type: string;
-  agentId: string | null;
   data: Record<string, unknown>;
 }
 
 export interface LiveEvent {
   type: string;
-  agentId: string | null;
   data: unknown;
 }

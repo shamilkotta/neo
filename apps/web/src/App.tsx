@@ -1,4 +1,9 @@
-import { NeoClient, type NeoEvent } from "@neo/client";
+import {
+  type AgentClient,
+  NeoClient,
+  type NeoEvent,
+  type Status,
+} from "@neo/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Composer, Queue, Transcript } from "./Chat";
 import { apiUrl, forgetToken, loadToken, saveToken } from "./config";
@@ -9,7 +14,7 @@ const PANEL_EVENTS: Record<string, Tab[]> = {
   "schedule.changed": ["Schedules"],
   "schedule.fired": ["Schedules"],
   "agent.changed": ["Agent"],
-  "providers.changed": ["Providers", "Agent"],
+  "providers.changed": ["Providers", "Settings"],
   "settings.changed": ["Settings"],
 };
 
@@ -28,7 +33,7 @@ export function App() {
     );
   return (
     <Instance
-      client={new NeoClient({ url, token })}
+      root={new NeoClient({ url, token })}
       onForget={() => {
         forgetToken(url);
         setToken(null);
@@ -70,14 +75,130 @@ function Connect({
   );
 }
 
+const agentFromHash = () =>
+  new URLSearchParams(location.hash.slice(1)).get("agent");
+
+/** The instance: the agent list, and the selected agent's chat. */
 function Instance({
-  client: initial,
+  root: initial,
   onForget,
 }: {
-  client: NeoClient;
+  root: NeoClient;
   onForget: () => void;
 }) {
-  const [client] = useState(initial);
+  const [root] = useState(initial);
+  const [status, setStatus] = useState<Status>();
+  const [error, setError] = useState<string>();
+  const [selected, setSelected] = useState<string | null>(agentFromHash);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await root.status());
+      setError(undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [root]);
+
+  useEffect(() => {
+    void refresh();
+    return root.events({
+      durable: (e) => {
+        if (/^(agent|settings|providers)\./.test(e.type)) void refresh();
+      },
+      error: () => void refresh(),
+    });
+  }, [root, refresh]);
+
+  useEffect(() => {
+    if (error === "Unauthorized") onForget();
+  }, [error, onForget]);
+
+  const agents = status?.agents ?? [];
+  const current =
+    agents.find((a) => a.id === selected) ??
+    agents.find((a) => a.primary) ??
+    agents[0];
+  const choose = (id: string) => {
+    setSelected(id);
+    history.replaceState(null, "", `#agent=${encodeURIComponent(id)}`);
+  };
+
+  return (
+    <div id="app">
+      <nav id="agents">
+        <h2>Agents</h2>
+        {agents.map((a) => (
+          <button
+            key={a.id}
+            className={a.id === current?.id ? "on" : ""}
+            onClick={() => choose(a.id)}
+          >
+            <span
+              className={`dot ${
+                a.status?.paused
+                  ? "paused"
+                  : a.status?.working
+                    ? "running"
+                    : "idle"
+              }`}
+            />
+            {a.name}
+            {!!a.status?.queued && (
+              <span className="muted"> · {a.status.queued}</span>
+            )}
+          </button>
+        ))}
+        <button
+          className="small"
+          onClick={() => {
+            const name = prompt("Name of the new agent")?.trim();
+            if (!name) return;
+            root.createAgent({ name }).then(
+              (agent) => {
+                choose(agent.id);
+                void refresh();
+              },
+              (e) => alert(e instanceof Error ? e.message : String(e)),
+            );
+          }}
+        >
+          New agent
+        </button>
+      </nav>
+      {error && !current && <p className="err banner">{error}</p>}
+      {current && status && (
+        <AgentView
+          key={current.id}
+          root={root}
+          agentId={current.id}
+          status={status}
+          onForget={onForget}
+          onDeleted={() => {
+            setSelected(null);
+            history.replaceState(null, "", location.pathname);
+            void refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentView({
+  root,
+  agentId,
+  status,
+  onForget,
+  onDeleted,
+}: {
+  root: NeoClient;
+  agentId: string;
+  status: Status;
+  onForget: () => void;
+  onDeleted: () => void;
+}) {
+  const [client] = useState<AgentClient>(() => root.agent(agentId));
   const [tab, setTab] = useState<Tab | null>(null);
   const [versions, setVersions] = useState<Record<string, number>>({});
   const bump = useCallback((e: NeoEvent) => {
@@ -91,26 +212,22 @@ function Instance({
       );
   }, []);
   const neo = useNeo(client, bump);
-  const { status } = neo;
-  const running = !!status?.turn;
-  const paused = !!status?.agent?.paused;
-  useEffect(() => {
-    if (neo.error === "Unauthorized") onForget();
-  }, [neo.error, onForget]);
+  const running = !!neo.status?.turn;
+  const paused = !!neo.status?.agent.paused;
   return (
-    <div id="app">
+    <>
       <div id="main">
         <header>
           <span
             className={`dot ${paused ? "paused" : running ? "running" : "idle"}`}
           />
-          <h1>{status?.agent?.name ?? "Neo"}</h1>
+          <h1>{neo.status?.agent.name ?? agentId}</h1>
           <span id="state">
             {paused ? "paused" : running ? "working" : "idle"} ·{" "}
-            {status?.model
+            {status.model
               ? `${status.model.provider}/${status.model.modelId}`
               : "no model"}{" "}
-            · {status?.host}
+            · {status.host}
           </span>
           <span className="grow" />
           {running && (
@@ -170,14 +287,17 @@ function Instance({
           <div id="pane">
             <Panel
               tab={tab}
+              root={root}
               client={client}
+              agentId={agentId}
               version={versions[tab] ?? 0}
               status={status}
               onForget={onForget}
+              onDeleted={onDeleted}
             />
           </div>
         </aside>
       )}
-    </div>
+    </>
   );
 }

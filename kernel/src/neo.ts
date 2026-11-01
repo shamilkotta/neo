@@ -8,7 +8,6 @@ import {
   createRegistry,
   defineExtension,
   Harness,
-  type ModelRef,
   type Wake,
   watchEvents,
 } from "@earendil-works/pi-durable";
@@ -19,7 +18,8 @@ import {
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-durable/tools";
-import { type AgentRecord, Agents, DEFAULT_AGENT_ID } from "./agent/agents";
+import type { AgentMessage, AgentProfile, AgentStatus } from "@neo/client";
+import { AgentSelf } from "./agent/agents";
 import {
   ATTACHMENTS_ROOT,
   type AttachmentInput,
@@ -31,301 +31,371 @@ import {
 } from "./agent/attachments";
 import { fileTools } from "./agent/tools/files";
 import { Mailbox, type MailboxMessage, type Turn } from "./agent/mailbox";
+import { Messaging } from "./agent/messaging";
+import { teamTools } from "./agent/tools/team";
 import { promptSections } from "./agent/prompt";
 import { historyTools } from "./agent/tools/history";
 import { memoryTools } from "./agent/tools/memory";
 import type { ToolServices } from "./agent/tools/shared";
 import { scheduleTools } from "./agent/tools/schedules";
 import { HEARTBEAT, Schedules } from "./agent/schedules";
-import { handleApi } from "./api";
-import type { HostPorts } from "./host";
+import { handleAgentApi } from "./api";
+import type { Address, AgentPorts } from "./host";
+import type { AgentConfig, AgentInit, CoordinatorLink } from "./links";
 import { toBase64 } from "./crypto";
+import { SetupError, StateError } from "./errors";
 import {
-  BLOB_PIECE,
-  BUNDLE_FORMAT,
-  BUNDLE_VERSION,
-  BundleError,
-  type BundleHeader,
-  type BundleRecord,
-  decodeBundle,
-  encodeBundle,
-  readBundle,
-  unwrapDek,
-  wrapDek,
+  decodeNdjson,
+  encodeNdjson,
+  readPart,
+  writePart,
 } from "./move/bundle";
-import { dumpDatabase, loadDatabase, wipeDatabase } from "./move/snapshot";
-import { createSchema, getMeta, hasTable, setMeta } from "./schema";
+import { wipeDatabase } from "./move/snapshot";
+import { createAgentSchema, getMeta, hasTable, setMeta } from "./schema";
 import { Events } from "./services/events";
 import { History } from "./services/history";
 import { Memories } from "./services/memory";
-import { Providers } from "./services/providers";
-import { Secrets } from "./services/secrets";
-import { Settings } from "./services/settings";
+import { ModelCatalog } from "./services/providers";
 import type { SqliteDatabase } from "./sql";
 import { VfsShell } from "./vfs/bash";
-import { measured } from "./vfs/blobs";
 import { VfsExecutionEnv } from "./vfs/env";
-import { joinPath, readOnly, rechunk, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
+import { mount, remoteVfs, SHARED_ROOT } from "./vfs/mount";
+import { joinPath, readOnly, Vfs, WHOLE_READ_MAX } from "./vfs/vfs";
 
-export const NEO_VERSION = "0.1.0";
+export const NEO_VERSION = "0.2.0";
 export const PI_PREFIX = "pi_";
 export const RECOVERY_MS = 60_000;
-const IMPORT_MARKER = "host_import";
+export const IMPORT_MARKER = "host_import";
 
-export type InstanceState = "empty" | "active" | "sealed" | "moved";
+export type { InstanceState } from "./errors";
+import type { InstanceState } from "./errors";
 
 export interface Live {
   harness: Harness;
   vfs: Vfs;
-  secrets: Secrets;
-  providers: Providers;
-  settings: Settings;
-  agents: Agents;
+  self: AgentSelf;
   memories: Memories;
   history: History;
   mailbox: Mailbox;
+  messaging: Messaging;
   schedules: Schedules;
   watches: AgentEventStream[];
 }
 
-export class Neo {
+/** Events that change what list_agents and the sidebar show. */
+const STATUS_EVENTS = new Set([
+  "message.queued",
+  "message.cancelled",
+  "message.steered",
+  "message.requeued",
+  "turn.started",
+  "turn.ended",
+  "agent.paused",
+  "agent.resumed",
+]);
+
+/** One agent: its queue, turns, memory, schedules and workspace. A host runs one per agent. */
+export class NeoAgent {
   readonly events: Events;
   readonly now: () => number;
+  readonly catalog = new ModelCatalog();
   private live: Live | undefined;
   private state_: InstanceState = "empty";
-  private instanceId_: string | undefined;
+  private agentId_: string | undefined;
+  private instance_: string | undefined;
   private readonly context: Context = BACKGROUND_CONTEXT;
   private armed: number | undefined | null = null;
   private arming: Promise<void> = Promise.resolve();
   private waking: Promise<void> | undefined;
-  private readonly configured = new Map<string, string>();
-  private readonly conversationAgents = new Map<number, string>();
+  private configured: string | undefined;
+  private conversation_: Conversation | undefined;
+  private config_: AgentConfig | undefined;
+  private stale = true;
+  private reporting: Promise<void> | undefined;
+  private reportAgain = false;
 
-  private constructor(readonly host: HostPorts) {
+  private constructor(readonly host: AgentPorts) {
     this.now = host.now ?? Date.now;
     this.events = new Events(host.db, this.now);
+    if (host.test) this.catalog.addHostProvider(host.test.provider);
+    this.events.subscribe((event) => {
+      if (STATUS_EVENTS.has(event.type)) this.report();
+      if (event.type === "message.cancelled" && this.live)
+        void this.live.messaging
+          .cancelled(String(event.data.messageId))
+          .catch(() => {});
+    });
   }
 
-  static async open(host: HostPorts): Promise<Neo> {
-    const neo = new Neo(host);
+  static async open(host: AgentPorts): Promise<NeoAgent> {
+    const agent = new NeoAgent(host);
     if (await hasTable(host.db, IMPORT_MARKER)) {
       await wipeDatabase(host.db);
       await host.blobs.clear();
     }
     if (await hasTable(host.db, "neo_meta")) {
-      neo.instanceId_ = await getMeta(host.db, "instance_id");
-      neo.state_ =
+      agent.agentId_ = await getMeta(host.db, "agent_id");
+      agent.instance_ = await getMeta(host.db, "instance");
+      agent.state_ =
         ((await getMeta(host.db, "state")) as InstanceState | undefined) ??
         "empty";
-    } else {
-      await neo.init();
-      return neo;
     }
-    if (neo.state_ === "active") await neo.start();
-    return neo;
+    if (agent.state_ === "active") await agent.start();
+    return agent;
   }
 
   get state(): InstanceState {
     return this.state_;
   }
 
-  get instanceId(): string | undefined {
-    return this.instanceId_;
-  }
-
-  async epoch(): Promise<number | undefined> {
-    if (this.state_ === "empty") return undefined;
-    const value = await getMeta(this.host.db, "epoch").catch(() => undefined);
-    return value === undefined ? undefined : Number(value);
+  get agentId(): string {
+    if (!this.agentId_) throw new StateError("empty", "No such agent");
+    return this.agentId_;
   }
 
   services(): Live {
     if (!this.live)
-      throw new StateError(this.state_, `The instance is ${this.state_}`);
+      throw new StateError(this.state_, `The agent is ${this.state_}`);
     return this.live;
   }
 
   fetch(request: Request): Promise<Response> {
-    return handleApi(this, request);
+    return handleAgentApi(this, request);
   }
 
-  async init(): Promise<void> {
-    if (this.state_ !== "empty")
-      throw new StateError(this.state_, "This host already holds an instance");
-    await createSchema(this.host.db);
-    this.instanceId_ = crypto.randomUUID();
-    await setMeta(this.host.db, "instance_id", this.instanceId_);
-    await setMeta(this.host.db, "created_at", String(this.now()));
-    await setMeta(this.host.db, "epoch", "1");
-    if (this.host.timezone)
-      await new Settings(this.host.db).update({ timezone: this.host.timezone });
+  private link(): CoordinatorLink {
+    if (!this.instance_) throw new StateError(this.state_, "No such agent");
+    return this.host.coordinator(this.instance_);
+  }
+
+  /** A request for an agent this DO has not made yet: ask the registry whether it exists. */
+  async claim(address: Address): Promise<boolean> {
+    if (this.state_ !== "empty") return true;
+    const init = await this.host
+      .coordinator(address.instance)
+      .init(address.agentId);
+    if (!init) return false;
+    await this.provision(init);
+    return true;
+  }
+
+  /** Makes this agent (idempotent: a made agent only takes the newer profile and name). */
+  async provision(init: AgentInit): Promise<void> {
+    const { db } = this.host;
+    if (this.state_ !== "empty") {
+      if (this.agentId_ !== init.profile.id)
+        throw new StateError(this.state_, "This home holds another agent");
+      await this.setInstance(init.instance);
+      if (this.live) await this.live.self.setProfile(init.profile);
+      return;
+    }
+    await createAgentSchema(db);
+    await setMeta(db, "agent_id", init.profile.id);
+    await setMeta(db, "instance_id", init.instanceId);
+    await setMeta(db, "instance", init.instance);
+    await setMeta(db, "created_at", String(this.now()));
+    await new AgentSelf(db).init(init.profile);
+    this.agentId_ = init.profile.id;
+    this.instance_ = init.instance;
     await this.setState("active");
     await this.start();
   }
 
+  private async setInstance(instance: string): Promise<void> {
+    if (this.instance_ === instance) return;
+    this.instance_ = instance;
+    await setMeta(this.host.db, "instance", instance);
+  }
 
-  async seal(): Promise<void> {
+  async profileChanged(profile: AgentProfile): Promise<void> {
+    if (this.agentId_ !== profile.id) return;
+    await new AgentSelf(this.host.db).setProfile(profile);
+    if (this.live) await this.live.self.setProfile(profile);
+    await this.events.emit("agent.changed", {});
+  }
+
+  /** The instance's providers, model and timezone; fetched when stale, held in memory only. */
+  async config(): Promise<AgentConfig> {
+    if (this.config_ && !this.stale) return this.config_;
+    let fresh: AgentConfig;
+    try {
+      fresh = await this.link().config();
+    } catch (error) {
+      if (this.config_) return this.config_;
+      throw error;
+    }
+    const before = this.config_;
+    this.config_ = fresh;
+    this.stale = false;
+    await this.catalog.rebuild(fresh.providers);
+    if (before && before.timezone !== fresh.timezone && this.live) {
+      await this.live.schedules.retime(fresh.timezone);
+      await this.arm();
+    }
+    return fresh;
+  }
+
+  async configChanged(revision: number): Promise<void> {
+    if (this.config_ && revision <= this.config_.revision) return;
+    this.stale = true;
+    if (this.live) await this.config().catch(() => {});
+  }
+
+  async timezone(): Promise<string> {
+    return (await this.config()).timezone;
+  }
+
+  async status(): Promise<AgentStatus | undefined> {
+    const live = this.live;
+    if (!live) return undefined;
+    return {
+      working: !!(await live.mailbox.currentTurn()),
+      queued: (await live.mailbox.queue()).length,
+      paused: (await live.self.get()).paused,
+      at: this.now(),
+    };
+  }
+
+  /** Tells the coordinator what this agent is doing (one report in flight; the last one wins). */
+  private report(): void {
+    if (this.reporting) {
+      this.reportAgain = true;
+      return;
+    }
+    this.reporting = (async () => {
+      do {
+        this.reportAgain = false;
+        const status = await this.status().catch(() => undefined);
+        if (status && this.agentId_)
+          await this.link()
+            .report(this.agentId_, status)
+            .catch(() => {});
+      } while (this.reportAgain);
+    })().finally(() => {
+      this.reporting = undefined;
+    });
+  }
+
+  /** A message from a teammate. An agent nobody has opened yet makes itself first. */
+  async deliver(message: AgentMessage): Promise<void> {
+    if (this.state_ === "empty")
+      await this.claim({ instance: message.instance, agentId: message.to });
+    if (this.state_ === "empty") throw new Error(`No agent ${message.to}`);
     if (this.state_ !== "active")
       throw new StateError(
         this.state_,
-        `Only an active instance can be sealed (it is ${this.state_})`,
+        `${message.to} is not taking messages right now (${this.state_})`,
       );
+    await this.services().messaging.deliver(message);
+  }
+
+  /** A teammate stops what it asked of this agent. */
+  async interrupt(
+    address: Address,
+    from: string,
+  ): Promise<{ stopped: boolean; cancelled: number }> {
+    if (this.state_ === "empty") await this.claim(address);
+    const live = this.services();
+    await live.messaging.closeFrom(from);
+    const fromThem = (m: MailboxMessage) =>
+      m.source === "agent" &&
+      (m.meta.from as { id?: string } | undefined)?.id === from;
+    let cancelled = 0;
+    for (const m of await live.mailbox.queue())
+      if (fromThem(m)) {
+        await live.mailbox.cancel(m.id).catch(() => {});
+        cancelled++;
+      }
+    const turn = await live.mailbox.currentTurn();
+    const stopped =
+      !!turn &&
+      (await live.mailbox.turnMessages(turn.id)).some(fromThem) &&
+      (await live.mailbox.stop());
+    return { stopped, cancelled };
+  }
+
+  async isNew(): Promise<boolean> {
+    if (this.state_ === "empty") return true;
+    if (this.state_ !== "active") return false;
+    const used = await this.host.db.get(
+      `SELECT 1 FROM neo_mailbox UNION ALL SELECT 1 FROM neo_memories UNION ALL SELECT 1 FROM vfs_nodes WHERE kind = 'file' LIMIT 1`,
+    );
+    return used === undefined;
+  }
+
+  async seal(): Promise<void> {
+    if (this.state_ === "sealed") return;
+    if (this.state_ !== "active")
+      throw new StateError(this.state_, `The agent is ${this.state_}`);
     await this.stop();
     await this.setState("sealed");
     await this.events.emit("instance.sealed");
   }
 
   async unseal(): Promise<void> {
+    if (this.state_ === "active") return;
     if (this.state_ !== "sealed")
-      throw new StateError(this.state_, "The instance is not sealed");
+      throw new StateError(this.state_, "The agent is not sealed");
     await this.setState("active");
     await this.start();
     await this.events.emit("instance.unsealed");
   }
 
   async markMoved(): Promise<void> {
+    if (this.state_ === "moved") return;
     if (this.state_ !== "sealed")
-      throw new StateError(this.state_, "Seal and export the instance first");
+      throw new StateError(this.state_, "Seal and export the agent first");
     await this.setState("moved");
   }
 
-  async exportBundle(passphrase?: string): Promise<ReadableStream<Uint8Array>> {
+  exportPart(): ReadableStream<Uint8Array> {
     if (this.state_ !== "sealed" && this.state_ !== "moved")
-      throw new StateError(this.state_, "Seal the instance before exporting it");
-    const { db, blobs } = this.host;
-    const secrets = new Secrets(db, this.host.masterKey, this.now);
-    await secrets.init();
-    const header: BundleHeader = {
-      t: BUNDLE_FORMAT,
-      version: BUNDLE_VERSION,
-      instanceId: this.instanceId_!,
-      epoch: Number((await getMeta(db, "epoch")) ?? 1) + 1,
-      createdAt: this.now(),
-      source: { host: this.host.name },
-      ...(passphrase ? { dek: await wrapDek(secrets.rawDek(), passphrase) } : {}),
-    };
-    async function* records(): AsyncGenerator<BundleRecord> {
-      yield header;
-      let count = 0;
-      for await (const record of dumpDatabase(db)) {
-        if (record.t === "rows" && record.table === "neo_meta") {
-          const key = record.columns.indexOf("key");
-          record.rows = record.rows.filter((row) => row[key] !== "dek");
-        }
-        count++;
-        yield record;
-      }
-      for (let after = ""; ; ) {
-        const page = await db.all<{ key: string; size: number; hash: string }>(
-          `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
-          after,
-        );
-        if (page.length === 0) break;
-        for (const blob of page) {
-          const stream = await blobs.get(blob.key);
-          if (!stream)
-            throw new Error(`A file's content is missing (${blob.key})`);
-          count++;
-          yield { t: "blob", ...blob };
-          for await (const piece of rechunk(stream, BLOB_PIECE)) {
-            count++;
-            yield { t: "blob-data", data: toBase64(piece) };
-          }
-          count++;
-          yield { t: "blob-end" };
-        }
-        after = page.at(-1)!.key;
-      }
-      yield { t: "end", records: count };
-    }
-    return encodeBundle(records());
+      throw new StateError(this.state_, "Seal the agent before exporting it");
+    return encodeNdjson(writePart(this.host.db, this.host.blobs));
   }
 
-  async importBundle(
-    body: ReadableStream<Uint8Array>,
-    passphrase?: string,
-  ): Promise<{ instanceId: string; epoch: number; secrets: "kept" | "dropped" }> {
-    const homecoming = this.state_ === "moved";
-    if (!homecoming && this.state_ !== "empty" && !(await this.isNew()))
-      throw new StateError(
-        this.state_,
-        "Import needs a new instance (this one has been used)",
-      );
-    const bundle = await readBundle(decodeBundle(body)[Symbol.asyncIterator]());
-    if (
-      homecoming &&
-      (bundle.header.instanceId !== this.instanceId_ ||
-        bundle.header.epoch <= ((await this.epoch()) ?? 0))
-    )
-      throw new StateError(
-        this.state_,
-        "This host retired another instance (or a later copy of this one)",
-      );
-    if (bundle.header.dek && !passphrase)
-      throw new BundleError("This bundle's secrets need its passphrase");
-    const dek =
-      bundle.header.dek && passphrase
-        ? await unwrapDek(bundle.header.dek, passphrase)
-        : undefined;
-    const { db } = this.host;
-    await this.stop();
-    this.state_ = "empty";
-    this.instanceId_ = undefined;
-    this.configured.clear();
-    this.conversationAgents.clear();
-    await wipeDatabase(db);
-    await this.host.blobs.clear();
+  /** Replaces this agent with one part of a bundle. A failure leaves it empty. */
+  async importPart(
+    init: AgentInit,
+    part: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    const { db, blobs } = this.host;
+    await this.reset();
     await db.exec(`CREATE TABLE ${IMPORT_MARKER} (started_at INTEGER) STRICT`);
     try {
-      await loadDatabase(db, bundle.main());
-      for await (const blob of bundle.blobs()) {
-        const body = measured(
-          blob.stream,
-          Number.MAX_SAFE_INTEGER,
-          () => new Error(),
-        );
-        await this.host.blobs.put(blob.key, body.stream);
-        const got = body.result();
-        if (got.size !== blob.size || got.hash !== blob.hash)
-          throw new BundleError(
-            `The bundle is damaged: a file's content does not match (${blob.key})`,
-          );
-      }
-      await bundle.end();
-      if ((await getMeta(db, "instance_id")) !== bundle.header.instanceId)
-        throw new BundleError("The bundle's header and data disagree");
-      const secrets = new Secrets(db, this.host.masterKey, this.now);
-      if (dek) await secrets.storeDek(dek);
-      else await db.run(`DELETE FROM neo_secrets`);
-      await setMeta(db, "epoch", String(bundle.header.epoch));
+      await readPart(decodeNdjson(part)[Symbol.asyncIterator](), db, blobs);
+      if ((await getMeta(db, "agent_id")) !== init.profile.id)
+        throw new Error("The bundle's agent and its part disagree");
+      await setMeta(db, "instance_id", init.instanceId);
+      await setMeta(db, "instance", init.instance);
       await setMeta(db, "state", "active");
+      await new AgentSelf(db).setProfile(init.profile);
       await db.exec(`DROP TABLE ${IMPORT_MARKER}`);
     } catch (error) {
-      await wipeDatabase(db);
-      await this.host.blobs.clear();
-      await this.init();
+      await this.reset();
       throw error;
     }
-    this.instanceId_ = bundle.header.instanceId;
+    this.agentId_ = init.profile.id;
+    this.instance_ = init.instance;
     this.state_ = "active";
     await this.start();
-    await this.events.emit("instance.imported", {
-      from: bundle.header.source.host,
-      epoch: bundle.header.epoch,
-    });
-    return {
-      instanceId: this.instanceId_,
-      epoch: bundle.header.epoch,
-      secrets: dek ? "kept" : "dropped",
-    };
+    await this.events.emit("instance.imported", {});
   }
 
-  private async isNew(): Promise<boolean> {
-    if (this.state_ !== "active") return false;
-    const used = await this.host.db.get(
-      `SELECT 1 FROM neo_mailbox UNION ALL SELECT 1 FROM neo_providers UNION ALL SELECT 1 FROM neo_memories UNION ALL SELECT 1 FROM vfs_nodes WHERE kind = 'file' LIMIT 1`,
-    );
-    return used === undefined;
+  /** Removes the agent: its database, its files and its alarm. */
+  async destroy(): Promise<void> {
+    await this.reset();
+    await this.host.alarm.set(undefined);
+  }
+
+  private async reset(): Promise<void> {
+    await this.stop();
+    await wipeDatabase(this.host.db);
+    await this.host.blobs.clear();
+    this.state_ = "empty";
+    this.agentId_ = undefined;
+    this.configured = undefined;
+    this.conversation_ = undefined;
   }
 
 
@@ -381,106 +451,70 @@ export class Neo {
   private async fireSchedules(live: Live): Promise<void> {
     for (let pass = 0; pass < 10; pass++) {
       const { runs, more } = await live.schedules.fire({
-        send: (agentId, input) => this.send(agentId, input),
-        idle: async (agentId) =>
-          !(await live.agents.get(agentId)).paused &&
-          !(await live.mailbox.currentTurn(agentId)) &&
-          (await live.mailbox.queue(agentId)).length === 0,
+        send: (input) => this.send(input),
+        idle: async () =>
+          !(await live.self.get()).paused &&
+          !(await live.mailbox.currentTurn()) &&
+          (await live.mailbox.queue()).length === 0,
         waiting: async (messageId) =>
           (await live.mailbox.message(messageId))?.status === "queued",
-        timezone: () => live.settings.get("timezone"),
+        timezone: () => this.timezone(),
       });
       for (const run of runs)
-        await this.events.emit(
-          "schedule.fired",
-          {
-            scheduleId: run.scheduleId,
-            status: run.status,
-            reason: run.reason,
-            messageId: run.messageId,
-          },
-          run.agentId,
-        );
+        await this.events.emit("schedule.fired", {
+          scheduleId: run.scheduleId,
+          status: run.status,
+          reason: run.reason,
+          messageId: run.messageId,
+        });
       if (!more) return;
     }
   }
 
-  async schedulesChanged(agentId: string): Promise<void> {
+  async schedulesChanged(): Promise<void> {
     await this.arm();
-    await this.events.emit("schedule.changed", {}, agentId);
-  }
-
-  async timezoneChanged(): Promise<void> {
-    const live = this.services();
-    await live.schedules.retime(await live.settings.get("timezone"));
-    await this.arm();
+    await this.events.emit("schedule.changed", {});
   }
 
 
-  async conversation(agentId: string): Promise<Conversation> {
+  async conversation(): Promise<Conversation> {
     const live = this.services();
-    const agent = await live.agents.get(agentId);
-    let conversation: Conversation | undefined;
-    if (agent.conversationId !== null)
-      conversation = await live.harness.conversation(
-        agent.conversationId as never,
-        this.context,
-      );
+    let conversation = this.conversation_;
     if (!conversation) {
-      conversation = await live.harness.root(this.context);
-      await live.agents.setConversation(
-        agentId,
-        conversation.id as unknown as number,
-      );
+      const self = await live.self.get();
+      if (self.conversationId !== null)
+        conversation = await live.harness.conversation(
+          self.conversationId as never,
+          this.context,
+        );
+      if (!conversation) {
+        conversation = await live.harness.root(this.context);
+        await live.self.setConversation(conversation.id as unknown as number);
+      }
+      this.conversation_ = conversation;
     }
-    this.conversationAgents.set(conversation.id as unknown as number, agentId);
-    const model = agent.model ?? (await this.defaultModel());
-    const config = JSON.stringify([model, agent.thinking]);
-    if (this.configured.get(agentId) !== config) {
+    const config = await this.config().catch(() => undefined);
+    if (!config) return conversation;
+    const key = JSON.stringify([config.model, config.thinking]);
+    if (this.configured !== key) {
       await conversation.configure(
         {
-          model: model ?? null,
-          thinkingLevel: agent.thinking ?? null,
+          model: config.model ?? null,
+          thinkingLevel: config.thinking ?? null,
           cwd: "/",
         },
         this.context,
       );
-      this.configured.set(agentId, config);
+      this.configured = key;
     }
     return conversation;
   }
 
-  async defaultModel(): Promise<ModelRef | undefined> {
-    const live = this.services();
-    if (this.host.test) return { provider: "faux", modelId: "m" };
-    const available = await live.providers.available();
-    const first = available[0];
-    return first ? { provider: first.provider, modelId: first.id } : undefined;
-  }
-
-  async agentOf(conversationId: number): Promise<string> {
-    const known = this.conversationAgents.get(conversationId);
-    if (known) return known;
-    const row = await this.host.db.get<{ id: string }>(
-      `SELECT id FROM neo_agents WHERE conversation_id = ?`,
-      conversationId,
-    );
-    if (!row) throw new Error("This conversation belongs to no agent");
-    this.conversationAgents.set(conversationId, row.id);
-    return row.id;
-  }
-
-  async agent(id = DEFAULT_AGENT_ID): Promise<AgentRecord> {
-    return this.services().agents.get(id);
-  }
-
   async send(
-    agentId: string,
-    input: Parameters<Mailbox["send"]>[1] & { files?: AttachmentInput[] },
+    input: Parameters<Mailbox["send"]>[0] & { files?: AttachmentInput[] },
   ): Promise<MailboxMessage> {
     const live = this.services();
-    const agent = await live.agents.get(agentId);
-    if (!agent.model && !(await this.defaultModel()))
+    if (!(await this.config()).model)
       throw new SetupError("Add a model provider first (Settings → Providers)");
     const { files, ...rest } = input;
     if (files?.length) {
@@ -490,22 +524,22 @@ export class Neo {
       if (existing) return existing;
       rest.attachments = await placeUploads(live.vfs, files);
     }
-    return live.mailbox.send(agentId, rest);
+    return live.mailbox.send(rest);
   }
 
   upload(name: string, body: ReadableStream<Uint8Array>): Promise<Upload> {
     return stageUpload(this.services().vfs, name, body);
   }
 
-  async pause(agentId: string): Promise<void> {
-    await this.services().agents.setPaused(agentId, true);
-    await this.events.emit("agent.paused", {}, agentId);
+  async pause(): Promise<void> {
+    await this.services().self.setPaused(true);
+    await this.events.emit("agent.paused", {});
   }
 
-  async resume(agentId: string): Promise<void> {
-    await this.services().agents.setPaused(agentId, false);
-    await this.events.emit("agent.resumed", {}, agentId);
-    await this.services().mailbox.drain(agentId);
+  async resume(): Promise<void> {
+    await this.services().self.setPaused(false);
+    await this.events.emit("agent.resumed", {});
+    await this.services().mailbox.drain();
   }
 
   async close(): Promise<void> {
@@ -523,17 +557,21 @@ export class Neo {
     const { db } = this.host;
     const vfs = new Vfs(db, this.host.blobs, this.now);
     await vfs.repair();
-    // The agent's tools may not change attachments (history points at them).
-    const agentVfs = readOnly(vfs, [ATTACHMENTS_ROOT]);
+    // The agent sees the instance's /shared too; its tools may not change attachments
+    // (history points at them). The person's APIs use `vfs`, without /shared.
+    const withShared = mount(
+      vfs,
+      SHARED_ROOT,
+      remoteVfs(
+        (op, args) => this.link().shared(op, args),
+        (path) => this.link().sharedStream(path),
+      ),
+    );
+    const agentVfs = readOnly(withShared, [ATTACHMENTS_ROOT]);
     const shell = new VfsShell(agentVfs);
-    const secrets = new Secrets(db, this.host.masterKey, this.now);
-    await secrets.init();
-    const providers = new Providers(db, secrets, this.now);
-    if (this.host.test) providers.addHostProvider(this.host.test.provider);
-    await providers.rebuild();
-    const settings = new Settings(db);
-    const agents = new Agents(db, this.now);
-    await agents.ensure();
+    await this.config().catch(() => {});
+    if (!this.config_) await this.catalog.rebuild([]);
+    const self = new AgentSelf(db);
     const memories = new Memories(db, this.now);
     const schedules = new Schedules(db, this.now);
     const history = new History(db);
@@ -551,13 +589,13 @@ export class Neo {
     const harness = await Harness.open(
       storage,
       {
-        models: () => providers.models(),
+        models: () => this.catalog.models(),
         registry,
         env: ({ cwd }) =>
           new VfsExecutionEnv(
             agentVfs,
             cwd ?? "/",
-            `neo-vfs:${this.instanceId_}`,
+            `neo-vfs:${this.agentId_}`,
             shell,
           ),
         identity: { attribution: { name: "neo", url: "https://github.com/" } },
@@ -585,15 +623,14 @@ export class Neo {
       harness,
       this.events,
       {
-        conversation: (agentId) => this.conversation(agentId),
+        conversation: () => this.conversation(),
         beforeWork: () => this.arm({ active: true }),
         turnSettled: (turn, messages) => this.turnSettled(turn, messages),
-        paused: async (agentId) => (await agents.get(agentId)).paused,
-        timezone: () => settings.get("timezone"),
-        checkImages: async (agentId, attachments) => {
-          const agent = await agents.get(agentId);
-          const model = agent.model ?? (await this.defaultModel());
-          const vision = model ? providers.vision(model) : true;
+        paused: async () => (await self.get()).paused,
+        timezone: () => this.timezone(),
+        checkImages: async (attachments) => {
+          const model = (await this.config()).model;
+          const vision = model ? this.catalog.vision(model) : true;
           const inline = new Set<string>();
           const notes = new Map<string, string>();
           for (const a of attachments) {
@@ -614,16 +651,26 @@ export class Neo {
       },
       this.now,
     );
+    const me = async () => ({
+      id: this.agentId,
+      name: (await self.get()).profile.name,
+      instance: this.instance_!,
+    });
+    const messaging = new Messaging(
+      db,
+      mailbox,
+      me,
+      (instance) => this.host.peers(instance),
+      this.now,
+    );
     this.live = {
       harness,
       vfs,
-      secrets,
-      providers,
-      settings,
-      agents,
+      self,
       memories,
       history,
       mailbox,
+      messaging,
       schedules,
       watches: [],
     };
@@ -633,11 +680,10 @@ export class Neo {
       history,
       mailbox,
       schedules,
-      changed: (agentId) => this.schedulesChanged(agentId),
-      settings,
-      agentOf: (id) => this.agentOf(id),
-      conversation: (agentId) => this.conversation(agentId),
-      vfs,
+      changed: () => this.schedulesChanged(),
+      timezone: () => this.timezone(),
+      conversation: () => this.conversation(),
+      vfs: withShared,
       now: this.now,
     };
     registry.install(
@@ -646,7 +692,7 @@ export class Neo {
         tools: [
           createReadTool(),
           createWriteTool(),
-          sizedEdit(createEditTool(), vfs),
+          sizedEdit(createEditTool(), withShared),
           createBashTool(),
         ],
       }),
@@ -655,38 +701,49 @@ export class Neo {
       defineExtension({
         name: "neo",
         sections: promptSections({
-          agents,
+          self,
           memories,
-          settings,
-          agentOf: (id) => this.agentOf(id),
+          timezone: () => this.timezone(),
         }),
         tools: [
           ...memoryTools(tools),
           ...historyTools(tools),
           ...scheduleTools(tools),
           ...fileTools(tools),
+          ...teamTools({
+            me,
+            agents: () => this.link().agents(),
+            create: async (input, key) =>
+              this.link().createAgent(this.agentId, input, key),
+            updateSelf: (change) =>
+              this.link().updateProfile(this.agentId, change),
+            messaging: () => messaging,
+            interrupt: (agentId) =>
+              this.host
+                .peers(this.instance_!)
+                .get(agentId)
+                .interrupt(this.instance_!, agentId, this.agentId),
+          }),
         ],
       }),
     );
     if (this.host.test) registry.install(this.host.test.extension);
 
-    for (const agent of await agents.list()) {
-      await this.watch(agent.id);
-      await mailbox.recover(agent.id);
-      await schedules.ensureSystem(
-        agent.id,
-        "heartbeat",
-        HEARTBEAT,
-        await settings.get("timezone"),
-      );
-    }
+    await this.watch();
+    await mailbox.recover();
+    await schedules.ensureSystem(
+      "heartbeat",
+      HEARTBEAT,
+      await this.timezone().catch(() => "UTC"),
+    );
     harness.resume();
     await this.arm();
+    this.report();
   }
 
-  private async watch(agentId: string): Promise<void> {
+  private async watch(): Promise<void> {
     const live = this.services();
-    const conversation = await this.conversation(agentId);
+    const conversation = await this.conversation();
     const stream = await watchEvents(
       live.harness,
       conversation.id,
@@ -700,7 +757,7 @@ export class Neo {
           event.type === "usage_changed"
         )
           continue;
-        this.events.live("pi", event, agentId);
+        this.events.live("pi", event);
       }
     });
     live.watches.push(stream);
@@ -708,22 +765,17 @@ export class Neo {
 
   private async turnSettled(
     turn: Turn,
-    _messages: MailboxMessage[],
+    messages: MailboxMessage[],
   ): Promise<void> {
     const live = this.services();
+    await live.messaging.turnSettled(turn, messages).catch(() => {});
     const applied = await live.memories.finish(
       turn.id,
       turn.status === "completed",
     );
-    await live.history
-      .sync(turn.agentId, await this.conversation(turn.agentId))
-      .catch(() => {});
+    await live.history.sync(await this.conversation()).catch(() => {});
     if (applied > 0)
-      await this.events.emit(
-        "memory.changed",
-        { turnId: turn.id, applied },
-        turn.agentId,
-      );
+      await this.events.emit("memory.changed", { turnId: turn.id, applied });
     await this.arm();
   }
 
@@ -732,6 +784,8 @@ export class Neo {
     if (!live) return;
     this.armed = null;
     this.live = undefined;
+    this.conversation_ = undefined;
+    this.configured = undefined;
     live.mailbox.close();
     for (const watch of live.watches) await watch.stop().catch(() => {});
     await live.harness.close(this.context).catch(() => {});
@@ -763,13 +817,4 @@ function sizedEdit<T extends { execute: (...args: any[]) => any }>(
   };
 }
 
-export class StateError extends Error {
-  constructor(
-    readonly state: InstanceState,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-export class SetupError extends Error {}
+export { SetupError, StateError } from "./errors";

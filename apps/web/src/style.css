@@ -344,6 +344,30 @@ button.link {
 #composer button.primary {
   margin-top: 0;
 }
+#agents {
+  width: 180px;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+}
+#agents h2 {
+  font-size: 13px;
+  margin: 4px 2px 6px;
+  color: var(--dim);
+}
+#agents button {
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#agents button.on {
+  border-color: var(--accent);
+}
 #side {
   width: 360px;
   border-left: 1px solid var(--line);
@@ -388,6 +412,9 @@ button.link {
   width: 100%;
 }
 @media (max-width: 900px) {
+  #agents {
+    width: 120px;
+  }
   #side {
     position: fixed;
     right: 0;
