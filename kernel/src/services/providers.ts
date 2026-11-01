@@ -93,48 +93,31 @@ export async function detectLocalProviders(
 
 export const providerSecretName = (id: string) => `provider:${id}`;
 
-export class Providers {
-  private current: Models;
-  private readonly extra: Provider[] = [];
+/** A provider with its key, as the coordinator hands it to an agent (never stored there). */
+export interface ResolvedProvider {
+  id: string;
+  kind: ProviderKind;
+  baseUrl: string | null;
+  models: CustomModel[];
+  env: Record<string, string>;
+  apiKey?: string;
+}
 
+/** The providers and keys the person set up; lives in the coordinator. */
+export class ProviderStore {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly secrets: Secrets,
     private readonly now: () => number = Date.now,
-  ) {
-    this.current = createModels();
-  }
+  ) {}
 
-  models = (): Models => this.current;
-
-  addHostProvider(provider: Provider): void {
-    this.extra.push(provider);
-  }
-
-  async rebuild(): Promise<void> {
-    const credentials = new InMemoryCredentialStore();
-    const models: MutableModels = createModels({
-      credentials,
-      authContext: {
-        env: async () => undefined,
-        fileExists: async () => false,
-      },
-    });
-    for (const provider of this.extra) models.setProvider(provider);
+  async resolved(): Promise<ResolvedProvider[]> {
+    const out: ResolvedProvider[] = [];
     for (const row of await this.rows()) {
       const key = await this.secrets.get(providerSecretName(row.id));
-      const env = JSON.parse(row.env) as Record<string, string>;
-      models.setProvider(this.build(row));
-      if (key || Object.keys(env).length > 0) {
-        const credential: Credential = {
-          type: "api_key",
-          ...(key ? { key } : {}),
-          ...(Object.keys(env).length > 0 ? { env } : {}),
-        };
-        await credentials.modify(row.id, async () => credential);
-      }
+      out.push({ ...toConfig(row), ...(key ? { apiKey: key } : {}) });
     }
-    this.current = models;
+    return out;
   }
 
   async list(): Promise<
@@ -182,13 +165,51 @@ export class Providers {
     );
     if (config.apiKey !== undefined)
       await this.secrets.set(providerSecretName(config.id), config.apiKey);
-    await this.rebuild();
   }
 
   async remove(id: string): Promise<void> {
     await this.db.run(`DELETE FROM neo_providers WHERE id = ?`, id);
     await this.secrets.delete(providerSecretName(id));
-    await this.rebuild();
+  }
+
+  private async rows(): Promise<ProviderRow[]> {
+    return this.db.all<ProviderRow>(`SELECT * FROM neo_providers ORDER BY id`);
+  }
+}
+
+/** Pi's model registry, built from resolved providers (in memory only). */
+export class ModelCatalog {
+  private current: Models = createModels();
+  private readonly extra: Provider[] = [];
+
+  models = (): Models => this.current;
+
+  addHostProvider(provider: Provider): void {
+    this.extra.push(provider);
+  }
+
+  async rebuild(providers: ResolvedProvider[]): Promise<void> {
+    const credentials = new InMemoryCredentialStore();
+    const models: MutableModels = createModels({
+      credentials,
+      authContext: {
+        env: async () => undefined,
+        fileExists: async () => false,
+      },
+    });
+    for (const provider of this.extra) models.setProvider(provider);
+    for (const p of providers) {
+      models.setProvider(build(p));
+      if (p.apiKey || Object.keys(p.env).length > 0) {
+        const credential: Credential = {
+          type: "api_key",
+          ...(p.apiKey ? { key: p.apiKey } : {}),
+          ...(Object.keys(p.env).length > 0 ? { env: p.env } : {}),
+        };
+        await credentials.modify(p.id, async () => credential);
+      }
+    }
+    this.current = models;
   }
 
   async available(): Promise<{ provider: string; id: string; name: string }[]> {
@@ -207,79 +228,38 @@ export class Providers {
       ) ?? true
     );
   }
-
-  async complete(
-    model: ModelRef,
-    prompt: string,
-    system?: string,
-  ): Promise<string> {
-    const found = this.current.getModel(model.provider, model.modelId);
-    if (!found)
-      throw new Error(`Unknown model ${model.provider}/${model.modelId}`);
-    const answer = await this.current.completeSimple(found, {
-      ...(system ? { systemPrompt: system } : {}),
-      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-    });
-    if (answer.stopReason === "error")
-      throw new Error(answer.errorMessage ?? "The model failed");
-    return answer.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c as { text: string }).text)
-      .join("");
-  }
-
-  async defaultModel(): Promise<ModelRef | undefined> {
-    const row = await this.db.get<{ value: string }>(
-      `SELECT value FROM neo_meta WHERE key = 'default_model'`,
-    );
-    return row ? (JSON.parse(row.value) as ModelRef) : undefined;
-  }
-
-  async setDefaultModel(model: ModelRef | null): Promise<void> {
-    if (model === null)
-      await this.db.run(`DELETE FROM neo_meta WHERE key = 'default_model'`);
-    else
-      await this.db.run(
-        `INSERT INTO neo_meta (key, value) VALUES ('default_model', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        JSON.stringify(model),
-      );
-  }
-
-  private async rows(): Promise<ProviderRow[]> {
-    return this.db.all<ProviderRow>(`SELECT * FROM neo_providers ORDER BY id`);
-  }
-
-  private build(row: ProviderRow): Provider {
-    if (row.kind !== "openai-compatible") {
-      const factory = BUILTIN[row.kind];
-      if (!factory) throw new Error(`Unknown provider kind ${row.kind}`);
-      return factory();
-    }
-    const baseUrl = row.base_url!;
-    const models = (JSON.parse(row.models) as CustomModel[]).map((m) => ({
-      id: m.id,
-      name: m.name ?? m.id,
-      api: "openai-completions" as const,
-      provider: row.id,
-      baseUrl,
-      reasoning: m.reasoning ?? false,
-      input: m.input ?? ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: m.contextWindow ?? 128_000,
-      maxTokens: m.maxTokens ?? 16_384,
-    }));
-    return createProvider({
-      id: row.id,
-      name: row.id,
-      baseUrl,
-      auth: { apiKey: envApiKeyAuth(`${row.id} API key`, []) },
-      models,
-      api: openAICompletionsApi(),
-    });
-  }
 }
 
-function toConfig(row: ProviderRow): Omit<ProviderConfig, "apiKey"> {
+function build(p: ResolvedProvider): Provider {
+  if (p.kind !== "openai-compatible") {
+    const factory = BUILTIN[p.kind];
+    if (!factory) throw new Error(`Unknown provider kind ${p.kind}`);
+    return factory();
+  }
+  const baseUrl = p.baseUrl!;
+  const models = p.models.map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    api: "openai-completions" as const,
+    provider: p.id,
+    baseUrl,
+    reasoning: m.reasoning ?? false,
+    input: m.input ?? ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: m.contextWindow ?? 128_000,
+    maxTokens: m.maxTokens ?? 16_384,
+  }));
+  return createProvider({
+    id: p.id,
+    name: p.id,
+    baseUrl,
+    auth: { apiKey: envApiKeyAuth(`${p.id} API key`, []) },
+    models,
+    api: openAICompletionsApi(),
+  });
+}
+
+function toConfig(row: ProviderRow): Omit<ResolvedProvider, "apiKey"> {
   return {
     id: row.id,
     kind: row.kind,

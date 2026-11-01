@@ -11,10 +11,15 @@
     "not_found_handling": "single-page-application",
   },
   "durable_objects": {
-    "bindings": [{ "name": "INSTANCE", "class_name": "InstanceDO" }],
+    "bindings": [
+      { "name": "INSTANCE", "class_name": "InstanceDO" },
+      { "name": "AGENT", "class_name": "AgentDO" },
+    ],
   },
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "neo-blobs" }],
   "vars": { "NEO_TEST": "0" },
   "secrets": { "required": ["NEO_MASTER_KEY", "NEO_TOKEN"] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["InstanceDO", "AgentDO"] },
+  ],
 }

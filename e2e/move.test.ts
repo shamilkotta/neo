@@ -5,7 +5,6 @@ import {
   idle,
   type Instance,
   instance,
-  onCloudflare,
   transcript,
   until,
 } from "./harness";
@@ -15,27 +14,28 @@ afterEach(async () => {
   for (const neo of opened.splice(0)) await neo.close();
 });
 
-async function open(on?: "bun" | "cloudflare"): Promise<Instance> {
-  const neo = await instance(on);
+async function open(): Promise<Instance> {
+  const neo = await instance();
   opened.push(neo);
   return neo;
 }
 
-const client = (neo: Instance) => new NeoClient({ url: neo.url(), token: "t" });
+const client = (neo: Instance) => neo.client();
 const script = (neo: Instance, steps: unknown[]) =>
-  neo.call("POST", "/v1/test/script", { steps });
+  neo.call("POST", "/test/script", { steps });
 const send = (neo: Instance, text: string) =>
-  neo.call("POST", "/v1/messages", { text });
+  neo.call("POST", "/messages", { text });
 const enqueue = (neo: Instance, text: string) =>
-  neo.call("POST", "/v1/test/messages", { text });
+  neo.call("POST", "/test/messages", { text });
 
 /** Uploads a file; returns its path in the files API. */
 async function putFile(
   neo: Instance,
   name: string,
   bytes: Uint8Array<ArrayBuffer>,
+  agent = "neo",
 ): Promise<string> {
-  const response = await fetch(`${neo.url()}/v1/uploads?name=${name}`, {
+  const response = await neo.fetch(`${neo.agentUrl(agent)}/uploads?name=${name}`, {
     method: "POST",
     headers: { authorization: "Bearer t" },
     body: bytes,
@@ -45,8 +45,12 @@ async function putFile(
   return `/.staging/${upload.id}/${upload.name}`;
 }
 
-async function getFile(neo: Instance, path: string): Promise<Uint8Array> {
-  const response = await fetch(`${neo.url()}/v1/files?path=${path}`, {
+async function getFile(
+  neo: Instance,
+  path: string,
+  agent = "neo",
+): Promise<Uint8Array> {
+  const response = await neo.fetch(`${neo.agentUrl(agent)}/files?path=${path}`, {
     headers: { authorization: "Bearer t" },
   });
   expect(response.ok).toBe(true);
@@ -83,31 +87,39 @@ async function move(from: Instance, to: Instance, passphrase?: string) {
 }
 
 describe("move", () => {
-  test(`an instance moves ${onCloudflare ? "bun → cloudflare → bun" : "bun → bun"} with a turn running`, async () => {
-    const first = await open("bun");
+  test("an instance moves with all its agents and a turn running, and comes home", async () => {
+    const first = await open();
     const small = new TextEncoder().encode("remember the milk\n");
     const big = randomBytes(3 * 1024 * 1024 + 7);
     const todo = await putFile(first, "todo.txt", small);
     const data = await putFile(first, "data.bin", big);
-    await first.call("PUT", "/v1/providers/anthropic", {
+    const helper = (await client(first).createAgent({ name: "Helper" })).id;
+    const notes = await putFile(
+      first,
+      "notes.txt",
+      new TextEncoder().encode("helper's"),
+      helper,
+    );
+    await first.root("PUT", "/providers/anthropic", {
       kind: "anthropic",
       apiKey: "sk-test",
     });
     await startLongTurn(first, "g1");
-    const { instanceId, epoch } = await first.call("GET", "/v1/status");
+    const { instanceId, epoch } = await first.root("GET", "/status");
     expect(epoch).toBe(1);
 
-    const second = await open(onCloudflare ? "cloudflare" : "bun");
+    const second = await open();
     const moved = await move(first, second, "correct horse");
     expect(moved).toEqual({ instanceId, epoch: 2, secrets: "kept" });
-    expect((await first.call("GET", "/v1/status")).state).toBe("moved");
+    expect((await first.root("GET", "/status")).state).toBe("moved");
+    expect((await first.call("GET", "/status")).state).toBe("moved");
     await expect(send(first, "still there?")).rejects.toThrow();
 
     await script(second, [
       { text: "resumed after move" },
       { text: "then the queue" },
     ]);
-    await second.call("POST", "/v1/test/release", { gate: "g1" });
+    await second.call("POST", "/test/release", { gate: "g1" });
     await idle(second);
     expect(await answers(second)).toEqual([
       "resumed after move",
@@ -117,7 +129,12 @@ describe("move", () => {
       "remember the milk\n",
     );
     expect(Bun.hash(await getFile(second, data))).toBe(Bun.hash(big));
-    const { providers } = await second.call("GET", "/v1/providers");
+    expect(
+      new TextDecoder().decode(await getFile(second, notes, helper)),
+    ).toBe("helper's");
+    const agents = (await client(second).agents()).map((a) => a.id);
+    expect(agents).toEqual(["neo", helper]);
+    const { providers } = await second.root("GET", "/providers");
     expect(providers.map((p: any) => [p.id, p.hasKey])).toEqual([
       ["anthropic", true],
     ]);
@@ -127,31 +144,21 @@ describe("move", () => {
     const other = await new Response(await client(stranger).exportBundle()).arrayBuffer();
     expect((await client(first).importBundle(other).catch((e) => e)).status).toBe(409);
 
-    if (!onCloudflare) {
-      await startLongTurn(second, "g3");
-      expect((await move(second, first)).epoch).toBe(3);
-      await script(first, [{ text: "home" }, { text: "queue" }]);
-      await first.call("POST", "/v1/test/release", { gate: "g3" });
-      await idle(first);
-      expect((await answers(first)).slice(-2)).toEqual(["home", "queue"]);
-      return;
-    }
     await startLongTurn(second, "g2");
-    const third = await open("bun");
-    expect(await move(second, third)).toEqual({
+    expect(await move(second, first)).toEqual({
       instanceId,
       epoch: 3,
       secrets: "dropped",
     });
-    await script(third, [{ text: "home again" }, { text: "queue again" }]);
-    await third.call("POST", "/v1/test/release", { gate: "g2" });
-    await idle(third);
-    expect((await answers(third)).slice(-2)).toEqual([
+    await script(first, [{ text: "home again" }, { text: "queue again" }]);
+    await first.call("POST", "/test/release", { gate: "g2" });
+    await idle(first);
+    expect((await answers(first)).slice(-2)).toEqual([
       "home again",
       "queue again",
     ]);
-    expect(Bun.hash(await getFile(third, data))).toBe(Bun.hash(big));
-    const after = await third.call("GET", "/v1/providers");
+    expect(Bun.hash(await getFile(first, data))).toBe(Bun.hash(big));
+    const after = await first.root("GET", "/providers");
     expect(after.providers[0].hasKey).toBe(false);
   });
 
@@ -159,11 +166,12 @@ describe("move", () => {
     const neo = await open();
     await startLongTurn(neo, "g");
     await client(neo).seal();
-    expect((await neo.call("GET", "/v1/status")).state).toBe("sealed");
+    expect((await neo.root("GET", "/status")).state).toBe("sealed");
+    expect((await neo.call("GET", "/status")).state).toBe("sealed");
     await expect(send(neo, "hello")).rejects.toThrow();
     await client(neo).unseal();
     await script(neo, [{ text: "back" }, { text: "queue" }]);
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
+    await neo.call("POST", "/test/release", { gate: "g" });
     await idle(neo);
     expect(await answers(neo)).toEqual(["back", "queue"]);
   });
@@ -176,13 +184,13 @@ describe("move", () => {
       await client(source).exportBundle("right"),
     ).arrayBuffer();
     const target = await open();
-    const before = (await target.call("GET", "/v1/status")).instanceId;
+    const before = (await target.root("GET", "/status")).instanceId;
     const error = await client(target)
       .importBundle(bundle, "wrong")
       .catch((e) => e);
     expect(error).toBeInstanceOf(NeoApiError);
     expect(error.status).toBe(400);
-    expect((await target.call("GET", "/v1/status")).instanceId).toBe(before);
+    expect((await target.root("GET", "/status")).instanceId).toBe(before);
     const missing = await client(target)
       .importBundle(bundle)
       .catch((e) => e);
@@ -214,7 +222,7 @@ describe("move", () => {
       .importBundle(cut)
       .catch((e) => e);
     expect(damaged).toBeInstanceOf(NeoApiError);
-    expect((await target.call("GET", "/v1/status")).state).toBe("active");
+    expect((await target.root("GET", "/status")).state).toBe("active");
     expect((await client(target).importBundle(bundle)).epoch).toBe(2);
   });
 });

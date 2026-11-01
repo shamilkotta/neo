@@ -4,23 +4,22 @@ import {
   serializeEssential,
   type Memories,
 } from "../services/memory";
-import type { Settings } from "../services/settings";
-import type { Agents } from "./agents";
+import type { AgentSelf } from "./agents";
 
 export function promptSections(deps: {
-  agents: Agents;
+  self: AgentSelf;
   memories: Memories;
-  settings: Settings;
-  agentOf(conversationId: number): Promise<string>;
+  timezone(): Promise<string>;
 }) {
   return [
     section(
       "identity",
-      async (input) => {
-        const agent = await deps.agents.get(
-          await deps.agentOf(input.conversationId),
-        );
-        return `You are ${agent.name}, a persistent personal agent. You run continuously on the person's own infrastructure (a laptop, a server or the cloud) and can be moved between them; your memory, files and conversation move with you.
+      async () => {
+        const { profile } = await deps.self.get();
+        const role = [profile.title, profile.description]
+          .filter(Boolean)
+          .join(". ");
+        return `You are ${profile.name}, a persistent personal agent.${role ? ` Your role: ${role}` : ""} You run continuously on the person's own infrastructure (a laptop, a server or the cloud) and can be moved between them; your memory, files and conversation move with you.
 
 How you work:
 - Every message you get starts with a header saying who or what it is from and when it was sent, in the person's timezone. Several messages can arrive together in one turn; read all of them before you answer.
@@ -46,14 +45,28 @@ How you work:
 - If someone asks for something you cannot do, say so plainly and briefly, without explaining the internal reason, and offer what you can do instead. Do not pretend to have done it.`,
       { tag: false },
     ),
+    section(
+      "team",
+      async () => `Your teammates are other persistent agents working for the same person, each with its own chat, memory and files. list_agents and read_agent show who they are.
+- Ask a teammate with send_message. Its answer comes back to you later as a message on its own (answers from several arrive together); end your turn instead of waiting, and never ask twice for the same thing.
+- When a teammate asks you for something, do it and answer with send_message as its message says. Don't answer a reply or a heads-up.
+- Files can't be attached to a teammate's message. To share a file, put it in /shared (every teammate can read and write there; the person does not see it) and give its path.
+- create_agent makes a new teammate, but only when the person asks for one. Only the person can delete an agent.`,
+      { tag: false },
+    ),
     section("person", async () => {
-      const timezone = await deps.settings.get("timezone");
+      const timezone = await deps.timezone();
       return `The person's timezone is ${timezone}. Give times in it unless they ask otherwise.`;
     }),
-    section("memories", async (input) => {
-      const agentId = await deps.agentOf(input.conversationId);
-      const essential = await deps.memories.list(agentId, "essential");
-      const total = await deps.memories.count(agentId);
+    section("standing", async () => {
+      const { profile } = await deps.self.get();
+      return profile.instructions
+        ? `The person's standing instructions for you:\n${profile.instructions}`
+        : undefined;
+    }),
+    section("memories", async () => {
+      const essential = await deps.memories.list("essential");
+      const total = await deps.memories.count();
       return `Your essential memories are below; they are in every prompt. You have ${total} memories in all; search_memories finds the searchable ones. ${MEMORY_LIMIT} is a hard cap, not a goal: keep only what is worth keeping. Changes you make with remember, forget_memory and set_memory_inclusion take effect when this turn completes. A fact in your essential memories or in this conversation is already known; answer from it without searching. Search before asking the person to repeat something. An empty result means the fact was not found; never invent it. To save a new memory, call remember without memoryId; pass memoryId only to update a memory you have read, and update by memoryId when the person corrects a fact.
 ${serializeEssential(essential)}`;
     }),

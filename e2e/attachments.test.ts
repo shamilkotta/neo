@@ -1,21 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { NeoApiError, NeoClient } from "@neo/client";
+import { type AgentClient, NeoApiError, NeoClient } from "@neo/client";
 import { idle, type Instance, instance, running, transcript } from "./harness";
 
 let neo: Instance;
-let client: NeoClient;
+let client: AgentClient;
 beforeEach(async () => {
   neo = await instance();
-  client = new NeoClient({ url: neo.url(), token: "t" });
+  client = neo.client().agent("neo");
 });
 afterEach(async () => {
   await neo.close();
 });
 
 const script = (steps: unknown[]) =>
-  neo.call("POST", "/v1/test/script", { steps });
+  neo.call("POST", "/test/script", { steps });
 const seen = async () =>
-  (await neo.call("GET", "/v1/test/seen")).seen as string[];
+  (await neo.call("GET", "/test/seen")).seen as string[];
 
 function png(
   width: number,
@@ -119,13 +119,13 @@ describe("attachments from the person", () => {
     await client.send("start");
     await running(neo);
     const file = await client.upload(new Blob(["later"]), "later.txt");
-    const queued = await neo.call("POST", "/v1/test/messages", {
+    const queued = await neo.call("POST", "/test/messages", {
       text: "then this",
       attachments: [file],
     });
     expect(queued.message.status).toBe("queued");
     expect(queued.message.attachments[0].name).toBe("later.txt");
-    await neo.call("POST", "/v1/test/release", { gate: "g" });
+    await neo.call("POST", "/test/release", { gate: "g" });
     await idle(neo);
     expect((await seen()).at(-1)).toContain("/later.txt (text/plain");
   });
@@ -155,7 +155,7 @@ describe("who reaches what", () => {
     expect((await client.file("/")).kind).toBe("directory");
     const escaped = await client.file(`/../../.staging/${mine.id}/a.txt`);
     expect(escaped).toMatchObject({ kind: "file", text: "mine" });
-    const put = await fetch(`${neo.url()}/v1/files?path=/b.txt`, {
+    const put = await neo.fetch(`${neo.agentUrl()}/files?path=/b.txt`, {
       method: "PUT",
       headers: { authorization: "Bearer t" },
       body: "x",

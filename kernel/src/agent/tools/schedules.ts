@@ -87,7 +87,7 @@ const fields = {
 
 export function scheduleTools(services: ToolServices) {
   const view = async (s: Schedule) => {
-    const timezone = s.timezone ?? (await services.settings.get("timezone"));
+    const timezone = s.timezone ?? (await services.timezone());
     return {
       scheduleId: s.id,
       name: s.name,
@@ -121,17 +121,16 @@ export function scheduleTools(services: ToolServices) {
       replay: "safe",
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
-        const timezone = await services.settings.get("timezone");
+        const timezone = await services.timezone();
         const schedule = await attempt(() =>
           services.schedules.create(
-            c.agentId,
             args as ScheduleInput,
             "agent",
             timezone,
             { originKey: `tool:${api.taskId}` },
           ),
         );
-        await services.changed(c.agentId);
+        await services.changed();
         return json({ created: await view(schedule) });
       },
     }),
@@ -150,7 +149,6 @@ export function scheduleTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const list = await services.schedules.list(
-          c.agentId,
           args.all ? "all" : "active",
         );
         return json({ schedules: await Promise.all(list.map(view)) });
@@ -168,17 +166,16 @@ export function scheduleTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const { scheduleId, ...change } = args;
-        const timezone = await services.settings.get("timezone");
+        const timezone = await services.timezone();
         const schedule = await attempt(() =>
           services.schedules.update(
-            c.agentId,
             scheduleId,
             change as ScheduleInput,
             timezone,
           ),
         );
         if (!schedule) refuse("No schedule has that id.");
-        await services.changed(c.agentId);
+        await services.changed();
         return json({ updated: await view(schedule!) });
       },
     }),
@@ -190,11 +187,11 @@ export function scheduleTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
         const removed = await attempt(() =>
-          services.schedules.remove(c.agentId, args.scheduleId),
+          services.schedules.remove(args.scheduleId),
         );
         if (!removed)
           return json({ deleted: args.scheduleId, note: "it was not there" });
-        await services.changed(c.agentId);
+        await services.changed();
         return json({ deleted: args.scheduleId });
       },
     }),

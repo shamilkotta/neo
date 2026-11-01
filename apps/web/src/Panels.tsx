@@ -1,5 +1,5 @@
 import type {
-  AgentRecord,
+  AgentClient,
   AvailableModel,
   ModelRef,
   NeoClient,
@@ -27,10 +27,13 @@ export const TABS = [
 export type Tab = (typeof TABS)[number];
 
 interface PanelProps {
-  client: NeoClient;
+  root: NeoClient;
+  client: AgentClient;
+  agentId: string;
   version: number;
   status?: Status;
   onForget: () => void;
+  onDeleted: () => void;
 }
 
 function useLoad<T>(
@@ -155,40 +158,27 @@ function SchedulesPanel({ client, version }: PanelProps) {
 const modelKey = (m: ModelRef | null | undefined) =>
   m ? `${m.provider}/${m.modelId}` : "";
 
-function AgentPanel({ client, version }: PanelProps) {
-  const [data, reload, error] = useLoad(
-    async () => ({
-      agent: await client.agent(),
-      models: await client.models(),
-    }),
-    [client, version],
+function AgentPanel({ root, agentId, version, onDeleted }: PanelProps) {
+  const [agent, reload, error] = useLoad(
+    () =>
+      root.agents().then((all) => all.find((a) => a.id === agentId) ?? null),
+    [root, agentId, version],
   );
   if (error) return <p className="err">{error}</p>;
-  if (!data) return null;
-  const { agent, models } = data as {
-    agent: AgentRecord;
-    models: { models: AvailableModel[]; default: ModelRef | null };
-  };
+  if (!agent) return null;
   return (
     <form
       key={agent.updatedAt}
       onSubmit={(e) => {
         e.preventDefault();
         const f = new FormData(e.currentTarget);
-        const model = String(f.get("model") ?? "");
-        const slash = model.indexOf("/");
         void attempt(
           () =>
-            client.updateAgent({
+            root.updateAgent(agentId, {
               name: String(f.get("name")),
-              model: model
-                ? {
-                    provider: model.slice(0, slash),
-                    modelId: model.slice(slash + 1),
-                  }
-                : null,
-              thinking: (String(f.get("thinking")) ||
-                null) as AgentRecord["thinking"],
+              title: String(f.get("title")),
+              description: String(f.get("description")),
+              instructions: String(f.get("instructions")),
             }),
           reload,
         );
@@ -196,30 +186,38 @@ function AgentPanel({ client, version }: PanelProps) {
     >
       <label>Name</label>
       <input name="name" defaultValue={agent.name} />
-      <label>Model</label>
-      <select name="model" defaultValue={modelKey(agent.model)}>
-        <option value="">Default ({modelKey(models.default) || "none"})</option>
-        {models.models.map((m) => (
-          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-            {m.provider}/{m.id}
-          </option>
-        ))}
-      </select>
-      <label>Thinking</label>
-      <select name="thinking" defaultValue={agent.thinking ?? ""}>
-        {["", "off", "minimal", "low", "medium", "high"].map((t) => (
-          <option key={t} value={t}>
-            {t || "default"}
-          </option>
-        ))}
-      </select>
-      <p className="muted">The heartbeat is in Schedules.</p>
+      <label>Title</label>
+      <input name="title" defaultValue={agent.title ?? ""} />
+      <label>Description</label>
+      <textarea name="description" defaultValue={agent.description ?? ""} />
+      <label>Instructions</label>
+      <textarea
+        name="instructions"
+        rows={6}
+        defaultValue={agent.instructions ?? ""}
+      />
+      <p className="muted">
+        The model is set for every agent in Settings. The heartbeat is in
+        Schedules.
+      </p>
       <button className="primary">Save</button>
+      {!agent.primary && (
+        <button
+          type="button"
+          className="small"
+          onClick={() =>
+            confirm(`Delete ${agent.name}? Its chat, memories and files go too.`) &&
+            attempt(() => root.deleteAgent(agentId), onDeleted)
+          }
+        >
+          Delete agent
+        </button>
+      )}
     </form>
   );
 }
 
-function ProvidersPanel({ client, version, status }: PanelProps) {
+function ProvidersPanel({ root: client, version, status }: PanelProps) {
   const [providers, reload, error] = useLoad(
     () => client.providers(),
     [client, version],
@@ -329,14 +327,20 @@ function ProvidersPanel({ client, version, status }: PanelProps) {
   );
 }
 
-function SettingsPanel({ client, version, status, onForget }: PanelProps) {
-  const [settings, reload, error] = useLoad(
-    () => client.settings(),
-    [client, version],
+function SettingsPanel({ root, version, status, onForget }: PanelProps) {
+  const [data, reload, error] = useLoad(
+    async () => ({
+      settings: await root.settings(),
+      models: await root.models(),
+    }),
+    [root, version],
   );
   if (error) return <p className="err">{error}</p>;
-  if (!settings) return null;
-  const s = settings as SettingsShape;
+  if (!data) return null;
+  const { settings: s, models } = data as {
+    settings: SettingsShape;
+    models: { models: AvailableModel[]; default: ModelRef | null };
+  };
   return (
     <>
       <form
@@ -344,15 +348,47 @@ function SettingsPanel({ client, version, status, onForget }: PanelProps) {
         onSubmit={(e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
+          const model = String(f.get("model") ?? "");
+          const slash = model.indexOf("/");
           void attempt(
             () =>
-              client.updateSettings({
+              root.updateSettings({
                 timezone: String(f.get("timezone")),
+                model: model
+                  ? {
+                      provider: model.slice(0, slash),
+                      modelId: model.slice(slash + 1),
+                    }
+                  : null,
+                thinking: (String(f.get("thinking")) ||
+                  null) as SettingsShape["thinking"],
               }),
             reload,
           );
         }}
       >
+        <label>Model (every agent)</label>
+        <select name="model" defaultValue={modelKey(s.model)}>
+          <option value="">
+            Default ({modelKey(models.default) || "none"})
+          </option>
+          {models.models.map((m) => (
+            <option
+              key={`${m.provider}/${m.id}`}
+              value={`${m.provider}/${m.id}`}
+            >
+              {m.provider}/{m.id}
+            </option>
+          ))}
+        </select>
+        <label>Thinking</label>
+        <select name="thinking" defaultValue={s.thinking ?? ""}>
+          {["", "off", "minimal", "low", "medium", "high"].map((t) => (
+            <option key={t} value={t}>
+              {t || "default"}
+            </option>
+          ))}
+        </select>
         <label>Your timezone</label>
         <input name="timezone" id="tz" defaultValue={s.timezone} />
         <button

@@ -10,7 +10,11 @@ export const SETTINGS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
 
 const DEFAULTS: SettingsShape = {
   timezone: "UTC",
+  model: null,
+  thinking: null,
 };
+
+export const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
 export class Settings {
   private cache: SettingsShape | undefined;
@@ -62,8 +66,20 @@ function validate(key: keyof SettingsShape, value: unknown): void {
         throw new Error(`Unknown timezone ${String(value)}`);
       }
       return;
-    default:
-      if (typeof value !== "object" || value === null)
-        throw new Error(`${key} is an object`);
+    case "model": {
+      if (value === null) return;
+      const model = value as { provider?: unknown; modelId?: unknown };
+      if (
+        typeof model !== "object" ||
+        typeof model.provider !== "string" ||
+        typeof model.modelId !== "string"
+      )
+        throw new Error("model is { provider, modelId } or null");
+      return;
+    }
+    case "thinking":
+      if (value !== null && !THINKING.includes(String(value)))
+        throw new Error(`thinking is one of ${THINKING.join(", ")}`);
+      return;
   }
 }

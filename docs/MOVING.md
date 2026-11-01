@@ -1,5 +1,7 @@
 # Moving an instance
 
+> On branch `v2` the Bun host and its `neo` CLI are out of scope; moves go Cloudflare → Cloudflare through the API below (`NeoClient`). The CLI examples come back with the Bun host.
+
 An instance (chats, memories, files, schedules, providers, and a turn that is running) can move
 between hosts: Bun ↔ Bun, Bun ↔ Cloudflare, Cloudflare ↔ Cloudflare. It keeps its id. Each move
 raises its `epoch` by one.
@@ -19,10 +21,10 @@ $neo --help
 - **Passphrase**: any text you choose for one move. It encrypts the secrets (provider keys) inside
   the bundle. Use the same one to import. It isn't stored, and isn't needed after the import.
   Without one, the move works but the secrets are dropped (add the keys again).
-- **Bundle**: a `.neo` file (gzipped). It holds the whole instance.
+- **Bundle**: a `.neo` file (gzipped). It holds the whole instance: the coordinator and every agent (one part each, with its files), and `/shared`.
 - **Target**: where the instance goes. It must be either:
   - a **new** instance (no chats, providers, memories or files): a fresh `neo serve --dir <new dir>`,
-    or a new `/i/<name>` on Cloudflare; or
+    or a newly deployed Worker on Cloudflare (one instance per Worker); or
   - the host it **moved away from** (state `moved`): the instance comes back to the same URL.
 
   Any other target refuses the import (409) and stays as it was.
@@ -102,7 +104,7 @@ Cloudflare → this machine:
 ```bash
 bun run neo serve --dir ~/.neo-cf --port 7420        # terminal 1: a new local instance
 $neo move \
-  --from https://<worker>/i/main --from-token <cf token> \
+  --from https://<worker>/i --from-token <cf token> \
   --to http://127.0.0.1:7420 --to-token "$(cat ~/.neo-cf/token)" \
   --passphrase <any text>
 ```
@@ -112,9 +114,9 @@ Back to Cloudflare (same URL): swap `--from` and `--to`, and their tokens.
 Step by step, keeping a bundle file:
 
 ```bash
-$neo export   --url https://<worker>/i/main --token <cf token> --out ~/main.neo --passphrase P
+$neo export   --url https://<worker>/i --token <cf token> --out ~/main.neo --passphrase P
 $neo import   --url http://127.0.0.1:7420 --token <local token> --passphrase P ~/main.neo
-$neo complete --url https://<worker>/i/main --token <cf token>
+$neo complete --url https://<worker>/i --token <cf token>
 ```
 
 ## API
@@ -123,8 +125,8 @@ The same steps over HTTP (`Authorization: Bearer <token>`); `NeoClient` has a me
 
 | Route                    | Body                                                  | Client                     |
 | ------------------------ | ----------------------------------------------------- | -------------------------- |
-| `POST /v1/move/seal`     | `{}`                                                  | `seal()`                   |
-| `POST /v1/move/export`   | `{ "passphrase"?: "P" }` → the bundle stream          | `exportBundle(P?)`         |
-| `POST /v1/move/import`   | the bundle; header `x-neo-passphrase: P` (optional)   | `importBundle(bundle, P?)` |
-| `POST /v1/move/complete` | `{}`                                                  | `complete()`               |
-| `POST /v1/move/unseal`   | `{}`                                                  | `unseal()`                 |
+| `POST /i/move/seal`     | `{}`                                                  | `seal()`                   |
+| `POST /i/move/export`   | `{ "passphrase"?: "P" }` → the bundle stream          | `exportBundle(P?)`         |
+| `POST /i/move/import`   | the bundle; header `x-neo-passphrase: P` (optional)   | `importBundle(bundle, P?)` |
+| `POST /i/move/complete` | `{}`                                                  | `complete()`               |
+| `POST /i/move/unseal`   | `{}`                                                  | `unseal()`                 |

@@ -6,12 +6,11 @@ import type { SqliteDatabase, SqliteExecutor } from "../sql";
 export const HISTORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   await tx.exec(`CREATE TABLE neo_history (
     id INTEGER PRIMARY KEY,
-    agent_id TEXT NOT NULL,
     entry_id INTEGER NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     text TEXT NOT NULL,
     steps TEXT NOT NULL DEFAULT '[]',
-    UNIQUE (agent_id, entry_id)
+    UNIQUE (entry_id)
   ) STRICT`);
   await tx.exec(
     `CREATE VIRTUAL TABLE neo_history_fts USING fts5(text, content='neo_history', content_rowid='id', tokenize='unicode61')`,
@@ -89,27 +88,22 @@ export function lineOf(entry: EntryRecord): HistoryLine | undefined {
 }
 
 export class History {
-  private readonly syncing = new Map<string, Promise<void>>();
+  private syncing: Promise<void> | undefined;
 
   constructor(private readonly db: SqliteDatabase) {}
 
-  sync(agentId: string, conversation: Conversation): Promise<void> {
-    const running = this.syncing.get(agentId);
-    if (running) return running;
-    const run = this.catchUp(agentId, conversation).finally(() =>
-      this.syncing.delete(agentId),
-    );
-    this.syncing.set(agentId, run);
-    return run;
+  sync(conversation: Conversation): Promise<void> {
+    this.syncing ??= this.catchUp(conversation).finally(() => {
+      this.syncing = undefined;
+    });
+    return this.syncing;
   }
 
   private async catchUp(
-    agentId: string,
     conversation: Conversation,
   ): Promise<void> {
     const last = await this.db.get<{ id: number | null }>(
-      `SELECT max(entry_id) AS id FROM neo_history WHERE agent_id = ?`,
-      agentId,
+      `SELECT max(entry_id) AS id FROM neo_history`,
     );
     let cursor: Parameters<Conversation["entries"]>[2];
     for (;;) {
@@ -129,8 +123,7 @@ export class History {
         await this.db.transaction(async (tx) => {
           for (const line of lines)
             await tx.run(
-              `INSERT INTO neo_history (agent_id, entry_id, role, text, steps) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-              agentId,
+              `INSERT INTO neo_history (entry_id, role, text, steps) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
               line.messageId,
               line.role,
               line.text,
@@ -143,7 +136,6 @@ export class History {
   }
 
   async search(
-    agentId: string,
     query: string,
     options: { before?: number; limit?: number } = {},
   ): Promise<
@@ -167,10 +159,9 @@ export class History {
       `SELECT h.entry_id, h.role, length(h.text) AS length,
               snippet(neo_history_fts, 0, '', '', '…', 48) AS excerpt
        FROM neo_history_fts JOIN neo_history h ON h.id = neo_history_fts.rowid
-       WHERE neo_history_fts MATCH ? AND h.agent_id = ? AND h.entry_id < ?
+       WHERE neo_history_fts MATCH ? AND h.entry_id < ?
        ORDER BY h.entry_id DESC LIMIT ?`,
       terms.join(" AND "),
-      agentId,
       options.before ?? Number.MAX_SAFE_INTEGER,
       Math.min(Math.max(options.limit ?? 8, 1), 20),
     );
@@ -183,25 +174,21 @@ export class History {
   }
 
   async message(
-    agentId: string,
     messageId: number,
   ): Promise<HistoryLine | undefined> {
     const row = await this.db.get<Row>(
-      `SELECT entry_id, role, text, steps FROM neo_history WHERE agent_id = ? AND entry_id = ?`,
-      agentId,
+      `SELECT entry_id, role, text, steps FROM neo_history WHERE entry_id = ?`,
       messageId,
     );
     return row ? toLine(row) : undefined;
   }
 
   async page(
-    agentId: string,
     before: number | undefined,
     limit: number,
   ): Promise<{ lines: HistoryLine[]; before: number | null }> {
     const rows = await this.db.all<Row>(
-      `SELECT entry_id, role, text, steps FROM neo_history WHERE agent_id = ? AND entry_id < ? ORDER BY entry_id DESC LIMIT ?`,
-      agentId,
+      `SELECT entry_id, role, text, steps FROM neo_history WHERE entry_id < ? ORDER BY entry_id DESC LIMIT ?`,
       before ?? Number.MAX_SAFE_INTEGER,
       limit + 1,
     );

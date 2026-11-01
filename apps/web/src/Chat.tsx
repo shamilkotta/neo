@@ -1,7 +1,7 @@
 import type {
   Attachment,
   MailboxMessage,
-  NeoClient,
+  AgentClient,
   TranscriptItem,
   Turn,
 } from "@neo/client";
@@ -65,7 +65,7 @@ function FileCard({
   file,
   caption,
 }: {
-  client: NeoClient;
+  client: AgentClient;
   file: Attachment;
   caption?: string | null;
 }) {
@@ -132,7 +132,7 @@ function Item({
   turns,
   results,
 }: {
-  client: NeoClient;
+  client: AgentClient;
   item: TranscriptItem;
   turns: Record<string, Turn>;
   results: Map<string, TranscriptItem & { type: "tool" }>;
@@ -209,7 +209,7 @@ function Item({
 }
 
 export function Transcript(props: {
-  client: NeoClient;
+  client: AgentClient;
   items: TranscriptItem[];
   turns: Record<string, Turn>;
   live: LiveTurn;
@@ -282,7 +282,7 @@ export function Queue({
   running,
   refresh,
 }: {
-  client: NeoClient;
+  client: AgentClient;
   queue: MailboxMessage[];
   running: boolean;
   refresh: () => void;
@@ -353,7 +353,7 @@ export function Composer({
   onSent,
   onNeedsSetup,
 }: {
-  client: NeoClient;
+  client: AgentClient;
   onSent: () => void;
   onNeedsSetup: () => void;
 }) {
