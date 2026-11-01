@@ -1,3 +1,5 @@
+import { authorized, preflight, unauthorized } from "@neo/kernel";
+
 export { InstanceDO } from "./instance";
 
 export default {
@@ -16,8 +18,11 @@ export default {
         308,
       );
     const inner = new Request(new URL(rest + url.search, url.origin), request);
-    if (rest.startsWith("/v1/") || request.method === "OPTIONS")
+    if (request.method === "OPTIONS") return preflight();
+    if (rest.startsWith("/v1/")) {
+      if (!authorized(request, env.NEO_TOKEN)) return unauthorized();
       return env.INSTANCE.getByName(name!).fetch(inner);
+    }
     return env.ASSETS.fetch(inner);
   },
 } satisfies ExportedHandler<Env>;
