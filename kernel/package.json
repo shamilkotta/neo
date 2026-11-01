@@ -1,5 +1,6 @@
 {
   "name": "@neo/kernel",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {
