@@ -3,7 +3,6 @@ import type { AgentLink, Cells, CoordinatorLink } from "@neo/kernel";
 export const agentName = (instance: string, agentId: string) =>
   `${instance}/${agentId}`;
 
-/** The coordinator, over Durable Object RPC. */
 export function coordinatorLink(env: Env, instance: string): CoordinatorLink {
   const stub = () => env.INSTANCE.getByName(instance);
   return {
@@ -20,7 +19,6 @@ export function coordinatorLink(env: Env, instance: string): CoordinatorLink {
   };
 }
 
-/** The instance's agents, each its own Durable Object. */
 export function agentCells(env: Env, instance: string): Cells {
   return {
     get(agentId): AgentLink {

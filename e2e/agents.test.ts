@@ -132,8 +132,8 @@ describe("agents", () => {
     expect(gone.status).toBe(404);
     const again = await root.createAgent({ name: "Temp" });
     expect(again.id).toBe("temp");
-    expect(
-      (await temp.call("GET", "/transcript")).items as unknown[],
-    ).toEqual([]);
+    expect((await temp.call("GET", "/transcript")).items as unknown[]).toEqual(
+      [],
+    );
   });
 });

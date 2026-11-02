@@ -126,7 +126,6 @@ export class Schedules {
     private readonly now: () => number,
   ) {}
 
-
   async get(id: string): Promise<Schedule | undefined> {
     const row = await this.db.get<Row>(
       `SELECT * FROM neo_schedules WHERE id = ?`,
@@ -135,9 +134,7 @@ export class Schedules {
     return row ? toSchedule(row) : undefined;
   }
 
-  async list(
-    which: "active" | "all" = "all",
-  ): Promise<Schedule[]> {
+  async list(which: "active" | "all" = "all"): Promise<Schedule[]> {
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_schedules ${which === "active" ? "WHERE next_at IS NOT NULL" : ""}
        ORDER BY next_at IS NULL, next_at, updated_at DESC LIMIT 300`,
@@ -151,7 +148,6 @@ export class Schedules {
     );
     return row?.at ?? undefined;
   }
-
 
   async create(
     input: ScheduleInput,
@@ -307,7 +303,6 @@ export class Schedules {
     return row !== undefined;
   }
 
-
   async fire(
     delivery: ScheduleDelivery,
   ): Promise<{ runs: ScheduleRun[]; more: boolean }> {
@@ -355,10 +350,7 @@ export class Schedules {
       !inWindow(schedule.window, time, timezone)
     )
       reason = "outside_window";
-    else if (
-      schedule.whenBusy === "skip" &&
-      !(await delivery.idle())
-    )
+    else if (schedule.whenBusy === "skip" && !(await delivery.idle()))
       reason = "busy";
     else if (
       recurring &&
@@ -448,7 +440,6 @@ export class Schedules {
     };
   }
 
-
   private async anchor(id: string): Promise<number> {
     return (await this.db.get<{ a: number }>(
       `SELECT anchor_at AS a FROM neo_schedules WHERE id = ?`,
@@ -464,7 +455,6 @@ export class Schedules {
     );
   }
 }
-
 
 export function nextTime(
   schedule: Schedule,
@@ -540,7 +530,6 @@ export function inWindow(
   if (start === end) return true;
   return start < end ? now >= start && now < end : now >= start || now < end;
 }
-
 
 interface Fields {
   name: string;

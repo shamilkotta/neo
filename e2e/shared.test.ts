@@ -35,26 +35,36 @@ async function run(id: string, steps: { tool: string; args: unknown }[]) {
 const tools = async (id: string) =>
   ((await at(id).call("GET", "/transcript")).items as any[])
     .filter((i) => i.type === "tool")
-    .map((i) => ({ output: i.output as string, isError: i.isError as boolean }));
+    .map((i) => ({
+      output: i.output as string,
+      isError: i.isError as boolean,
+    }));
 const bash = (command: string) => ({ tool: "bash", args: { command } });
 
 describe("/shared", () => {
   test("one agent writes, another reads; the shell sees it next to local files", async () => {
     await root.createAgent({ name: "Helper" });
     const [wrote] = await run("neo", [
-      { tool: "write", args: { path: "/shared/plan.md", content: "step one\n" } },
+      {
+        tool: "write",
+        args: { path: "/shared/plan.md", content: "step one\n" },
+      },
     ]);
     expect(wrote!.isError).toBe(false);
     const [read, listing, copied] = await run("helper", [
       { tool: "read", args: { path: "/shared/plan.md" } },
       bash("ls / && ls /shared"),
-      bash("mkdir -p /notes && cp /shared/plan.md /notes/plan.md && echo more >> /shared/plan.md && cat /notes/plan.md /shared/plan.md"),
+      bash(
+        "mkdir -p /notes && cp /shared/plan.md /notes/plan.md && echo more >> /shared/plan.md && cat /notes/plan.md /shared/plan.md",
+      ),
     ]);
     expect(read!.output).toContain("step one");
     expect(listing!.output).toContain("shared");
     expect(listing!.output).toContain("plan.md");
     expect(copied!.output).toBe("step one\nstep one\nmore\n");
-    const [again] = await run("neo", [bash("cat /shared/plan.md && ls /notes 2>&1 || true")]);
+    const [again] = await run("neo", [
+      bash("cat /shared/plan.md && ls /notes 2>&1 || true"),
+    ]);
     expect(again!.output).toContain("step one\nmore");
     expect(again!.output).not.toContain("plan.md\n");
   });
@@ -72,7 +82,9 @@ describe("/shared", () => {
     });
     const { upload } = await put.json();
     const [out] = await run("neo", [
-      bash(`cp /user/.staging/${upload.id}/big.bin /shared/big.bin && ls -l /shared`),
+      bash(
+        `cp /user/.staging/${upload.id}/big.bin /shared/big.bin && ls -l /shared`,
+      ),
     ]);
     expect(out!.isError).toBe(false);
     const [moved] = await run("helper", [
@@ -94,23 +106,37 @@ describe("/shared", () => {
 
   test("the person can't reach /shared; /shared itself can't be removed", async () => {
     await run("neo", [
-      { tool: "write", args: { path: "/shared/secret.txt", content: "agents only" } },
+      {
+        tool: "write",
+        args: { path: "/shared/secret.txt", content: "agents only" },
+      },
     ]);
-    const files = await neo.fetch(`${neo.agentUrl()}/files?path=/shared/secret.txt`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const files = await neo.fetch(
+      `${neo.agentUrl()}/files?path=/shared/secret.txt`,
+      {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      },
+    );
     expect(files.status).toBe(404);
-    const up = await neo.fetch(`${neo.agentUrl()}/files?path=/../shared/secret.txt`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+    const up = await neo.fetch(
+      `${neo.agentUrl()}/files?path=/../shared/secret.txt`,
+      {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      },
+    );
     expect(up.status).toBe(404);
-    const [removed] = await run("neo", [bash("rm -r /shared 2>&1; ls /shared")]);
+    const [removed] = await run("neo", [
+      bash("rm -r /shared 2>&1; ls /shared"),
+    ]);
     expect(removed!.output).toContain("secret.txt");
   });
 
   test("send_file can give the person a file from /shared", async () => {
     const [sent] = await run("neo", [
-      { tool: "write", args: { path: "/shared/report.txt", content: "report" } },
+      {
+        tool: "write",
+        args: { path: "/shared/report.txt", content: "report" },
+      },
       { tool: "send_file", args: { path: "/shared/report.txt" } },
     ]).then((r) => r.slice(1));
     expect(sent!.isError).toBe(false);
@@ -126,7 +152,10 @@ describe("/shared", () => {
     const target = await instance();
     await target.client().importBundle(bundle);
     await target.call("POST", "/test/script", {
-      steps: [{ tool: "read", args: { path: "/shared/kept.txt" } }, { text: "ok" }],
+      steps: [
+        { tool: "read", args: { path: "/shared/kept.txt" } },
+        { text: "ok" },
+      ],
     });
     await target.call("POST", "/messages", { text: "read it" });
     await until(

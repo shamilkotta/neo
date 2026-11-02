@@ -164,8 +164,7 @@ export class NeoClient extends Http {
 
   seal = () => this.call<{ state: string }>("POST", "/move/seal", {});
   unseal = () => this.call<{ state: string }>("POST", "/move/unseal", {});
-  complete = () =>
-    this.call<{ state: string }>("POST", "/move/complete", {});
+  complete = () => this.call<{ state: string }>("POST", "/move/complete", {});
   exportBundle = async (
     passphrase?: string,
   ): Promise<ReadableStream<Uint8Array>> => {
@@ -224,10 +223,9 @@ export class NeoClient extends Http {
       config,
     ).then((r) => r.providers);
   removeProvider = (id: string) =>
-    this.call<{ providers: ProviderInfo[] }>(
-      "DELETE",
-      `/providers/${id}`,
-    ).then((r) => r.providers);
+    this.call<{ providers: ProviderInfo[] }>("DELETE", `/providers/${id}`).then(
+      (r) => r.providers,
+    );
   detectProviders = () =>
     this.call<{ found: ProviderConfig[] }>("GET", "/providers/detect").then(
       (r) => r.found,
@@ -237,7 +235,6 @@ export class NeoClient extends Http {
       "GET",
       "/models",
     );
-
 }
 
 /** One agent: its API lives under `<instance>/agents/<id>`. */
@@ -324,12 +321,9 @@ export class AgentClient extends Http {
       }
     | { kind: "file"; path: string; text: string }
   > {
-    const response = await this.fetcher(
-      this.url(`/files${query({ path })}`),
-      {
-        headers: { authorization: `Bearer ${this.options.token}` },
-      },
-    );
+    const response = await this.fetcher(this.url(`/files${query({ path })}`), {
+      headers: { authorization: `Bearer ${this.options.token}` },
+    });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as Record<
         string,

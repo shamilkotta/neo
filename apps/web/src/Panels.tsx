@@ -206,8 +206,9 @@ function AgentPanel({ root, agentId, version, onDeleted }: PanelProps) {
           type="button"
           className="small"
           onClick={() =>
-            confirm(`Delete ${agent.name}? Its chat, memories and files go too.`) &&
-            attempt(() => root.deleteAgent(agentId), onDeleted)
+            confirm(
+              `Delete ${agent.name}? Its chat, memories and files go too.`,
+            ) && attempt(() => root.deleteAgent(agentId), onDeleted)
           }
         >
           Delete agent

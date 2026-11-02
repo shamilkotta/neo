@@ -13,7 +13,6 @@ import { CloudflareSqlite } from "./sqlite";
 
 const capabilities = { sockets: false, processes: false };
 
-/** The coordinator of one instance (the instance Durable Object). */
 export class CloudflareHost extends CoordinatorHost {
   constructor(
     private readonly ctx: DurableObjectState,
@@ -35,7 +34,6 @@ export class CloudflareHost extends CoordinatorHost {
   }
 }
 
-/** One agent (an agent Durable Object). */
 export class CloudflareAgentHost extends AgentHost {
   constructor(
     private readonly ctx: DurableObjectState,

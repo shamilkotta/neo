@@ -90,7 +90,8 @@ export function teamTools(team: TeamServices) {
       replay: "safe",
       execute: async (args) => {
         const agent = (await team.agents()).find((a) => a.id === args.agentId);
-        if (!agent) refuse(`No teammate ${args.agentId}; list_agents shows who exists.`);
+        if (!agent)
+          refuse(`No teammate ${args.agentId}; list_agents shows who exists.`);
         return json({ ...agent!, state: state(agent!) });
       },
     }),
@@ -166,7 +167,8 @@ export function teamTools(team: TeamServices) {
         expectsReply: Type.Optional(Type.Boolean()),
       }),
       replay: "safe",
-      execute: async (args, api) => json(await send(`send:${api.taskId}`, args)),
+      execute: async (args, api) =>
+        json(await send(`send:${api.taskId}`, args)),
     }),
     defineTool({
       name: "interrupt_agent",

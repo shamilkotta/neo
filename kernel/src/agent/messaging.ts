@@ -77,20 +77,28 @@ export class Messaging {
     text: string;
     replyTo?: string;
     expectsReply: boolean;
-  }): Promise<{ delivered: string[]; failed: { id: string; error: string }[] }> {
+  }): Promise<{
+    delivered: string[];
+    failed: { id: string; error: string }[];
+  }> {
     const me = await this.me();
     const to = [...new Set(input.to.map((t) => t.trim()).filter(Boolean))];
     const text = input.text.trim();
     if (to.length === 0) throw new MessagingError("Name at least one teammate");
     if (to.length > MAX_RECIPIENTS)
-      throw new MessagingError(`At most ${MAX_RECIPIENTS} teammates per message`);
+      throw new MessagingError(
+        `At most ${MAX_RECIPIENTS} teammates per message`,
+      );
     if (to.includes(me.id))
       throw new MessagingError("You cannot send a message to yourself");
     if (!text) throw new MessagingError("The message is empty");
     if (text.length > MAX_TEXT)
       throw new MessagingError(`A message is at most ${MAX_TEXT} characters`);
     const time = this.now();
-    const known = await this.db.get(`SELECT 1 FROM neo_sent WHERE id = ?`, input.id);
+    const known = await this.db.get(
+      `SELECT 1 FROM neo_sent WHERE id = ?`,
+      input.id,
+    );
     if (!known) {
       const recent = await this.db.get<{ n: number }>(
         `SELECT count(*) AS n FROM neo_sent WHERE created_at > ?`,
@@ -304,7 +312,6 @@ Result: …
 Evidence: …
 Unblock: … (only when blocked)]`,
     );
-  else if (!meta.replyTo)
-    lines.push(`[For your information; do not reply.]`);
+  else if (!meta.replyTo) lines.push(`[For your information; do not reply.]`);
   return lines.join("\n");
 }

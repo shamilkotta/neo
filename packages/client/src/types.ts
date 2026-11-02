@@ -1,9 +1,7 @@
-
 export interface ModelRef {
   provider: string;
   modelId: string;
 }
-
 
 export type ThinkingLevel =
   "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -54,7 +52,6 @@ export interface NewAgent {
 export type ProfileChange = Partial<
   Pick<AgentProfile, "name" | "title" | "description" | "instructions">
 >;
-
 
 export type MessageSource = "user" | "schedule" | "system" | "agent";
 export type MessageStatus =
@@ -157,7 +154,6 @@ export interface TranscriptPage {
   before: number | null;
 }
 
-
 export type MemoryKind = "essential" | "searchable";
 export type MemoryOrigin = "manual" | "automatic";
 export type MemoryOwnerKind = "agent" | "channel" | "connection";
@@ -173,7 +169,6 @@ export interface Memory {
   createdAt: number;
   updatedAt: number;
 }
-
 
 export type ScheduleSpec =
   | { kind: "once"; at: number }
@@ -229,7 +224,6 @@ export interface ScheduleRun {
   messageId: string | null;
 }
 
-
 export interface SettingsShape {
   timezone: string;
   model: ModelRef | null;
@@ -265,7 +259,6 @@ export interface AvailableModel {
   name: string;
 }
 
-
 export interface Status {
   version: string;
   host: string;
@@ -287,13 +280,11 @@ export interface AgentState {
   latestEvent: number;
 }
 
-
 export interface ImportResult {
   instanceId: string;
   epoch: number;
   secrets: "kept" | "dropped";
 }
-
 
 export interface NeoEvent {
   seq: number;

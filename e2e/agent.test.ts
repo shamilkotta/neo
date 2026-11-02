@@ -367,8 +367,7 @@ describe("schedules", () => {
   });
 
   test("bad schedules are refused with a reason", async () => {
-    const bad = (input: unknown) =>
-      neo.call("POST", "/test/schedules", input);
+    const bad = (input: unknown) => neo.call("POST", "/test/schedules", input);
     expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(
       /at most every 5 minutes/,
     );
@@ -503,9 +502,12 @@ describe("file store", () => {
     expect(upload).toMatchObject({ name: "data.bin", size });
     const got = new Uint8Array(
       await (
-        await neo.fetch(`${neo.agentUrl()}/files?path=/.staging/${upload.id}/data.bin`, {
-          headers: { authorization: "Bearer t" },
-        })
+        await neo.fetch(
+          `${neo.agentUrl()}/files?path=/.staging/${upload.id}/data.bin`,
+          {
+            headers: { authorization: "Bearer t" },
+          },
+        )
       ).arrayBuffer(),
     );
     expect(got.length).toBe(size);
@@ -556,8 +558,7 @@ describe("bounded memory", () => {
       {
         tool: "bash",
         args: {
-          command:
-            `mkdir -p /n && touch /n/x.md /n/y.md && echo /n/*.md && cat ${path} | wc -c`,
+          command: `mkdir -p /n && touch /n/x.md /n/y.md && echo /n/*.md && cat ${path} | wc -c`,
         },
       },
       { text: "done" },

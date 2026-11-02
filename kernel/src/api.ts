@@ -7,14 +7,7 @@ import {
 } from "./agent/attachments";
 import { readTranscript } from "./agent/transcript";
 import type { ScheduleInput } from "./agent/schedules";
-import {
-  body,
-  eventStream,
-  HttpError,
-  json,
-  matcher,
-  serve,
-} from "./http";
+import { body, eventStream, HttpError, json, matcher, serve } from "./http";
 import type { NeoAgent } from "./neo";
 import { joinPath, type Vfs, type VfsStat } from "./vfs/vfs";
 
@@ -43,7 +36,9 @@ async function route(
     const live = neo.state === "active" ? neo.services() : undefined;
     const self = live ? await live.self.get() : undefined;
     return json({
-      agent: self ? { ...self.profile, paused: self.paused } : { id: neo.agentId },
+      agent: self
+        ? { ...self.profile, paused: self.paused }
+        : { id: neo.agentId },
       state: neo.state,
       turn: (await live?.mailbox.currentTurn()) ?? null,
       queued: live ? (await live.mailbox.queue()).length : 0,
@@ -61,7 +56,10 @@ async function route(
   if (is("POST", "/uploads")) {
     const name = url.searchParams.get("name");
     if (!name) throw new HttpError(400, "name is required");
-    const upload = await neo.upload(name, request.body ?? new Blob([]).stream());
+    const upload = await neo.upload(
+      name,
+      request.body ?? new Blob([]).stream(),
+    );
     return json({ upload }, 201);
   }
   if (is("POST", "/messages")) {
@@ -113,8 +111,7 @@ async function route(
     if (!turn) throw new HttpError(404, "No such turn");
     return json({ turn, messages: await live.mailbox.turnMessages(turn.id) });
   }
-  if (is("POST", "/stop"))
-    return json({ stopped: await live.mailbox.stop() });
+  if (is("POST", "/stop")) return json({ stopped: await live.mailbox.stop() });
   if (is("POST", "/pause")) {
     await neo.pause();
     return json({ paused: true });
@@ -124,8 +121,7 @@ async function route(
     return json({ paused: false });
   }
 
-  if (is("GET", "/queue"))
-    return json({ queue: await live.mailbox.queue() });
+  if (is("GET", "/queue")) return json({ queue: await live.mailbox.queue() });
   if (is("PUT", "/queue/order")) {
     const input = await body<{ order?: string[] }>(request);
     if (!Array.isArray(input.order))
@@ -156,7 +152,7 @@ async function route(
     if (typeof input.enabled !== "boolean")
       throw new HttpError(400, "enabled is required");
     const schedule = await live.schedules.update(
-            m[1]!,
+      m[1]!,
       { enabled: input.enabled },
       await neo.timezone(),
     );
@@ -172,7 +168,8 @@ async function route(
     const filePath = relative === "/" ? USER_ROOT : USER_ROOT + relative;
     const outside = (p: string) => p.slice(USER_ROOT.length) || "/";
     if (method === "GET") {
-      if (relative === "/") await live.vfs.mkdir(USER_ROOT, { recursive: true });
+      if (relative === "/")
+        await live.vfs.mkdir(USER_ROOT, { recursive: true });
       const stat = await live.vfs.stat(filePath);
       if (stat.kind === "directory")
         return json({
@@ -241,19 +238,16 @@ async function route(
   if (neo.host.test && is("POST", "/test/schedules")) {
     const input = await body<ScheduleInput>(request);
     const schedule = await live.schedules.create(
-            input,
+      input,
       "agent",
       await neo.timezone(),
     );
     await neo.schedulesChanged();
     return json({ schedule }, 201);
   }
-  if (
-    neo.host.test &&
-    (m = match("PATCH", /^\/test\/schedules\/([\w-]+)$/))
-  ) {
+  if (neo.host.test && (m = match("PATCH", /^\/test\/schedules\/([\w-]+)$/))) {
     const schedule = await live.schedules.update(
-            m[1]!,
+      m[1]!,
       await body<ScheduleInput>(request),
       await neo.timezone(),
     );

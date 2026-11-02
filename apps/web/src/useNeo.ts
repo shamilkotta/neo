@@ -17,10 +17,7 @@ export interface LiveTurn {
 
 const IDLE: LiveTurn = { active: false, text: "", tools: [] };
 
-export function useNeo(
-  client: AgentClient,
-  onDurable?: (e: NeoEvent) => void,
-) {
+export function useNeo(client: AgentClient, onDurable?: (e: NeoEvent) => void) {
   const [status, setStatus] = useState<AgentState>();
   const [items, setItems] = useState<Map<number, TranscriptItem>>(new Map());
   const [turns, setTurns] = useState<Record<string, Turn>>({});

@@ -33,7 +33,11 @@ const fromTeammates = async (id: string) =>
 const toolOutputs = async (id: string) =>
   ((await at(id).call("GET", "/transcript")).items as any[])
     .filter((i) => i.type === "tool")
-    .map((i) => ({ name: i.name as string, output: i.output as string, isError: i.isError as boolean }));
+    .map((i) => ({
+      name: i.name as string,
+      output: i.output as string,
+      isError: i.isError as boolean,
+    }));
 const seen = async (id: string) =>
   ((await at(id).call("GET", "/test/seen")).seen as string[]).join("\n");
 
@@ -71,7 +75,11 @@ describe("messages between agents", () => {
     ]);
     await script("neo", [{ recall: "x is 1" }]);
     await at("helper").call("POST", "/resume");
-    await until(async () => (await fromTeammates("neo")).length === 1, 8000, "the reply");
+    await until(
+      async () => (await fromTeammates("neo")).length === 1,
+      8000,
+      "the reply",
+    );
     await idle("neo");
     await idle("helper");
     expect((await fromTeammates("neo"))[0]!.text).toContain("Result: x = 1");
@@ -84,27 +92,43 @@ describe("messages between agents", () => {
   test("a teammate that ends its turn without replying sends 'No answer'", async () => {
     await root.createAgent({ name: "Quiet" });
     await script("neo", [
-      { tool: "send_message", args: { recipientAgentIds: ["quiet"], text: "hello?" } },
+      {
+        tool: "send_message",
+        args: { recipientAgentIds: ["quiet"], text: "hello?" },
+      },
       { text: "sent" },
       { recall: "noted" },
     ]);
     await at("neo").call("POST", "/messages", { text: "ask quiet" });
-    await until(async () => (await fromTeammates("neo")).length === 1, 8000, "no answer");
+    await until(
+      async () => (await fromTeammates("neo")).length === 1,
+      8000,
+      "no answer",
+    );
     await idle("neo");
     expect((await fromTeammates("neo"))[0]!.text).toContain("did not answer");
-    expect(await seen("neo")).toContain("No answer from teammate Quiet (quiet)");
+    expect(await seen("neo")).toContain(
+      "No answer from teammate Quiet (quiet)",
+    );
   });
 
   test("answers from several teammates arrive together", async () => {
     await root.createAgent({ name: "A" });
     await root.createAgent({ name: "B" });
     await script("neo", [
-      { tool: "send_message", args: { recipientAgentIds: ["a", "b"], text: "both of you" } },
+      {
+        tool: "send_message",
+        args: { recipientAgentIds: ["a", "b"], text: "both of you" },
+      },
       { text: "asked both" },
       { recall: "got both" },
     ]);
     await at("neo").call("POST", "/messages", { text: "ask both" });
-    await until(async () => (await fromTeammates("neo")).length >= 1, 8000, "the group");
+    await until(
+      async () => (await fromTeammates("neo")).length >= 1,
+      8000,
+      "the group",
+    );
     await idle("neo");
     const got = await fromTeammates("neo");
     expect(got.length).toBe(1);
@@ -116,8 +140,14 @@ describe("messages between agents", () => {
   test("unknown teammates and yourself are refused; list_agents shows the team", async () => {
     await root.createAgent({ name: "Helper", title: "Helps" });
     await script("neo", [
-      { tool: "send_message", args: { recipientAgentIds: ["nobody"], text: "hi" } },
-      { tool: "send_message", args: { recipientAgentIds: ["neo"], text: "hi" } },
+      {
+        tool: "send_message",
+        args: { recipientAgentIds: ["nobody"], text: "hi" },
+      },
+      {
+        tool: "send_message",
+        args: { recipientAgentIds: ["neo"], text: "hi" },
+      },
       { tool: "list_agents", args: {} },
       { text: "done" },
     ]);
@@ -156,7 +186,8 @@ describe("team tools", () => {
     expect(writer?.createdBy).toBe("neo");
     expect(writer?.instructions).toBe("Be brief.");
     await until(
-      async () => (await inputs("writer")).some((m) => m.text === "write a line"),
+      async () =>
+        (await inputs("writer")).some((m) => m.text === "write a line"),
       8000,
       "the first message",
     );
@@ -167,7 +198,9 @@ describe("team tools", () => {
       { tool: "update_profile", args: { title: "Chief of staff" } },
       { text: "ok" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "you are my chief of staff" });
+    await at("neo").call("POST", "/messages", {
+      text: "you are my chief of staff",
+    });
     await idle("neo");
     expect((await root.agents())[0]!.title).toBe("Chief of staff");
     expect((await at("neo").call("GET", "/agent")).agent.title).toBe(
@@ -179,12 +212,19 @@ describe("team tools", () => {
     await root.createAgent({ name: "Slow" });
     await script("slow", [{ gate: "never" }]);
     await script("neo", [
-      { tool: "send_message", args: { recipientAgentIds: ["slow"], text: "long job" } },
+      {
+        tool: "send_message",
+        args: { recipientAgentIds: ["slow"], text: "long job" },
+      },
       { text: "sent" },
     ]);
     await at("neo").call("POST", "/messages", { text: "start" });
     await idle("neo");
-    await until(async () => (await at("slow").call("GET", "/status")).turn, 5000, "slow working");
+    await until(
+      async () => (await at("slow").call("GET", "/status")).turn,
+      5000,
+      "slow working",
+    );
     await script("neo", [
       { tool: "interrupt_agent", args: { agentId: "slow" } },
       { text: "stopped it" },
@@ -193,7 +233,10 @@ describe("team tools", () => {
     await idle("neo");
     await idle("slow");
     const outputs = await toolOutputs("neo");
-    expect(JSON.parse(outputs.at(-1)!.output)).toEqual({ stopped: true, cancelled: 0 });
+    expect(JSON.parse(outputs.at(-1)!.output)).toEqual({
+      stopped: true,
+      cancelled: 0,
+    });
     await Bun.sleep(300);
     expect(await fromTeammates("neo")).toEqual([]);
   });

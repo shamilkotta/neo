@@ -14,8 +14,7 @@ afterEach(async () => {
 
 const script = (steps: unknown[]) =>
   neo.call("POST", "/test/script", { steps });
-const seen = async () =>
-  (await neo.call("GET", "/test/seen")).seen as string[];
+const seen = async () => (await neo.call("GET", "/test/seen")).seen as string[];
 
 function png(
   width: number,
@@ -24,7 +23,10 @@ function png(
 ): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(24 + padding);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
-  bytes.set([..."IHDR"].map((c) => c.charCodeAt(0)), 12);
+  bytes.set(
+    [..."IHDR"].map((c) => c.charCodeAt(0)),
+    12,
+  );
   new DataView(bytes.buffer).setUint32(16, width);
   new DataView(bytes.buffer).setUint32(20, height);
   return bytes;
@@ -182,7 +184,12 @@ describe("who reaches what", () => {
     await idle(neo);
     const [attached] = (await transcript(neo))[0].messages[0].attachments;
     await script([
-      { tool: "bash", args: { command: `rm -r /attachments; rm -r /; echo x > ${attached.path}` } },
+      {
+        tool: "bash",
+        args: {
+          command: `rm -r /attachments; rm -r /; echo x > ${attached.path}`,
+        },
+      },
       { tool: "write", args: { path: attached.path, content: "changed" } },
       { text: "tried" },
     ]);
