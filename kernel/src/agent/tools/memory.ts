@@ -44,15 +44,11 @@ export function memoryTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await turn(api.conversationId);
         return json(
-          await services.memories.stageRemember(
-            c.turnId,
-            api.callId,
-            {
-              text: args.text,
-              ...(args.memoryId ? { memoryId: args.memoryId } : {}),
-              ...(args.inclusion ? { inclusion: args.inclusion } : {}),
-            },
-          ),
+          await services.memories.stageRemember(c.turnId, api.callId, {
+            text: args.text,
+            ...(args.memoryId ? { memoryId: args.memoryId } : {}),
+            ...(args.inclusion ? { inclusion: args.inclusion } : {}),
+          }),
         );
       },
     }),
@@ -101,9 +97,7 @@ export function memoryTools(services: ToolServices) {
       replay: "safe",
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
-        const page = await services.memories.page(
-          args.after ?? null,
-        );
+        const page = await services.memories.page(args.after ?? null);
         return json({
           memories: page.memories.map(view),
           nextCursor: page.nextCursor,

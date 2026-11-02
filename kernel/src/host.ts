@@ -13,7 +13,6 @@ export interface Capabilities {
   processes: boolean;
 }
 
-/** One agent's home (on Cloudflare, an agent Durable Object). */
 export interface AgentPorts {
   name: string;
   db: SqliteDatabase;
@@ -21,13 +20,11 @@ export interface AgentPorts {
   alarm: Alarm;
   capabilities: Capabilities;
   coordinator(instance: string): CoordinatorLink;
-  /** The instance's other agents (messages go directly, agent to agent). */
   peers(instance: string): Cells;
   test?: import("./testing").TestRuntime;
   now?: () => number;
 }
 
-/** The coordinator's home (on Cloudflare, the instance Durable Object). */
 export interface CoordinatorPorts {
   name: string;
   db: SqliteDatabase;
@@ -40,7 +37,6 @@ export interface CoordinatorPorts {
   now?: () => number;
 }
 
-/** Who a request is for; the host's router knows it (on Cloudflare, from the URL). */
 export interface Address {
   instance: string;
   agentId: string;
@@ -52,7 +48,7 @@ export abstract class AgentHost {
 
   protected abstract ports(): Promise<AgentPorts>;
 
-  open(): Promise<NeoAgent> {
+  open() {
     this.opening ??= this.ports().then(async (ports) => {
       this.runtime = await NeoAgent.open(ports);
       return this.runtime;
@@ -60,22 +56,22 @@ export abstract class AgentHost {
     return this.opening;
   }
 
-  get agent(): NeoAgent {
+  get agent() {
     if (!this.runtime) throw new Error("The host is not open");
     return this.runtime;
   }
 
-  async fetch(request: Request, address: Address): Promise<Response> {
+  async fetch(request: Request, address: Address) {
     const agent = await this.open();
     if (agent.state === "empty") await agent.claim(address);
     return agent.fetch(request);
   }
 
-  async alarm(): Promise<void> {
+  async alarm() {
     await (await this.open()).wake();
   }
 
-  async close(): Promise<void> {
+  async close() {
     if (!this.opening) return;
     const agent = await this.opening.catch(() => undefined);
     await agent?.close();
@@ -90,7 +86,7 @@ export abstract class CoordinatorHost {
 
   protected abstract ports(): Promise<CoordinatorPorts>;
 
-  open(): Promise<NeoCoordinator> {
+  open() {
     this.opening ??= this.ports().then(async (ports) => {
       this.runtime = await NeoCoordinator.open(ports);
       return this.runtime;
@@ -98,14 +94,13 @@ export abstract class CoordinatorHost {
     return this.opening;
   }
 
-  /** The coordinator, told its instance's name (a move can change it). */
-  async named(instance: string): Promise<NeoCoordinator> {
+  async named(instance: string) {
     const coordinator = await this.open();
     await coordinator.setInstance(instance);
     return coordinator;
   }
 
-  async fetch(request: Request, instance: string): Promise<Response> {
+  async fetch(request: Request, instance: string) {
     return (await this.named(instance)).fetch(request);
   }
 }

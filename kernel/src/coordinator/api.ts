@@ -1,12 +1,5 @@
 import type { NewAgent, ProfileChange, SettingsShape } from "@neo/client";
-import {
-  body,
-  eventStream,
-  HttpError,
-  json,
-  matcher,
-  serve,
-} from "../http";
+import { body, eventStream, HttpError, json, matcher, serve } from "../http";
 import { NEO_VERSION } from "../neo";
 import {
   detectLocalProviders,
@@ -14,11 +7,10 @@ import {
 } from "../services/providers";
 import type { NeoCoordinator } from "./coordinator";
 
-/** The instance's API: agents, settings, providers, moves. Agent routes go to each agent's home. */
 export function handleCoordinatorApi(
   neo: NeoCoordinator,
   request: Request,
-): Promise<Response> {
+) {
   return serve(request, async (request, url) => {
     await neo.finishDeletes();
     return route(neo, request, url);
@@ -86,8 +78,7 @@ async function route(
 
   const live = neo.services();
 
-  if (is("GET", "/agents"))
-    return json({ agents: await live.registry.list() });
+  if (is("GET", "/agents")) return json({ agents: await live.registry.list() });
   if (is("POST", "/agents")) {
     const agent = await neo.createAgent(await body<NewAgent>(request));
     return json({ agent }, 201);

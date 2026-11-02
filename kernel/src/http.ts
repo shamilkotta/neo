@@ -20,7 +20,8 @@ export class HttpError extends Error {
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, last-event-id, x-neo-passphrase",
+  "access-control-allow-headers":
+    "authorization, content-type, last-event-id, x-neo-passphrase",
   "access-control-max-age": "86400",
 };
 
@@ -58,11 +59,13 @@ export function authorized(request: Request, token: string): boolean {
 export const unauthorized = () =>
   withCors(json({ error: "Unauthorized" }, 401));
 
-
 export type Router = (request: Request, url: URL) => Promise<Response>;
 
 /** CORS, preflight and error mapping around a router. Hosts route and check the token before this. */
-export async function serve(request: Request, route: Router): Promise<Response> {
+export async function serve(
+  request: Request,
+  route: Router,
+): Promise<Response> {
   if (request.method === "OPTIONS") return preflight();
   const url = new URL(request.url);
   let response: Response;
@@ -101,13 +104,17 @@ function errorResponse(error: unknown): Response {
 
 /** The durable and live event stream (SSE, resumable with `after` or Last-Event-ID). */
 export function eventStream(
-  events: { stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array> },
+  events: {
+    stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array>;
+  },
   request: Request,
   url: URL,
 ): Response {
   const after =
     Number(
-      url.searchParams.get("after") ?? request.headers.get("last-event-id") ?? 0,
+      url.searchParams.get("after") ??
+        request.headers.get("last-event-id") ??
+        0,
     ) || 0;
   return new Response(events.stream(after, request.signal), {
     headers: {

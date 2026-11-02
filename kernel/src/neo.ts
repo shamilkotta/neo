@@ -44,12 +44,7 @@ import type { Address, AgentPorts } from "./host";
 import type { AgentConfig, AgentInit, CoordinatorLink } from "./links";
 import { toBase64 } from "./crypto";
 import { SetupError, StateError } from "./errors";
-import {
-  decodeNdjson,
-  encodeNdjson,
-  readPart,
-  writePart,
-} from "./move/bundle";
+import { decodeNdjson, encodeNdjson, readPart, writePart } from "./move/bundle";
 import { wipeDatabase } from "./move/snapshot";
 import { createAgentSchema, getMeta, hasTable, setMeta } from "./schema";
 import { Events } from "./services/events";
@@ -398,7 +393,6 @@ export class NeoAgent {
     this.conversation_ = undefined;
   }
 
-
   arm(extra?: Wake): Promise<void> {
     this.arming = this.arming
       .catch(() => {})
@@ -476,7 +470,6 @@ export class NeoAgent {
     await this.events.emit("schedule.changed", {});
   }
 
-
   async conversation(): Promise<Conversation> {
     const live = this.services();
     let conversation = this.conversation_;
@@ -545,7 +538,6 @@ export class NeoAgent {
   async close(): Promise<void> {
     await this.stop();
   }
-
 
   private async setState(state: InstanceState): Promise<void> {
     this.state_ = state;

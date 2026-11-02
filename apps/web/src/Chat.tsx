@@ -436,7 +436,9 @@ export function Composer({
                 <button
                   type="button"
                   className="link"
-                  onClick={() => setFiles((all) => all.filter((_, j) => j !== i))}
+                  onClick={() =>
+                    setFiles((all) => all.filter((_, j) => j !== i))
+                  }
                 >
                   ✕
                 </button>

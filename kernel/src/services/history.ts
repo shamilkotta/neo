@@ -99,9 +99,7 @@ export class History {
     return this.syncing;
   }
 
-  private async catchUp(
-    conversation: Conversation,
-  ): Promise<void> {
+  private async catchUp(conversation: Conversation): Promise<void> {
     const last = await this.db.get<{ id: number | null }>(
       `SELECT max(entry_id) AS id FROM neo_history`,
     );
@@ -173,9 +171,7 @@ export class History {
     }));
   }
 
-  async message(
-    messageId: number,
-  ): Promise<HistoryLine | undefined> {
+  async message(messageId: number): Promise<HistoryLine | undefined> {
     const row = await this.db.get<Row>(
       `SELECT entry_id, role, text, steps FROM neo_history WHERE entry_id = ?`,
       messageId,

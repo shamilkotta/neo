@@ -36,9 +36,14 @@ export type SharedResult =
   | { error: { code: VfsErrorCode; path: string; message: string } };
 
 /** What an agent's /shared calls (over RPC). */
-export type SharedCall = (op: SharedOp, args: unknown[]) => Promise<SharedResult>;
+export type SharedCall = (
+  op: SharedOp,
+  args: unknown[],
+) => Promise<SharedResult>;
 /** A file's bytes; a stream travels as a result only on its own, not inside an object. */
-export type SharedStream = (path: string) => Promise<ReadableStream<Uint8Array>>;
+export type SharedStream = (
+  path: string,
+) => Promise<ReadableStream<Uint8Array>>;
 
 /** The coordinator's side: one call on its shared Vfs. Vfs errors travel as data. */
 export async function serveShared(
@@ -52,7 +57,9 @@ export async function serveShared(
       const [path, offset, length] = args as [string, number, number];
       return { value: await (await vfs.open(path)).read(offset, length) };
     }
-    const fn = (vfs as unknown as Record<string, (...a: unknown[]) => unknown>)[op]!;
+    const fn = (vfs as unknown as Record<string, (...a: unknown[]) => unknown>)[
+      op
+    ]!;
     return { value: await fn.apply(vfs, args) };
   } catch (error) {
     if (error instanceof VfsError)
@@ -75,12 +82,22 @@ export interface RemoteVfs {
     stream: ReadableStream<Uint8Array>,
     options?: { createParents?: boolean; maxBytes?: number },
   ): Promise<VfsStat>;
-  copyFile(from: string, to: string, options?: { createParents?: boolean }): Promise<void>;
+  copyFile(
+    from: string,
+    to: string,
+    options?: { createParents?: boolean },
+  ): Promise<void>;
   appendFile(path: string, content: string | Uint8Array): Promise<void>;
   truncate(path: string, size: number): Promise<void>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  readdir(path: string, options?: { after?: string; limit?: number }): Promise<VfsStat[]>;
-  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  readdir(
+    path: string,
+    options?: { after?: string; limit?: number },
+  ): Promise<VfsStat[]>;
+  rm(
+    path: string,
+    options?: { recursive?: boolean; force?: boolean },
+  ): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   walk(path: string): Promise<VfsStat[]>;
 }
@@ -89,7 +106,11 @@ export function remoteVfs(call: SharedCall, stream: SharedStream): RemoteVfs {
   const run = async (op: SharedOp, ...args: unknown[]) => {
     const result = await call(op, args);
     if ("error" in result)
-      throw new VfsError(result.error.code, result.error.path, result.error.message);
+      throw new VfsError(
+        result.error.code,
+        result.error.path,
+        result.error.message,
+      );
     return result.value as never;
   };
   return {
@@ -102,7 +123,8 @@ export function remoteVfs(call: SharedCall, stream: SharedStream): RemoteVfs {
       return stream(p);
     },
     readRange: (p, offset, length) => run("readRange", p, offset, length),
-    writeStream: (p, stream, options = {}) => run("writeStream", p, stream, options),
+    writeStream: (p, stream, options = {}) =>
+      run("writeStream", p, stream, options),
     copyFile: (from, to, options = {}) => run("copyFile", from, to, options),
     appendFile: (p, content) => run("appendFile", p, content),
     truncate: (p, size) => run("truncate", p, size),
@@ -128,7 +150,8 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
     return { p, remote: inside(p), r: rel(p) };
   };
   const guardRoot = (p: string) => {
-    if (p === prefix) throw new VfsError("read_only", p, `${p} cannot be removed or moved`);
+    if (p === prefix)
+      throw new VfsError("read_only", p, `${p} cannot be removed or moved`);
   };
   const rootEntry = async () => out(await remote.stat("/"));
   const openRemote = async (path: string): Promise<VfsFile> => {
@@ -137,7 +160,9 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
     return {
       stat,
       async *chunks() {
-        yield* (await remote.readStream(path)) as unknown as AsyncIterable<Uint8Array>;
+        yield* (await remote.readStream(
+          path,
+        )) as unknown as AsyncIterable<Uint8Array>;
       },
       read: (offset, length) => remote.readRange(path, offset, length),
     };
@@ -172,7 +197,9 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
     },
     readText: async (path: string) => {
       const w = where(path);
-      const bytes = w.remote ? await remote.readFile(w.r) : await local.readFile(w.p);
+      const bytes = w.remote
+        ? await remote.readFile(w.r)
+        : await local.readFile(w.p);
       return new TextDecoder().decode(bytes);
     },
     readStream,
@@ -187,15 +214,24 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
     ) => {
       const w = where(path);
       if (!w.remote) return local.writeFile(w.p, content, options);
-      const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+      const bytes =
+        typeof content === "string"
+          ? new TextEncoder().encode(content)
+          : content;
       return remote
-        .writeStream(w.r, new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(), options)
+        .writeStream(
+          w.r,
+          new Blob([bytes as Uint8Array<ArrayBuffer>]).stream(),
+          options,
+        )
         .then(() => {});
     },
     writeStream,
     appendFile: (path: string, content: string | Uint8Array) => {
       const w = where(path);
-      return w.remote ? remote.appendFile(w.r, content) : local.appendFile(w.p, content);
+      return w.remote
+        ? remote.appendFile(w.r, content)
+        : local.appendFile(w.p, content);
     },
     truncate: (path: string, size: number) => {
       const w = where(path);
@@ -203,39 +239,62 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
     },
     mkdir: (path: string, options: { recursive?: boolean } = {}) => {
       const w = where(path);
-      if (w.p === prefix) return options.recursive ? Promise.resolve() : Promise.reject(new VfsError("exists", w.p));
+      if (w.p === prefix)
+        return options.recursive
+          ? Promise.resolve()
+          : Promise.reject(new VfsError("exists", w.p));
       return w.remote ? remote.mkdir(w.r, options) : local.mkdir(w.p, options);
     },
-    readdir: async (path: string, options: { after?: string; limit?: number } = {}) => {
+    readdir: async (
+      path: string,
+      options: { after?: string; limit?: number } = {},
+    ) => {
       const w = where(path);
       if (w.remote) {
-        const after = options.after && inside(options.after) ? rel(options.after) : options.after;
-        return (await remote.readdir(w.r, { ...options, ...(after ? { after } : {}) })).map(out);
+        const after =
+          options.after && inside(options.after)
+            ? rel(options.after)
+            : options.after;
+        return (
+          await remote.readdir(w.r, { ...options, ...(after ? { after } : {}) })
+        ).map(out);
       }
       const entries = await local.readdir(w.p, options);
       if (w.p !== "/") return entries;
       const after = options.after ?? "";
-      if (prefix <= after || entries.some((e) => e.path === prefix)) return entries;
+      if (prefix <= after || entries.some((e) => e.path === prefix))
+        return entries;
       const all = [...entries, await rootEntry()].sort((a, b) =>
         a.path < b.path ? -1 : 1,
       );
-      return options.limit && options.limit > 0 ? all.slice(0, options.limit) : all;
+      return options.limit && options.limit > 0
+        ? all.slice(0, options.limit)
+        : all;
     },
     walk: async (path: string) => {
       const w = where(path);
       if (w.remote) return (await remote.walk(w.r)).map(out);
       const entries = await local.walk(w.p);
       if (w.p !== "/") return entries;
-      return [...entries, await rootEntry(), ...(await remote.walk("/")).map(out)].sort(
-        (a, b) => (a.path < b.path ? -1 : 1),
-      );
+      return [
+        ...entries,
+        await rootEntry(),
+        ...(await remote.walk("/")).map(out),
+      ].sort((a, b) => (a.path < b.path ? -1 : 1));
     },
-    rm: (path: string, options: { recursive?: boolean; force?: boolean } = {}) => {
+    rm: (
+      path: string,
+      options: { recursive?: boolean; force?: boolean } = {},
+    ) => {
       const w = where(path);
       guardRoot(w.p);
       return w.remote ? remote.rm(w.r, options) : local.rm(w.p, options);
     },
-    copyFile: async (from: string, to: string, options: { createParents?: boolean } = {}) => {
+    copyFile: async (
+      from: string,
+      to: string,
+      options: { createParents?: boolean } = {},
+    ) => {
       const a = where(from);
       const b = where(to);
       if (a.remote && b.remote) return remote.copyFile(a.r, b.r, options);
@@ -251,7 +310,11 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
       if (!a.remote && !b.remote) return local.rename(a.p, b.p);
       const stat = a.remote ? await remote.stat(a.r) : await local.stat(a.p);
       if (stat.kind !== "file")
-        throw new VfsError("invalid", a.p, "Only files can move in or out of /shared");
+        throw new VfsError(
+          "invalid",
+          a.p,
+          "Only files can move in or out of /shared",
+        );
       await writeStream(b.p, await readStream(a.p));
       if (a.remote) await remote.rm(a.r);
       else await local.rm(a.p);
@@ -260,11 +323,11 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs): Vfs {
 
   return new Proxy(local, {
     get(target, key, receiver) {
-      const own = typeof key === "string" ? routed[key as keyof Vfs] : undefined;
+      const own =
+        typeof key === "string" ? routed[key as keyof Vfs] : undefined;
       if (own) return own;
       const value = Reflect.get(target, key, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
 }
-

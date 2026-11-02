@@ -34,7 +34,11 @@ export interface BundleHeader {
   };
 }
 
-export type PartStart = { t: "part"; kind: "coordinator" | "agent"; id?: string };
+export type PartStart = {
+  t: "part";
+  kind: "coordinator" | "agent";
+  id?: string;
+};
 
 export type BundleRecord =
   | SnapshotRecord
@@ -156,7 +160,7 @@ export async function* writePart(
   const hasBlobs = await db.get(
     `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vfs_blobs'`,
   );
-  for (let after = ""; hasBlobs; ) {
+  for (let after = ""; hasBlobs;) {
     const page = await db.all<{ key: string; size: number; hash: string }>(
       `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
       after,

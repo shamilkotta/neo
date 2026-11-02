@@ -85,8 +85,7 @@ export async function detectLocalProviders(
           baseUrl: server.baseUrl,
           models: models.map((id) => ({ id })),
         });
-    } catch {
-    }
+    } catch {}
   }
   return found;
 }
@@ -223,9 +222,9 @@ export class ModelCatalog {
 
   vision(model: ModelRef): boolean {
     return (
-      this.current.getModel(model.provider, model.modelId)?.input.includes(
-        "image",
-      ) ?? true
+      this.current
+        .getModel(model.provider, model.modelId)
+        ?.input.includes("image") ?? true
     );
   }
 }

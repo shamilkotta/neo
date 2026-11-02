@@ -31,11 +31,11 @@ $neo --help
 
 ## States
 
-| State    | Meaning                                                     |
-| -------- | ----------------------------------------------------------- |
-| `active` | Running.                                                    |
+| State    | Meaning                                                      |
+| -------- | ------------------------------------------------------------ |
+| `active` | Running.                                                     |
 | `sealed` | Stopped for a move. Can be exported. `unseal` runs it again. |
-| `moved`  | Retired. Never runs again (unless the instance moves back). |
+| `moved`  | Retired. Never runs again (unless the instance moves back).  |
 
 `$neo status --url URL --token T` shows `state` and `epoch`.
 
@@ -72,6 +72,7 @@ Prints `{ instanceId, epoch, secrets }`. `secrets` is `"kept"` (with a passphras
 A running turn from the source resumes here.
 
 Refused, with the target unchanged:
+
 - a wrong passphrase, or none for a bundle that has one;
 - a damaged or cut-off file;
 - a target that isn't new (or isn't this instance's old host).
@@ -123,10 +124,10 @@ $neo complete --url https://<worker>/i --token <cf token>
 
 The same steps over HTTP (`Authorization: Bearer <token>`); `NeoClient` has a method for each.
 
-| Route                    | Body                                                  | Client                     |
-| ------------------------ | ----------------------------------------------------- | -------------------------- |
-| `POST /i/move/seal`     | `{}`                                                  | `seal()`                   |
-| `POST /i/move/export`   | `{ "passphrase"?: "P" }` → the bundle stream          | `exportBundle(P?)`         |
-| `POST /i/move/import`   | the bundle; header `x-neo-passphrase: P` (optional)   | `importBundle(bundle, P?)` |
-| `POST /i/move/complete` | `{}`                                                  | `complete()`               |
-| `POST /i/move/unseal`   | `{}`                                                  | `unseal()`                 |
+| Route                   | Body                                                | Client                     |
+| ----------------------- | --------------------------------------------------- | -------------------------- |
+| `POST /i/move/seal`     | `{}`                                                | `seal()`                   |
+| `POST /i/move/export`   | `{ "passphrase"?: "P" }` → the bundle stream        | `exportBundle(P?)`         |
+| `POST /i/move/import`   | the bundle; header `x-neo-passphrase: P` (optional) | `importBundle(bundle, P?)` |
+| `POST /i/move/complete` | `{}`                                                | `complete()`               |
+| `POST /i/move/unseal`   | `{}`                                                | `unseal()`                 |

@@ -19,9 +19,9 @@ test("the instance serves the bundled web app next to its API", async () => {
   const asset = await fetch(new URL(script!, `${neo.origin()}/`));
   expect(asset.status).toBe(200);
   expect(await asset.text()).toContain("/agents/");
-  expect(await (await fetch(`${neo.origin()}/some/app/route`)).text()).toContain(
-    '<div id="root">',
-  );
+  expect(
+    await (await fetch(`${neo.origin()}/some/app/route`)).text(),
+  ).toContain('<div id="root">');
 });
 
 test("the API answers cross-origin requests (standalone apps)", async () => {
@@ -53,7 +53,7 @@ test("unauthenticated requests are refused before an instance exists", async () 
   });
   expect(wrong.status).toBe(401);
   expect(wrong.headers.get("access-control-allow-origin")).toBe("*");
-  expect(
-    (await fetch(`${base}/status`, { method: "OPTIONS" })).status,
-  ).toBe(204);
+  expect((await fetch(`${base}/status`, { method: "OPTIONS" })).status).toBe(
+    204,
+  );
 });

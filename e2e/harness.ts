@@ -7,7 +7,9 @@ export interface Instance {
   host: "cloudflare";
   call<T = any>(method: string, path: string, body?: unknown): Promise<T>;
   root<T = any>(method: string, path: string, body?: unknown): Promise<T>;
-  agent(id: string): { call<T = any>(method: string, path: string, body?: unknown): Promise<T> };
+  agent(id: string): {
+    call<T = any>(method: string, path: string, body?: unknown): Promise<T>;
+  };
   /** The instance's API base (`…/i`). */
   url(): string;
   agentUrl(id?: string): string;
@@ -34,7 +36,8 @@ export async function instance(): Promise<Instance> {
     headers.set("x-neo-instance", name);
     return fetch(input, { ...init, headers });
   }) as typeof fetch;
-  const client = () => new NeoClient({ url: base, token: TOKEN, fetch: fetcher });
+  const client = () =>
+    new NeoClient({ url: base, token: TOKEN, fetch: fetcher });
   const root = client();
   const agent = (id: string) => {
     const one = root.agent(id);

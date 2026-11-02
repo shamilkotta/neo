@@ -1,13 +1,8 @@
 import { fromBase64, toBase64 } from "../crypto";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "../sql";
 
-
 export type SnapshotValue =
-  | null
-  | number
-  | string
-  | { $b: string }
-  | { $i: string };
+  null | number | string | { $b: string } | { $i: string };
 
 export type SnapshotRecord =
   | {

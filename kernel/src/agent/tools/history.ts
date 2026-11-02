@@ -9,9 +9,7 @@ const STEPS = 20;
 export function historyTools(services: ToolServices) {
   const ready = async (conversationId: number) => {
     const c = await caller(services, conversationId);
-    await services.history.sync(
-      await services.conversation(),
-    );
+    await services.history.sync(await services.conversation());
     return c;
   };
   return [
@@ -53,9 +51,7 @@ export function historyTools(services: ToolServices) {
       execute: async (args, api) => {
         const c = await ready(api.conversationId);
         if (args.messageId !== undefined) {
-          const line = await services.history.message(
-            args.messageId,
-          );
+          const line = await services.history.message(args.messageId);
           if (!line) refuse("No such message.");
           const offset = args.offset ?? 0;
           const stepsFrom = args.workStepsOffset ?? 0;

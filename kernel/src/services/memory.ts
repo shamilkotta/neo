@@ -116,7 +116,6 @@ export class Memories {
     private readonly now: () => number = Date.now,
   ) {}
 
-
   async add(
     text: string,
     kind: MemoryKind = "searchable",
@@ -190,9 +189,7 @@ export class Memories {
     return rows.map(toMemory);
   }
 
-  async count(
-    ownerKind: MemoryOwnerKind = "agent",
-  ): Promise<number> {
+  async count(ownerKind: MemoryOwnerKind = "agent"): Promise<number> {
     return (
       (
         await this.db.get<{ n: number }>(
@@ -216,9 +213,9 @@ export class Memories {
         `A memory has 1 to ${MEMORY_TEXT_LIMIT} characters`,
       );
     if (change.kind === "essential" && current.kind !== "essential") {
-      const others = (
-        await this.list("essential", current.ownerKind)
-      ).filter((m) => m.id !== id);
+      const others = (await this.list("essential", current.ownerKind)).filter(
+        (m) => m.id !== id,
+      );
       if (bytes([...others, { ...current, text }]) > ESSENTIAL_BUDGET_BYTES)
         throw new MemoryError("The essential memories are over their budget");
     }
@@ -241,9 +238,7 @@ export class Memories {
     return true;
   }
 
-  async clear(
-    ownerKind: MemoryOwnerKind = "agent",
-  ): Promise<number> {
+  async clear(ownerKind: MemoryOwnerKind = "agent"): Promise<number> {
     const n = await this.count(ownerKind);
     await this.db.run(
       `DELETE FROM neo_memories WHERE owner_kind = ?`,
@@ -288,10 +283,7 @@ export class Memories {
     };
   }
 
-
-  private async projected(
-    requestId: string,
-  ): Promise<Map<string, Memory>> {
+  private async projected(requestId: string): Promise<Map<string, Memory>> {
     const all = new Map((await this.list()).map((m) => [m.id, m]));
     for (const op of await this.stagedOps(requestId)) {
       if (op.type === "remember") {
@@ -359,10 +351,7 @@ export class Memories {
         `A memory is at most ${MEMORY_TEXT_LIMIT} characters`,
       );
     const current = input.memoryId ? await this.get(input.memoryId) : undefined;
-    if (
-      input.memoryId &&
-      (!current || current.ownerKind !== "agent")
-    )
+    if (input.memoryId && (!current || current.ownerKind !== "agent"))
       throw new MemoryError(
         `No memory has the id "${input.memoryId}"; nothing was saved. Ids come only from search_memories or list_memories. To save a new memory, call remember again without memoryId.`,
       );
@@ -436,10 +425,7 @@ export class Memories {
     memoryId: string,
   ): Promise<{ status: string; memoryId: string }> {
     const current = await this.get(memoryId);
-    if (
-      !current ||
-            current.ownerKind !== "agent"
-    )
+    if (!current || current.ownerKind !== "agent")
       throw new MemoryError(
         "This memory does not belong to the current agent.",
       );
@@ -470,7 +456,7 @@ export class Memories {
       const memory = await this.get(change.memoryId);
       if (
         !memory ||
-                memory.revision !== change.expectedRevision ||
+        memory.revision !== change.expectedRevision ||
         seen.has(change.memoryId)
       )
         throw new MemoryError(
@@ -508,8 +494,7 @@ export class Memories {
         const op = JSON.parse(row.op) as StagedOp;
         try {
           applied += await this.apply(op);
-        } catch {
-        }
+        } catch {}
       }
     }
     await this.db.run(
