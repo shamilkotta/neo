@@ -35,13 +35,18 @@ async function putFile(
   bytes: Uint8Array<ArrayBuffer>,
   agent = "neo",
 ): Promise<string> {
-  const response = await neo.fetch(`${neo.agentUrl(agent)}/uploads?name=${name}`, {
-    method: "POST",
-    headers: { authorization: "Bearer t" },
-    body: bytes,
-  });
+  const response = await neo.fetch(
+    `${neo.agentUrl(agent)}/uploads?name=${name}`,
+    {
+      method: "POST",
+      headers: { authorization: "Bearer t" },
+      body: bytes,
+    },
+  );
   expect(response.ok).toBe(true);
-  const { upload } = (await response.json()) as { upload: { id: string; name: string } };
+  const { upload } = (await response.json()) as {
+    upload: { id: string; name: string };
+  };
   return `/.staging/${upload.id}/${upload.name}`;
 }
 
@@ -50,9 +55,12 @@ async function getFile(
   path: string,
   agent = "neo",
 ): Promise<Uint8Array> {
-  const response = await neo.fetch(`${neo.agentUrl(agent)}/files?path=${path}`, {
-    headers: { authorization: "Bearer t" },
-  });
+  const response = await neo.fetch(
+    `${neo.agentUrl(agent)}/files?path=${path}`,
+    {
+      headers: { authorization: "Bearer t" },
+    },
+  );
   expect(response.ok).toBe(true);
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -129,9 +137,9 @@ describe("move", () => {
       "remember the milk\n",
     );
     expect(Bun.hash(await getFile(second, data))).toBe(Bun.hash(big));
-    expect(
-      new TextDecoder().decode(await getFile(second, notes, helper)),
-    ).toBe("helper's");
+    expect(new TextDecoder().decode(await getFile(second, notes, helper))).toBe(
+      "helper's",
+    );
     const agents = (await client(second).agents()).map((a) => a.id);
     expect(agents).toEqual(["neo", helper]);
     const { providers } = await second.root("GET", "/providers");
@@ -141,8 +149,16 @@ describe("move", () => {
 
     const stranger = await open();
     await client(stranger).seal();
-    const other = await new Response(await client(stranger).exportBundle()).arrayBuffer();
-    expect((await client(first).importBundle(other).catch((e) => e)).status).toBe(409);
+    const other = await new Response(
+      await client(stranger).exportBundle(),
+    ).arrayBuffer();
+    expect(
+      (
+        await client(first)
+          .importBundle(other)
+          .catch((e) => e)
+      ).status,
+    ).toBe(409);
 
     await startLongTurn(second, "g2");
     expect(await move(second, first)).toEqual({
@@ -195,9 +211,9 @@ describe("move", () => {
       .importBundle(bundle)
       .catch((e) => e);
     expect(missing.status).toBe(400);
-    expect(
-      (await client(target).importBundle(bundle, "right")).secrets,
-    ).toBe("kept");
+    expect((await client(target).importBundle(bundle, "right")).secrets).toBe(
+      "kept",
+    );
   });
 
   test("a used instance refuses an import, and a damaged bundle is refused", async () => {
@@ -207,14 +223,16 @@ describe("move", () => {
       await new Response(await client(source).exportBundle()).arrayBuffer(),
     );
     const used = await open();
-    const mine = await putFile(used, "mine.txt", new TextEncoder().encode("mine"));
+    const mine = await putFile(
+      used,
+      "mine.txt",
+      new TextEncoder().encode("mine"),
+    );
     const refused = await client(used)
       .importBundle(bundle)
       .catch((e) => e);
     expect(refused.status).toBe(409);
-    expect(new TextDecoder().decode(await getFile(used, mine))).toBe(
-      "mine",
-    );
+    expect(new TextDecoder().decode(await getFile(used, mine))).toBe("mine");
 
     const target = await open();
     const cut = bundle.slice(0, Math.floor(bundle.length * 0.6));

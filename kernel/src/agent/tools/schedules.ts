@@ -123,12 +123,9 @@ export function scheduleTools(services: ToolServices) {
         const c = await caller(services, api.conversationId);
         const timezone = await services.timezone();
         const schedule = await attempt(() =>
-          services.schedules.create(
-            args as ScheduleInput,
-            "agent",
-            timezone,
-            { originKey: `tool:${api.taskId}` },
-          ),
+          services.schedules.create(args as ScheduleInput, "agent", timezone, {
+            originKey: `tool:${api.taskId}`,
+          }),
         );
         await services.changed();
         return json({ created: await view(schedule) });
@@ -148,9 +145,7 @@ export function scheduleTools(services: ToolServices) {
       replay: "safe",
       execute: async (args, api) => {
         const c = await caller(services, api.conversationId);
-        const list = await services.schedules.list(
-          args.all ? "all" : "active",
-        );
+        const list = await services.schedules.list(args.all ? "all" : "active");
         return json({ schedules: await Promise.all(list.map(view)) });
       },
     }),

@@ -134,16 +134,25 @@ export class Registry {
     const fields = clean(change);
     if (change.name !== undefined && !fields.name)
       throw new RegistryError("name is empty");
-    if (fields.name && fields.name.toLowerCase() !== current.name.toLowerCase()) {
+    if (
+      fields.name &&
+      fields.name.toLowerCase() !== current.name.toLowerCase()
+    ) {
       if (await this.byName(fields.name))
-        throw new RegistryError(`An agent named "${fields.name}" already exists`);
+        throw new RegistryError(
+          `An agent named "${fields.name}" already exists`,
+        );
     }
     await this.db.run(
       `UPDATE neo_agents SET name = ?, title = ?, description = ?, instructions = ?, updated_at = ? WHERE id = ?`,
       fields.name ?? current.name,
       fields.title === undefined ? current.title : fields.title,
-      fields.description === undefined ? current.description : fields.description,
-      fields.instructions === undefined ? current.instructions : fields.instructions,
+      fields.description === undefined
+        ? current.description
+        : fields.description,
+      fields.instructions === undefined
+        ? current.instructions
+        : fields.instructions,
       this.now(),
       id,
     );

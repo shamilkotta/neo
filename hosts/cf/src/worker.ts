@@ -4,15 +4,11 @@ import { agentName } from "./links";
 export { InstanceDO } from "./instance";
 export { AgentDO } from "./agent";
 
-/** A Worker is one instance. Tests (NEO_TEST=1) may pick a separate one per test. */
 const INSTANCE = "main";
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 export default {
-  // /i/…                the instance (coordinator)
-  // /i/agents/<id>/…    one agent (its own Durable Object)
-  // anything else       the web app
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
     const api = /^\/i(\/.*)?$/.exec(url.pathname);
     if (!api) return env.ASSETS.fetch(request);

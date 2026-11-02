@@ -3,7 +3,6 @@ import { type AgentInit, RECOVERY_MS } from "@neo/kernel";
 import type { AgentMessage, AgentProfile, AgentStatus } from "@neo/client";
 import { CloudflareAgentHost } from "./host";
 
-/** One agent: `<instance>/<agentId>`. Made only by its coordinator. */
 export class AgentDO extends DurableObject<Env> {
   private readonly host: CloudflareAgentHost;
   private readonly ready: Promise<void>;
@@ -26,7 +25,7 @@ export class AgentDO extends DurableObject<Env> {
     return this.host.agent;
   }
 
-  override async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request) {
     await this.ready;
     return this.host.fetch(request, {
       instance: request.headers.get("x-neo-instance")!,
@@ -34,12 +33,12 @@ export class AgentDO extends DurableObject<Env> {
     });
   }
 
-  override async alarm(): Promise<void> {
+  override async alarm() {
     await this.ready;
     await this.host.alarm();
   }
 
-  async deliver(message: AgentMessage): Promise<void> {
+  async deliver(message: AgentMessage) {
     await (await this.agent()).deliver(message);
   }
 
@@ -47,54 +46,54 @@ export class AgentDO extends DurableObject<Env> {
     instance: string,
     agentId: string,
     from: string,
-  ): Promise<{ stopped: boolean; cancelled: number }> {
+  ) {
     return (await this.agent()).interrupt({ instance, agentId }, from);
   }
 
-  async provision(init: AgentInit): Promise<void> {
+  async provision(init: AgentInit) {
     await (await this.agent()).provision(init);
   }
 
-  async profileChanged(profile: AgentProfile): Promise<void> {
+  async profileChanged(profile: AgentProfile) {
     await (await this.agent()).profileChanged(profile);
   }
 
-  async configChanged(revision: number): Promise<void> {
+  async configChanged(revision: number) {
     await (await this.agent()).configChanged(revision);
   }
 
-  async status(): Promise<AgentStatus | undefined> {
+  async status() {
     return (await this.agent()).status();
   }
 
-  async isNew(): Promise<boolean> {
+  async isNew() {
     return (await this.agent()).isNew();
   }
 
-  async seal(): Promise<void> {
+  async seal() {
     await (await this.agent()).seal();
   }
 
-  async unseal(): Promise<void> {
+  async unseal() {
     await (await this.agent()).unseal();
   }
 
-  async markMoved(): Promise<void> {
+  async markMoved() {
     await (await this.agent()).markMoved();
   }
 
-  async exportPart(): Promise<ReadableStream<Uint8Array>> {
+  async exportPart() {
     return (await this.agent()).exportPart();
   }
 
   async importPart(
     init: AgentInit,
     part: ReadableStream<Uint8Array>,
-  ): Promise<void> {
+  ) {
     await (await this.agent()).importPart(init, part);
   }
 
-  async destroy(): Promise<void> {
+  async destroy() {
     await (await this.agent()).destroy();
   }
 }

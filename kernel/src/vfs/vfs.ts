@@ -8,7 +8,6 @@ import {
   zeroStream,
 } from "./blobs";
 
-
 export const CHUNK_SIZE = 512 * 1024;
 export const INLINE_MAX = 256 * 1024;
 export const MAX_FILE_SIZE = 64 * 1024 * 1024;
@@ -126,7 +125,6 @@ const TRASH = "host_vfs_trash_blobs";
 const HOST_TABLES = `CREATE TABLE IF NOT EXISTS ${PENDING} (key TEXT PRIMARY KEY) STRICT;
   CREATE TABLE IF NOT EXISTS ${TRASH} (key TEXT PRIMARY KEY) STRICT`;
 
-
 export function readOnly(vfs: Vfs, roots: string[]): Vfs {
   const inside = (p: string) =>
     roots.some((r) => p === r || p.startsWith(`${r}/`));
@@ -223,8 +221,7 @@ export class Vfs {
     for (const listener of [...this.listeners]) {
       try {
         listener(paths);
-      } catch {
-      }
+      } catch {}
     }
   }
 
@@ -620,7 +617,6 @@ export class Vfs {
     );
     return rows.map(toStat);
   }
-
 
   private async store(
     p: string,

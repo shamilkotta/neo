@@ -13,7 +13,7 @@ export class CloudflareBlobs implements BlobStore {
     return `${this.prefix}/${key}`;
   }
 
-  async put(key: string, body: ReadableStream<Uint8Array>): Promise<void> {
+  async put(key: string, body: ReadableStream<Uint8Array>) {
     const name = this.name(key);
     let upload: R2MultipartUpload | undefined;
     const parts: R2UploadedPart[] = [];
@@ -39,10 +39,7 @@ export class CloudflareBlobs implements BlobStore {
     }
   }
 
-  async get(
-    key: string,
-    range?: { offset: number; length: number },
-  ): Promise<ReadableStream<Uint8Array> | null> {
+  async get(key: string, range?: { offset: number; length: number }) {
     if (range?.length === 0) return new Blob([]).stream();
     const object = await this.bucket.get(
       this.name(key),
@@ -51,11 +48,11 @@ export class CloudflareBlobs implements BlobStore {
     return object?.body ?? null;
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string) {
     await this.bucket.delete(this.name(key));
   }
 
-  async clear(): Promise<void> {
+  async clear() {
     for (let cursor: string | undefined; ;) {
       const page = await this.bucket.list({
         prefix: `${this.prefix}/`,

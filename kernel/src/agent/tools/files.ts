@@ -32,13 +32,12 @@ export function fileTools(services: ToolServices) {
           path,
           api.callId,
           args.name,
-        ).catch(
-          (e) =>
-            refuse(
-              e instanceof AttachmentError || e instanceof VfsError
-                ? e.message
-                : `Could not send ${path}: ${e instanceof Error ? e.message : String(e)}`,
-            ),
+        ).catch((e) =>
+          refuse(
+            e instanceof AttachmentError || e instanceof VfsError
+              ? e.message
+              : `Could not send ${path}: ${e instanceof Error ? e.message : String(e)}`,
+          ),
         );
         const caption = args.caption?.trim() || null;
         return {

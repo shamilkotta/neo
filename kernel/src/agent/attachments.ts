@@ -11,7 +11,12 @@ export const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ATTACHMENTS_SIZE = 256 * 1024 * 1024;
 
-const INLINE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const INLINE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
 
 const TYPES: Record<string, string> = {
   png: "image/png",
@@ -65,7 +70,8 @@ export function safeName(name: string): string {
 function uniqueName(name: string, taken: Set<string>): string {
   let candidate = name;
   const dot = name.lastIndexOf(".");
-  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  const [stem, ext] =
+    dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
   for (let n = 2; taken.has(candidate.toLowerCase()); n++)
     candidate = `${stem} (${n})${ext}`;
   taken.add(candidate.toLowerCase());
@@ -93,7 +99,9 @@ export async function placeUploads(
   inputs: AttachmentInput[],
 ): Promise<Attachment[]> {
   if (inputs.length > MAX_ATTACHMENTS)
-    throw new AttachmentError(`A message attaches at most ${MAX_ATTACHMENTS} files`);
+    throw new AttachmentError(
+      `A message attaches at most ${MAX_ATTACHMENTS} files`,
+    );
   const sources: Source[] = [];
   for (const input of inputs) {
     const id = input?.id;
@@ -111,7 +119,9 @@ export async function placeUploads(
   }
   const placed = await place(vfs, sources, ulid(), true);
   for (const input of inputs)
-    await vfs.rm(`${STAGING_ROOT}/${input.id}`, { recursive: true }).catch(() => {});
+    await vfs
+      .rm(`${STAGING_ROOT}/${input.id}`, { recursive: true })
+      .catch(() => {});
   return placed;
 }
 
@@ -186,9 +196,7 @@ export function attachmentsBlock(
   notes: Map<string, string>,
 ): string {
   const lines = attachments.map((a) => {
-    const note = inline.has(a.path)
-      ? "shown to you below"
-      : notes.get(a.path);
+    const note = inline.has(a.path) ? "shown to you below" : notes.get(a.path);
     return `${a.path} (${a.mimeType}, ${size(a.size)}${note ? `; ${note}` : ""})`;
   });
   return `<attachments>\n${lines.join("\n")}\n</attachments>`;
@@ -204,17 +212,28 @@ export async function inlineCheck(
   if (!vision)
     return { inline: false, note: "the current model cannot see images" };
   if (!INLINE_TYPES.has(attachment.mimeType))
-    return { inline: false, note: `not shown: ${attachment.mimeType} cannot be sent inline` };
+    return {
+      inline: false,
+      note: `not shown: ${attachment.mimeType} cannot be sent inline`,
+    };
   if (Math.ceil(attachment.size / 3) * 4 > DEFAULT_IMAGE_LIMITS.maxBytes)
     return {
       inline: false,
       note: `not shown: too large to send (${size(attachment.size)}); ${readIt} or process it with the shell`,
     };
   const file = await vfs.open(attachment.path);
-  const dims = imageSize(await file.read(0, Math.min(file.stat.size, 256 * 1024)));
+  const dims = imageSize(
+    await file.read(0, Math.min(file.stat.size, 256 * 1024)),
+  );
   if (!dims)
-    return { inline: false, note: `not shown: its size cannot be read; ${readIt}` };
-  if (dims.width > DEFAULT_IMAGE_LIMITS.maxWidth || dims.height > DEFAULT_IMAGE_LIMITS.maxHeight)
+    return {
+      inline: false,
+      note: `not shown: its size cannot be read; ${readIt}`,
+    };
+  if (
+    dims.width > DEFAULT_IMAGE_LIMITS.maxWidth ||
+    dims.height > DEFAULT_IMAGE_LIMITS.maxHeight
+  )
     return {
       inline: false,
       note: `not shown: ${dims.width}x${dims.height} is larger than ${DEFAULT_IMAGE_LIMITS.maxWidth}x${DEFAULT_IMAGE_LIMITS.maxHeight}`,
@@ -227,7 +246,8 @@ export function imageSize(
 ): { width: number; height: number } | undefined {
   const u16 = (i: number) => (b[i]! << 8) | b[i + 1]!;
   const le16 = (i: number) => b[i]! | (b[i + 1]! << 8);
-  const u32 = (i: number) => ((b[i]! << 24) | (b[i + 1]! << 16) | (b[i + 2]! << 8) | b[i + 3]!) >>> 0;
+  const u32 = (i: number) =>
+    ((b[i]! << 24) | (b[i + 1]! << 16) | (b[i + 2]! << 8) | b[i + 3]!) >>> 0;
   const tag = (i: number, s: string) =>
     [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
   if (b.length >= 24 && b[0] === 0x89 && tag(1, "PNG"))
@@ -239,7 +259,10 @@ export function imageSize(
       return { width: le16(26) & 0x3fff, height: le16(28) & 0x3fff };
     if (tag(12, "VP8L")) {
       const bits = b[21]! | (b[22]! << 8) | (b[23]! << 16) | (b[24]! << 24);
-      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1,
+      };
     }
     if (tag(12, "VP8X"))
       return {
@@ -249,14 +272,18 @@ export function imageSize(
     return undefined;
   }
   if (b[0] === 0xff && b[1] === 0xd8) {
-    for (let i = 2; i + 9 < b.length; ) {
+    for (let i = 2; i + 9 < b.length;) {
       if (b[i] !== 0xff) return undefined;
       const marker = b[i + 1]!;
       if (marker === 0xff) {
         i++;
         continue;
       }
-      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
+      if (
+        marker >= 0xc0 &&
+        marker <= 0xcf &&
+        ![0xc4, 0xc8, 0xcc].includes(marker)
+      )
         return { width: u16(i + 7), height: u16(i + 5) };
       i += 2 + u16(i + 2);
     }
@@ -264,14 +291,19 @@ export function imageSize(
   return undefined;
 }
 
-async function sniffedType(vfs: Vfs, path: string, claimed: string): Promise<string> {
+async function sniffedType(
+  vfs: Vfs,
+  path: string,
+  claimed: string,
+): Promise<string> {
   if (!claimed.startsWith("image/")) return claimed;
   const file = await vfs.open(path);
   const head = await file.read(0, 16);
   const tag = (i: number, s: string) =>
     [...s].every((c, j) => head[i + j] === c.charCodeAt(0));
   if (head[0] === 0x89 && tag(1, "PNG")) return "image/png";
-  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff)
+    return "image/jpeg";
   if (tag(0, "GIF8")) return "image/gif";
   if (tag(0, "RIFF") && tag(8, "WEBP")) return "image/webp";
   return INLINE_TYPES.has(claimed) ? "application/octet-stream" : claimed;

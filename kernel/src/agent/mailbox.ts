@@ -160,7 +160,6 @@ export class Mailbox {
     this.closed = true;
   }
 
-
   async message(id: string): Promise<MailboxMessage | undefined> {
     const row = await this.db.get<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE id = ?`,
@@ -217,7 +216,6 @@ export class Mailbox {
     return new Map(rows.map((r) => [r.id, toTurn(r)]));
   }
 
-
   async byClientId(clientId: string): Promise<MailboxMessage | undefined> {
     const row = await this.db.get<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE client_id = ?`,
@@ -266,14 +264,9 @@ export class Mailbox {
       return { message: toMessage(row!), fresh: true };
     });
     if (!message.fresh) return message.message;
-    await this.events.emit(
-      "message.queued",
-      { message: message.message },
-    );
+    await this.events.emit("message.queued", { message: message.message });
     if (input.steer && (await this.currentTurn())) {
-      await this.steer(message.message.id).catch(() =>
-        this.drain(),
-      );
+      await this.steer(message.message.id).catch(() => this.drain());
     } else {
       await this.drain();
     }
@@ -313,10 +306,10 @@ export class Mailbox {
             m.id,
           );
       });
-      await this.events.emit(
-        "turn.started",
-        { turnId, messageIds: queued.map((m) => m.id) },
-      );
+      await this.events.emit("turn.started", {
+        turnId,
+        messageIds: queued.map((m) => m.id),
+      });
       await this.submitTurn(turnId, input);
     });
   }
@@ -324,10 +317,7 @@ export class Mailbox {
   steer(messageId: string): Promise<void> {
     return this.lane(async () => {
       const message = await this.message(messageId);
-      if (
-        !message ||
-        message.status !== "queued"
-      )
+      if (!message || message.status !== "queued")
         throw new MailboxError(
           "Only a queued message can join the running turn",
         );
@@ -362,10 +352,7 @@ export class Mailbox {
         submission.id,
         message.id,
       );
-      await this.events.emit(
-        "message.steered",
-        { messageId, turnId: turn.id },
-      );
+      await this.events.emit("message.steered", { messageId, turnId: turn.id });
       this.trackSteer(message.id, submission.id);
     });
   }
@@ -398,10 +385,7 @@ export class Mailbox {
     await this.events.emit("message.cancelled", { messageId });
   }
 
-  async edit(
-    messageId: string,
-    text: string,
-  ): Promise<MailboxMessage> {
+  async edit(messageId: string, text: string): Promise<MailboxMessage> {
     const trimmed = text.trim();
     if (!trimmed) throw new MailboxError("The message is empty");
     if (trimmed.length > MAX_TEXT)
@@ -464,11 +448,7 @@ export class Mailbox {
     await this.drain();
   }
 
-
-  private async submitTurn(
-    turnId: string,
-    input: TurnInput,
-  ): Promise<void> {
+  private async submitTurn(turnId: string, input: TurnInput): Promise<void> {
     await this.hooks.beforeWork();
     const conversation = await this.hooks.conversation();
     const submission = await conversation.submit(
@@ -495,19 +475,13 @@ export class Mailbox {
     this.trackTurn(turnId, submission.id);
   }
 
-  private trackTurn(
-    turnId: string,
-    submissionId: SubmissionId,
-  ): void {
+  private trackTurn(turnId: string, submissionId: SubmissionId): void {
     this.follow(`turn:${turnId}`, submissionId, (record) =>
       this.lane(() => this.settleTurn(turnId, record)),
     );
   }
 
-  private trackSteer(
-    messageId: string,
-    submissionId: SubmissionId,
-  ): void {
+  private trackSteer(messageId: string, submissionId: SubmissionId): void {
     this.follow(`steer:${messageId}`, submissionId, (record) =>
       this.lane(() => this.settleSteer(messageId, record)),
     );
@@ -544,9 +518,7 @@ export class Mailbox {
     if (!row || row.status !== "running") return;
     const { status, error } = outcome(record, row.stop_requested === 1);
     const answer =
-      record.status === "done"
-        ? await this.entryText(record.answer)
-        : null;
+      record.status === "done" ? await this.entryText(record.answer) : null;
     const messages = await this.turnMessages(turnId);
     const quiet =
       status === "completed" &&
@@ -576,10 +548,10 @@ export class Mailbox {
     try {
       await this.hooks.turnSettled(turn, await this.turnMessages(turnId));
     } catch (e) {
-      await this.events.emit(
-        "error",
-        { where: "turn.settled", message: errorText(e) },
-      );
+      await this.events.emit("error", {
+        where: "turn.settled",
+        message: errorText(e),
+      });
     }
     void this.drain();
   }
@@ -615,9 +587,7 @@ export class Mailbox {
     await this.events.emit("message.settled", { messageId, status });
   }
 
-  private async entryText(
-    entryId: unknown,
-  ): Promise<string | null> {
+  private async entryText(entryId: unknown): Promise<string | null> {
     const conversation = await this.hooks.conversation();
     const page = await conversation.entries(
       { order: "descending" },
@@ -640,9 +610,7 @@ export class Mailbox {
       let part = header(m, timezone);
       if (m.text) part += `\n${m.text}`;
       if (m.attachments.length) {
-        const { inline, notes } = await this.hooks.checkImages(
-          m.attachments,
-        );
+        const { inline, notes } = await this.hooks.checkImages(m.attachments);
         part += `\n${attachmentsBlock(m.attachments, inline, notes)}`;
         for (const a of m.attachments)
           if (inline.has(a.path))

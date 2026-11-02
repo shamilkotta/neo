@@ -8,7 +8,6 @@ import {
   WHOLE_READ_MAX,
 } from "./vfs";
 
-
 const POSIX: Record<VfsError["code"], [string, string]> = {
   not_found: ["ENOENT", "no such file or directory"],
   is_directory: ["EISDIR", "illegal operation on a directory"],

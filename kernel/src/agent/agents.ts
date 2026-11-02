@@ -54,12 +54,18 @@ export class AgentSelf {
   }
 
   async setProfile(profile: AgentProfile): Promise<void> {
-    await this.db.run(`UPDATE neo_agent SET profile = ?`, JSON.stringify(profile));
+    await this.db.run(
+      `UPDATE neo_agent SET profile = ?`,
+      JSON.stringify(profile),
+    );
     this.cache = undefined;
   }
 
   async setConversation(conversationId: number): Promise<void> {
-    await this.db.run(`UPDATE neo_agent SET conversation_id = ?`, conversationId);
+    await this.db.run(
+      `UPDATE neo_agent SET conversation_id = ?`,
+      conversationId,
+    );
     this.cache = undefined;
   }
 

@@ -26,12 +26,7 @@ import {
 } from "../move/bundle";
 import { wipeDatabase } from "../move/snapshot";
 import { IMPORT_MARKER, type InstanceState, StateError } from "../neo";
-import {
-  createCoordinatorSchema,
-  getMeta,
-  hasTable,
-  setMeta,
-} from "../schema";
+import { createCoordinatorSchema, getMeta, hasTable, setMeta } from "../schema";
 import { Events } from "../services/events";
 import { ModelCatalog, ProviderStore } from "../services/providers";
 import type { ProviderConfig } from "../services/providers";
@@ -160,7 +155,6 @@ export class NeoCoordinator {
     await setMeta(this.host.db, "state", state);
   }
 
-
   /** The agent's init, if the registry has an active agent by that id. */
   async agentInit(agentId: string): Promise<AgentInit | undefined> {
     if (this.state_ !== "active") return undefined;
@@ -244,7 +238,6 @@ export class NeoCoordinator {
     await this.events.emit("providers.changed", {});
   }
 
-
   async createAgent(
     input: NewAgent,
     by: string | null = null,
@@ -298,7 +291,6 @@ export class NeoCoordinator {
       throw new StateError(this.state_, `The instance is ${this.state_}`);
   }
 
-
   private async agentIds(): Promise<string[]> {
     return this.services().registry.ids();
   }
@@ -335,7 +327,10 @@ export class NeoCoordinator {
 
   async exportBundle(passphrase?: string): Promise<ReadableStream<Uint8Array>> {
     if (this.state_ !== "sealed" && this.state_ !== "moved")
-      throw new StateError(this.state_, "Seal the instance before exporting it");
+      throw new StateError(
+        this.state_,
+        "Seal the instance before exporting it",
+      );
     const { db, blobs } = this.host;
     const live = this.services();
     const header: BundleHeader = {
@@ -379,7 +374,11 @@ export class NeoCoordinator {
   async importBundle(
     body: ReadableStream<Uint8Array>,
     passphrase?: string,
-  ): Promise<{ instanceId: string; epoch: number; secrets: "kept" | "dropped" }> {
+  ): Promise<{
+    instanceId: string;
+    epoch: number;
+    secrets: "kept" | "dropped";
+  }> {
     const homecoming = this.state_ === "moved";
     if (!homecoming && !(await this.isNew()))
       throw new StateError(
@@ -417,7 +416,11 @@ export class NeoCoordinator {
     const touched: string[] = [];
     try {
       const first = await records.next();
-      if (first.done || first.value.t !== "part" || first.value.kind !== "coordinator")
+      if (
+        first.done ||
+        first.value.t !== "part" ||
+        first.value.kind !== "coordinator"
+      )
         throw new BundleError("The bundle is damaged (no instance part)");
       await readPart(records, db, blobs);
       if ((await getMeta(db, "instance_id")) !== header.instanceId)
@@ -437,7 +440,8 @@ export class NeoCoordinator {
       let parts = 1;
       for (;;) {
         const step = await records.next();
-        if (step.done) throw new BundleError("The bundle is truncated (no end record)");
+        if (step.done)
+          throw new BundleError("The bundle is truncated (no end record)");
         const record = step.value;
         if (record.t === "end") {
           if (record.parts !== parts)
@@ -450,7 +454,9 @@ export class NeoCoordinator {
           throw new BundleError("The bundle is damaged (unexpected record)");
         const profile = await registry.get(record.id);
         if (!profile)
-          throw new BundleError(`The bundle's agent ${record.id} is not listed`);
+          throw new BundleError(
+            `The bundle's agent ${record.id} is not listed`,
+          );
         touched.push(record.id);
         await this.cell(record.id).importPart(
           this.initOf(profile),
