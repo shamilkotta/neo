@@ -5,12 +5,12 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "types": ["bun"]
   },
-  // The Cloudflare package checks against its generated Workers types (its own tsconfig).
   "exclude": [
     "node_modules",
     "**/node_modules",

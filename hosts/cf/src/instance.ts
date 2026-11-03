@@ -1,14 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
+import type { SharedRequest } from "@neo/kernel";
 import type {
-  AgentConfig,
-  AgentInit,
-  SharedOp,
-  SharedResult,
-} from "@neo/kernel";
-import type {
-  AgentProfile,
+  AgentId,
   AgentStatus,
-  AgentSummary,
   NewAgent,
   ProfileChange,
 } from "@neo/client";
@@ -28,10 +22,13 @@ export class InstanceDO extends DurableObject<Env> {
 
   override async fetch(request: Request) {
     await this.ready;
-    return this.host.fetch(request, request.headers.get("x-neo-instance")!);
+    const instance = request.headers.get("x-neo-instance");
+    if (!instance)
+      return Response.json({ error: "No instance" }, { status: 404 });
+    return this.host.fetch(request, instance);
   }
 
-  async agentInit(instance: string, agentId: string) {
+  async agentInit(instance: string, agentId: AgentId) {
     await this.ready;
     return (await this.host.named(instance)).agentInit(agentId);
   }
@@ -41,7 +38,7 @@ export class InstanceDO extends DurableObject<Env> {
     return (await this.host.named(instance)).agentConfig();
   }
 
-  async agentReport(instance: string, agentId: string, status: AgentStatus) {
+  async agentReport(instance: string, agentId: AgentId, status: AgentStatus) {
     await this.ready;
     await (await this.host.named(instance)).report(agentId, status);
   }
@@ -61,14 +58,14 @@ export class InstanceDO extends DurableObject<Env> {
     return (await this.host.named(instance)).createAgent(input, by, key);
   }
 
-  async agentUpdate(instance: string, agentId: string, change: ProfileChange) {
+  async agentUpdate(instance: string, agentId: AgentId, change: ProfileChange) {
     await this.ready;
     return (await this.host.named(instance)).updateAgent(agentId, change);
   }
 
-  async sharedCall(instance: string, op: SharedOp, args: unknown[]) {
+  async sharedCall(instance: string, request: SharedRequest) {
     await this.ready;
-    return (await this.host.named(instance)).sharedCall(op, args);
+    return (await this.host.named(instance)).sharedCall(request);
   }
 
   async sharedStream(instance: string, path: string) {

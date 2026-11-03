@@ -1,5 +1,7 @@
 import {
   type AgentClient,
+  type AgentId,
+  type EventType,
   NeoClient,
   type NeoEvent,
   type Status,
@@ -10,7 +12,7 @@ import { apiUrl, forgetToken, loadToken, saveToken } from "./config";
 import { Panel, TABS, type Tab } from "./Panels";
 import { useNeo } from "./useNeo";
 
-const PANEL_EVENTS: Record<string, Tab[]> = {
+const PANEL_EVENTS: Partial<Record<EventType, Tab[]>> = {
   "schedule.changed": ["Schedules"],
   "schedule.fired": ["Schedules"],
   "agent.changed": ["Agent"],
@@ -78,7 +80,6 @@ function Connect({
 const agentFromHash = () =>
   new URLSearchParams(location.hash.slice(1)).get("agent");
 
-/** The instance: the agent list, and the selected agent's chat. */
 function Instance({
   root: initial,
   onForget,
@@ -193,7 +194,7 @@ function AgentView({
   onDeleted,
 }: {
   root: NeoClient;
-  agentId: string;
+  agentId: AgentId;
   status: Status;
   onForget: () => void;
   onDeleted: () => void;
@@ -213,7 +214,8 @@ function AgentView({
   }, []);
   const neo = useNeo(client, bump);
   const running = !!neo.status?.turn;
-  const paused = !!neo.status?.agent.paused;
+  const active = neo.status?.state === "active" ? neo.status.agent : undefined;
+  const paused = !!active?.paused;
   return (
     <>
       <div id="main">
@@ -221,7 +223,7 @@ function AgentView({
           <span
             className={`dot ${paused ? "paused" : running ? "running" : "idle"}`}
           />
-          <h1>{neo.status?.agent.name ?? agentId}</h1>
+          <h1>{active?.name ?? agentId}</h1>
           <span id="state">
             {paused ? "paused" : running ? "working" : "idle"} ·{" "}
             {status.model

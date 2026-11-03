@@ -1,3 +1,5 @@
+import { present } from "../errors";
+import { Type, type Static } from "typebox";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type {
   Conversation,
@@ -8,18 +10,24 @@ import type {
 } from "@earendil-works/pi-durable";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { ulid } from "../ids";
-import { type Attachment, attachmentsBlock } from "./attachments";
-import { type AgentMeta, agentHeader } from "./messaging";
+import { isSubmissionId } from "../pi-ids";
+import { attachmentsBlock } from "./attachments";
+import { agentHeader } from "./messaging";
 import { QUIET_REPLY } from "./schedules";
 import type { Events } from "../services/events";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type {
-  MessageSource,
-  MessageStatus,
-  TurnStatus,
-  MailboxMessage,
-  Turn,
+import {
+  JsonObject,
+  type MessageSource,
+  type MessageStatus,
+  type TurnStatus,
+  type MailboxMessage,
+  type Turn,
   InputMessage,
+  parseJson,
+  Attachment,
+  parse,
+  MessageOrigin,
 } from "@neo/client";
 export type {
   MessageSource,
@@ -29,7 +37,7 @@ export type {
   Turn,
 } from "@neo/client";
 
-export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const MAILBOX_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_mailbox (
     id TEXT PRIMARY KEY,
     source TEXT NOT NULL CHECK (source IN ('user', 'schedule', 'system', 'agent')),
@@ -68,23 +76,21 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   );
 };
 
-export interface InputEntryData {
-  turnId: string;
-  steered?: boolean;
-  messages: InputMessage[];
-  [key: string]: unknown;
-}
+export const InputEntryData = Type.Object({
+  turnId: Type.String(),
+  steered: Type.Boolean(),
+  messages: Type.Array(InputMessage),
+});
+export type InputEntryData = Static<typeof InputEntryData>;
 
 export const INPUT_ENTRY = "neo.input";
 
-export interface SendInput {
+export type SendInput = MessageOrigin & {
   text: string;
   attachments?: Attachment[];
-  source?: MessageSource;
-  meta?: Record<string, unknown>;
   clientId?: string;
   steer?: boolean;
-}
+};
 
 export interface MailboxHooks {
   conversation(): Promise<Conversation>;
@@ -98,16 +104,18 @@ export interface MailboxHooks {
   readImage(path: string, mimeType: string): Promise<ImageContent | undefined>;
 }
 
-interface TurnInput {
-  content: string;
-  images?: InlineImage[];
-  entry: { kind: string; data: InputEntryData };
-}
+const InlineImage = Type.Object({
+  path: Type.String(),
+  mimeType: Type.String(),
+});
+type InlineImage = Static<typeof InlineImage>;
 
-interface InlineImage {
-  path: string;
-  mimeType: string;
-}
+const TurnInput = Type.Object({
+  content: Type.String(),
+  images: Type.Array(InlineImage),
+  data: InputEntryData,
+});
+type TurnInput = Static<typeof TurnInput>;
 
 interface MessageRow {
   id: string;
@@ -156,11 +164,11 @@ export class Mailbox {
     private readonly now: () => number,
   ) {}
 
-  close(): void {
+  close() {
     this.closed = true;
   }
 
-  async message(id: string): Promise<MailboxMessage | undefined> {
+  async message(id: string) {
     const row = await this.db.get<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE id = ?`,
       id,
@@ -168,14 +176,14 @@ export class Mailbox {
     return row ? toMessage(row) : undefined;
   }
 
-  async queue(): Promise<MailboxMessage[]> {
+  async queue() {
     const rows = await this.db.all<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE status = 'queued' ORDER BY position, created_at`,
     );
     return rows.map(toMessage);
   }
 
-  async turn(id: string): Promise<Turn | undefined> {
+  async turn(id: string) {
     const row = await this.db.get<TurnRow>(
       `SELECT * FROM neo_turns WHERE id = ?`,
       id,
@@ -183,14 +191,14 @@ export class Mailbox {
     return row ? toTurn(row) : undefined;
   }
 
-  async currentTurn(): Promise<Turn | undefined> {
+  async currentTurn() {
     const row = await this.db.get<TurnRow>(
       `SELECT * FROM neo_turns WHERE status = 'running' ORDER BY started_at DESC LIMIT 1`,
     );
     return row ? toTurn(row) : undefined;
   }
 
-  async turnMessages(turnId: string): Promise<MailboxMessage[]> {
+  async turnMessages(turnId: string) {
     const rows = await this.db.all<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE turn_id = ? ORDER BY steered, position, created_at`,
       turnId,
@@ -198,7 +206,7 @@ export class Mailbox {
     return rows.map(toMessage);
   }
 
-  async quietTurns(ids: string[]): Promise<Set<string>> {
+  async quietTurns(ids: string[]) {
     if (ids.length === 0) return new Set();
     const rows = await this.db.all<{ id: string }>(
       `SELECT id FROM neo_turns WHERE quiet = 1 AND id IN (${ids.map(() => "?").join(",")})`,
@@ -207,7 +215,7 @@ export class Mailbox {
     return new Set(rows.map((r) => r.id));
   }
 
-  async turnStates(ids: string[]): Promise<Map<string, Turn>> {
+  async turnStates(ids: string[]) {
     if (ids.length === 0) return new Map();
     const rows = await this.db.all<TurnRow>(
       `SELECT * FROM neo_turns WHERE id IN (${ids.map(() => "?").join(",")})`,
@@ -216,7 +224,7 @@ export class Mailbox {
     return new Map(rows.map((r) => [r.id, toTurn(r)]));
   }
 
-  async byClientId(clientId: string): Promise<MailboxMessage | undefined> {
+  async byClientId(clientId: string) {
     const row = await this.db.get<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE client_id = ?`,
       clientId,
@@ -224,7 +232,7 @@ export class Mailbox {
     return row ? toMessage(row) : undefined;
   }
 
-  async send(input: SendInput): Promise<MailboxMessage> {
+  async send(input: SendInput) {
     const text = input.text.trim();
     const attachments = input.attachments ?? [];
     if (!text && attachments.length === 0)
@@ -253,27 +261,34 @@ export class Mailbox {
         `INSERT INTO neo_mailbox (id, source, text, attachments, meta, client_id, status, position, created_at)
          VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
         ulid(time),
-        input.source ?? "user",
+        input.source,
         text,
         JSON.stringify(attachments),
-        JSON.stringify(input.meta ?? {}),
+        JSON.stringify("meta" in input ? input.meta : {}),
         input.clientId ?? null,
         await this.nextPosition(),
         time,
       );
-      return { message: toMessage(row!), fresh: true };
+      if (!row) throw new MailboxError("The message was not saved");
+      return { message: toMessage(row), fresh: true };
     });
     if (!message.fresh) return message.message;
-    await this.events.emit("message.queued", { message: message.message });
+    await this.events.emit({
+      type: "message.queued",
+      data: { message: message.message },
+    });
     if (input.steer && (await this.currentTurn())) {
       await this.steer(message.message.id).catch(() => this.drain());
     } else {
       await this.drain();
     }
-    return (await this.message(message.message.id))!;
+    return present(
+      await this.message(message.message.id),
+      `message ${message.message.id}`,
+    );
   }
 
-  drain(): Promise<void> {
+  drain() {
     return this.lane(async () => {
       if (this.closed || (await this.hooks.paused())) return;
       if (await this.currentTurn()) return;
@@ -282,14 +297,14 @@ export class Mailbox {
       const time = this.now();
       const turnId = ulid(time);
       const { content, images } = await this.prompt(queued);
-      const data: InputEntryData = {
-        turnId,
-        messages: queued.map(inputMessage),
-      };
       const input: TurnInput = {
         content,
-        ...(images.length ? { images } : {}),
-        entry: { kind: INPUT_ENTRY, data },
+        images,
+        data: {
+          turnId,
+          steered: false,
+          messages: queued.map(inputMessage),
+        },
       };
       await this.db.transaction(async (tx) => {
         await tx.run(
@@ -306,15 +321,18 @@ export class Mailbox {
             m.id,
           );
       });
-      await this.events.emit("turn.started", {
-        turnId,
-        messageIds: queued.map((m) => m.id),
+      await this.events.emit({
+        type: "turn.started",
+        data: {
+          turnId,
+          messageIds: queued.map((m) => m.id),
+        },
       });
       await this.submitTurn(turnId, input);
     });
   }
 
-  steer(messageId: string): Promise<void> {
+  steer(messageId: string) {
     return this.lane(async () => {
       const message = await this.message(messageId);
       if (!message || message.status !== "queued")
@@ -343,7 +361,7 @@ export class Mailbox {
           content: await this.content(prompt.content, prompt.images),
           requestId: `steer:${message.id}`,
           whenBusy: "steer",
-          entry: { kind: INPUT_ENTRY, data: data as never },
+          entry: { kind: INPUT_ENTRY, data },
         },
         context,
       );
@@ -352,12 +370,15 @@ export class Mailbox {
         submission.id,
         message.id,
       );
-      await this.events.emit("message.steered", { messageId, turnId: turn.id });
+      await this.events.emit({
+        type: "message.steered",
+        data: { messageId, turnId: turn.id },
+      });
       this.trackSteer(message.id, submission.id);
     });
   }
 
-  async stop(): Promise<boolean> {
+  async stop() {
     const stopped = await this.lane(async () => {
       const turn = await this.currentTurn();
       if (!turn) return false;
@@ -368,11 +389,11 @@ export class Mailbox {
       await (await this.hooks.conversation()).abort(context);
       return true;
     });
-    if (stopped) await this.events.emit("turn.stopping", {});
+    if (stopped) await this.events.emit({ type: "turn.stopping", data: {} });
     return stopped;
   }
 
-  async cancel(messageId: string): Promise<void> {
+  async cancel(messageId: string) {
     await this.lane(async () => {
       const changed = await this.db.get(
         `UPDATE neo_mailbox SET status = 'cancelled', settled_at = ? WHERE id = ? AND status = 'queued' RETURNING id`,
@@ -382,10 +403,10 @@ export class Mailbox {
       if (!changed)
         throw new MailboxError("Only a queued message can be cancelled");
     });
-    await this.events.emit("message.cancelled", { messageId });
+    await this.events.emit({ type: "message.cancelled", data: { messageId } });
   }
 
-  async edit(messageId: string, text: string): Promise<MailboxMessage> {
+  async edit(messageId: string, text: string) {
     const trimmed = text.trim();
     if (!trimmed) throw new MailboxError("The message is empty");
     if (trimmed.length > MAX_TEXT)
@@ -401,11 +422,11 @@ export class Mailbox {
     );
     if (!row) throw new MailboxError("Only a queued message can be edited");
     const message = toMessage(row);
-    await this.events.emit("message.edited", { message });
+    await this.events.emit({ type: "message.edited", data: { message } });
     return message;
   }
 
-  async reorder(order: string[]): Promise<MailboxMessage[]> {
+  async reorder(order: string[]) {
     await this.lane(async () => {
       const queued = await this.queue();
       const known = new Set(queued.map((m) => m.id));
@@ -421,23 +442,23 @@ export class Mailbox {
           );
       });
     });
-    await this.events.emit("queue.reordered", {});
+    await this.events.emit({ type: "queue.reordered", data: {} });
     return this.queue();
   }
 
-  async recover(): Promise<void> {
+  async recover() {
     await this.lane(async () => {
       const running = await this.db.all<TurnRow>(
         `SELECT * FROM neo_turns WHERE status = 'running' ORDER BY started_at`,
       );
       for (const turn of running)
-        await this.submitTurn(turn.id, JSON.parse(turn.input));
+        await this.submitTurn(turn.id, parseJson(TurnInput, turn.input));
       const steers = await this.db.all<MessageRow>(
         `SELECT * FROM neo_mailbox WHERE steered = 1 AND status IN ('starting', 'running')`,
       );
       for (const row of steers) {
-        if (row.pi_submission !== null)
-          this.trackSteer(row.id, row.pi_submission as SubmissionId);
+        if (row.pi_submission !== null && isSubmissionId(row.pi_submission))
+          this.trackSteer(row.id, row.pi_submission);
         else
           await this.db.run(
             `UPDATE neo_mailbox SET status = 'queued', turn_id = NULL, steered = 0, started_at = NULL WHERE id = ?`,
@@ -448,15 +469,15 @@ export class Mailbox {
     await this.drain();
   }
 
-  private async submitTurn(turnId: string, input: TurnInput): Promise<void> {
+  private async submitTurn(turnId: string, input: TurnInput) {
     await this.hooks.beforeWork();
     const conversation = await this.hooks.conversation();
     const submission = await conversation.submit(
       {
         type: "input",
-        content: await this.content(input.content, input.images ?? []),
+        content: await this.content(input.content, input.images),
         requestId: `turn:${turnId}`,
-        entry: { kind: input.entry.kind, data: input.entry.data as never },
+        entry: { kind: INPUT_ENTRY, data: input.data },
       },
       context,
     );
@@ -475,13 +496,13 @@ export class Mailbox {
     this.trackTurn(turnId, submission.id);
   }
 
-  private trackTurn(turnId: string, submissionId: SubmissionId): void {
+  private trackTurn(turnId: string, submissionId: SubmissionId) {
     this.follow(`turn:${turnId}`, submissionId, (record) =>
       this.lane(() => this.settleTurn(turnId, record)),
     );
   }
 
-  private trackSteer(messageId: string, submissionId: SubmissionId): void {
+  private trackSteer(messageId: string, submissionId: SubmissionId) {
     this.follow(`steer:${messageId}`, submissionId, (record) =>
       this.lane(() => this.settleSteer(messageId, record)),
     );
@@ -491,7 +512,7 @@ export class Mailbox {
     key: string,
     submissionId: SubmissionId,
     settled: (record: SubmissionRecord) => Promise<unknown>,
-  ): void {
+  ) {
     if (this.tracking.has(key)) return;
     this.tracking.add(key);
     void (async () => {
@@ -507,10 +528,7 @@ export class Mailbox {
     })();
   }
 
-  private async settleTurn(
-    turnId: string,
-    record: SubmissionRecord,
-  ): Promise<void> {
+  private async settleTurn(turnId: string, record: SubmissionRecord) {
     const row = await this.db.get<TurnRow>(
       `SELECT * FROM neo_turns WHERE id = ?`,
       turnId,
@@ -543,23 +561,23 @@ export class Mailbox {
         turnId,
       );
     });
-    const turn = (await this.turn(turnId))!;
-    await this.events.emit("turn.ended", { turn });
+    const turn = present(await this.turn(turnId), `turn ${turnId}`);
+    await this.events.emit({ type: "turn.ended", data: { turn } });
     try {
       await this.hooks.turnSettled(turn, await this.turnMessages(turnId));
     } catch (e) {
-      await this.events.emit("error", {
-        where: "turn.settled",
-        message: errorText(e),
+      await this.events.emit({
+        type: "error",
+        data: {
+          where: "turn.settled",
+          message: errorText(e),
+        },
       });
     }
     void this.drain();
   }
 
-  private async settleSteer(
-    messageId: string,
-    record: SubmissionRecord,
-  ): Promise<void> {
+  private async settleSteer(messageId: string, record: SubmissionRecord) {
     const message = await this.message(messageId);
     if (
       !message ||
@@ -571,7 +589,7 @@ export class Mailbox {
         `UPDATE neo_mailbox SET status = 'queued', turn_id = NULL, steered = 0, pi_submission = NULL, started_at = NULL WHERE id = ?`,
         messageId,
       );
-      await this.events.emit("message.requeued", { messageId });
+      await this.events.emit({ type: "message.requeued", data: { messageId } });
       void this.drain();
       return;
     }
@@ -584,10 +602,13 @@ export class Mailbox {
       this.now(),
       messageId,
     );
-    await this.events.emit("message.settled", { messageId, status });
+    await this.events.emit({
+      type: "message.settled",
+      data: { messageId, status },
+    });
   }
 
-  private async entryText(entryId: unknown): Promise<string | null> {
+  private async entryText(entryId: unknown) {
     const conversation = await this.hooks.conversation();
     const page = await conversation.entries(
       { order: "descending" },
@@ -621,7 +642,7 @@ export class Mailbox {
     const content = steered
       ? `[This message arrived while you were working. Take it into account.]\n${parts[0]}`
       : parts.length === 1
-        ? parts[0]!
+        ? parts.join("")
         : `This turn starts with ${parts.length} messages. Read all of them before you answer.\n\n${parts.join("\n\n---\n\n")}`;
     return { content, images };
   }
@@ -640,14 +661,14 @@ export class Mailbox {
     return read.length ? [{ type: "text", text }, ...read] : text;
   }
 
-  private async nextPosition(): Promise<number> {
+  private async nextPosition() {
     const row = await this.db.get<{ p: number | null }>(
       `SELECT max(position) AS p FROM neo_mailbox WHERE status = 'queued'`,
     );
     return (row?.p ?? 0) + 1;
   }
 
-  private lane<T>(work: () => Promise<T>): Promise<T> {
+  private lane<T>(work: () => Promise<T>) {
     const run = this.tail.catch(() => {}).then(work);
     this.tail = run.catch(() => {});
     return run;
@@ -663,23 +684,14 @@ const SOURCE_LABEL: Record<MessageSource, string> = {
   agent: "Message from a teammate",
 };
 
-function header(message: MailboxMessage, timezone: string): string {
+function header(message: MailboxMessage, timezone: string) {
   const at = formatTime(message.createdAt, timezone);
-  if (message.source === "agent")
-    return agentHeader(message.meta as AgentMeta, at);
+  if (message.source === "agent") return agentHeader(message.meta, at);
   if (message.source !== "schedule")
     return `[${SOURCE_LABEL[message.source]} · ${at}]`;
-  const { name, scheduleId, dueAt, late, quiet } = message.meta as {
-    name?: string;
-    scheduleId?: string;
-    dueAt?: number;
-    late?: number;
-    quiet?: boolean;
-  };
-  const lines = [
-    `[Your schedule "${name ?? "?"}" (${scheduleId ?? "?"}) · ${at}]`,
-  ];
-  if (late && dueAt)
+  const { name, scheduleId, dueAt, late, quiet } = message.meta;
+  const lines = [`[Your schedule "${name}" (${scheduleId}) · ${at}]`];
+  if (late)
     lines.push(
       `[It was due ${formatTime(dueAt, timezone)}; the host was not running then.]`,
     );
@@ -690,7 +702,7 @@ function header(message: MailboxMessage, timezone: string): string {
   return lines.join("\n");
 }
 
-export function formatTime(at: number, timezone: string): string {
+export function formatTime(at: number, timezone: string) {
   return `${new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
     weekday: "short",
@@ -717,38 +729,44 @@ function outcome(
   return { status: "failed", error: `${record.reason ?? "failed"}${detail}` };
 }
 
-export function textOf(entry: EntryRecord): string | null {
-  const message = entry.model?.[0] as { content?: unknown } | undefined;
-  const content = message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return null;
-  return content
-    .filter((c: { type?: string }) => c.type === "text")
-    .map((c: { text?: string }) => c.text ?? "")
+export function textOf(entry: EntryRecord) {
+  const message = entry.model?.[0];
+  if (!message) return null;
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .map((part) => (part.type === "text" ? part.text : ""))
     .join("");
 }
 
-function errorText(error: unknown): string {
+function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function inputMessage(m: MailboxMessage): InputMessage {
+function inputMessage(m: MailboxMessage) {
   return {
     id: m.id,
     source: m.source,
     text: m.text,
-    ...(m.attachments.length ? { attachments: m.attachments } : {}),
+    attachments: m.attachments,
     at: m.createdAt,
   };
 }
 
-function toMessage(row: MessageRow): MailboxMessage {
-  return {
-    id: row.id,
+function origin(row: MessageRow) {
+  if (row.source === "user" || row.source === "system")
+    return { source: row.source };
+  return parse(MessageOrigin, {
     source: row.source,
+    meta: parseJson(JsonObject, row.meta),
+  });
+}
+
+function toMessage(row: MessageRow) {
+  return {
+    ...origin(row),
+    id: row.id,
     text: row.text,
-    attachments: JSON.parse(row.attachments) as Attachment[],
-    meta: JSON.parse(row.meta) as Record<string, unknown>,
+    attachments: parseJson(Type.Array(Attachment), row.attachments),
     clientId: row.client_id,
     status: row.status,
     position: row.position,
@@ -761,7 +779,7 @@ function toMessage(row: MessageRow): MailboxMessage {
   };
 }
 
-function toTurn(row: TurnRow): Turn {
+function toTurn(row: TurnRow) {
   return {
     id: row.id,
     status: row.status,

@@ -18,7 +18,6 @@ const META = async (tx: SqliteExecutor) => {
   );
 };
 
-/** One agent's database (an agent DO). */
 const AGENT_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   META,
   EVENTS_SCHEMA,
@@ -31,7 +30,6 @@ const AGENT_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   VFS_SCHEMA,
 ];
 
-/** The coordinator's database: what all agents share. */
 const COORDINATOR_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   META,
   EVENTS_SCHEMA,
@@ -45,7 +43,7 @@ const COORDINATOR_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
 async function create(
   db: SqliteDatabase,
   tables: ((tx: SqliteExecutor) => Promise<void>)[],
-): Promise<void> {
+) {
   await db.transaction(async (tx) => {
     for (const make of tables) await make(tx);
   });
@@ -56,10 +54,7 @@ export const createAgentSchema = (db: SqliteDatabase) =>
 export const createCoordinatorSchema = (db: SqliteDatabase) =>
   create(db, COORDINATOR_TABLES);
 
-export async function hasTable(
-  db: SqliteDatabase,
-  name: string,
-): Promise<boolean> {
+export async function hasTable(db: SqliteDatabase, name: string) {
   return (
     (await db.get(
       `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`,
@@ -68,10 +63,7 @@ export async function hasTable(
   );
 }
 
-export async function getMeta(
-  db: SqliteExecutor,
-  key: string,
-): Promise<string | undefined> {
+export async function getMeta(db: SqliteExecutor, key: string) {
   return (
     await db.get<{ value: string }>(
       `SELECT value FROM neo_meta WHERE key = ?`,
@@ -80,11 +72,7 @@ export async function getMeta(
   )?.value;
 }
 
-export async function setMeta(
-  db: SqliteExecutor,
-  key: string,
-  value: string,
-): Promise<void> {
+export async function setMeta(db: SqliteExecutor, key: string, value: string) {
   await db.run(
     `INSERT INTO neo_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     key,

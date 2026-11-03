@@ -1,31 +1,38 @@
-import type {
+import { Type, type Static, type TSchema } from "typebox";
+import Value from "typebox/value";
+import {
+  type AgentId,
   AgentProfile,
   AgentState,
+  AgentView,
   AgentSummary,
-  AttachmentInput,
-  NewAgent,
-  ProfileChange,
-  Upload,
   AvailableModel,
   ImportResult,
+  JsonObject,
   LiveEvent,
   MailboxMessage,
   ModelRef,
   NeoEvent,
   ProviderConfig,
   ProviderInfo,
+  Schedule,
   SettingsShape,
   Status,
   TranscriptPage,
   Turn,
-  Schedule,
+  Upload,
+  parse,
+  parseJson,
+  type AttachmentInput,
+  type NewAgent,
+  type ProfileChange,
 } from "./types";
 
 export class NeoApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
-    readonly body: Record<string, unknown>,
+    readonly body: JsonObject,
   ) {
     super(message);
   }
@@ -46,11 +53,16 @@ class Http {
     this.fetcher = options.fetch ?? fetch.bind(globalThis);
   }
 
-  protected url(path: string): string {
+  protected url(path: string) {
     return this.base + path;
   }
 
-  async call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async call<const S extends TSchema>(
+    method: string,
+    path: string,
+    schema: S,
+    body?: unknown,
+  ) {
     const response = await this.fetcher(this.url(path), {
       method,
       headers: {
@@ -59,39 +71,20 @@ class Http {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-    const data = (await response.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-    if (!response.ok)
-      throw new NeoApiError(
-        response.status,
-        String(data.error ?? response.statusText),
-        data,
-      );
-    return data as T;
+    if (!response.ok) throw await apiError(response);
+    return parse(schema, await response.json());
   }
 
-  protected async raw(path: string, init: RequestInit): Promise<Response> {
+  protected async raw(path: string, init: RequestInit) {
     const response = await this.fetcher(this.url(path), {
       method: "POST",
       ...init,
       headers: {
+        ...Object.fromEntries(new Headers(init.headers)),
         authorization: `Bearer ${this.options.token}`,
-        ...(init.headers as Record<string, string>),
       },
     });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
-      throw new NeoApiError(
-        response.status,
-        String(data.error ?? response.statusText),
-        data,
-      );
-    }
+    if (!response.ok) throw await apiError(response);
     return response;
   }
 
@@ -102,7 +95,7 @@ class Http {
       error?: (e: unknown) => void;
     },
     after = 0,
-  ): () => void {
+  ) {
     let last = after;
     let stopped = false;
     let controller: AbortController | undefined;
@@ -128,9 +121,9 @@ class Http {
             );
           for await (const frame of sseFrames(response.body)) {
             if (frame.event === "live")
-              handlers.live?.(JSON.parse(frame.data) as LiveEvent);
+              handlers.live?.(parseJson(LiveEvent, frame.data));
             else if (frame.data) {
-              const event = JSON.parse(frame.data) as NeoEvent;
+              const event = parseJson(NeoEvent, frame.data);
               last = Math.max(last, event.seq);
               handlers.durable?.(event);
             }
@@ -150,98 +143,133 @@ class Http {
   }
 }
 
-/** The instance: agents, settings, providers, moves. */
 export class NeoClient extends Http {
-  /** One agent's API (chat, queue, schedules, files...). */
-  agent(id: string): AgentClient {
+  agent(id: AgentId) {
     return new AgentClient({
       ...this.options,
       url: `${this.base}/agents/${encodeURIComponent(id)}`,
     });
   }
 
-  status = () => this.call<Status>("GET", "/status");
+  status = () => this.call("GET", "/status", Status);
 
-  seal = () => this.call<{ state: string }>("POST", "/move/seal", {});
-  unseal = () => this.call<{ state: string }>("POST", "/move/unseal", {});
-  complete = () => this.call<{ state: string }>("POST", "/move/complete", {});
-  exportBundle = async (
-    passphrase?: string,
-  ): Promise<ReadableStream<Uint8Array>> => {
+  seal = () =>
+    this.call("POST", "/move/seal", Type.Object({ state: Type.String() }), {});
+  unseal = () =>
+    this.call(
+      "POST",
+      "/move/unseal",
+      Type.Object({ state: Type.String() }),
+      {},
+    );
+  complete = () =>
+    this.call(
+      "POST",
+      "/move/complete",
+      Type.Object({ state: Type.String() }),
+      {},
+    );
+  exportBundle = async (passphrase?: string) => {
     const response = await this.raw("/move/export", {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(passphrase ? { passphrase } : {}),
     });
-    return response.body!;
+    if (!response.body) throw new NeoApiError(response.status, "No bundle", {});
+    return response.body;
   };
-  importBundle = async (
-    bundle: BodyInit,
-    passphrase?: string,
-  ): Promise<ImportResult> => {
-    const response = await this.raw("/move/import", {
+  importBundle = async (bundle: BodyInit, passphrase?: string) => {
+    const init: RequestInit & { duplex?: "half" } = {
       headers: {
         "content-type": "application/x-neo-bundle",
         ...(passphrase ? { "x-neo-passphrase": passphrase } : {}),
       },
       body: bundle,
       ...(bundle instanceof ReadableStream ? { duplex: "half" } : {}),
-    } as RequestInit);
-    return (await response.json()) as ImportResult;
+    };
+    const response = await this.raw("/move/import", init);
+    return parse(ImportResult, await response.json());
   };
 
   agents = () =>
-    this.call<{ agents: AgentSummary[] }>("GET", "/agents").then(
-      (r) => r.agents,
-    );
+    this.call(
+      "GET",
+      "/agents",
+      Type.Object({ agents: Type.Array(AgentSummary) }),
+    ).then((r) => r.agents);
   createAgent = (input: NewAgent) =>
-    this.call<{ agent: AgentProfile }>("POST", "/agents", input).then(
-      (r) => r.agent,
+    this.call(
+      "POST",
+      "/agents",
+      Type.Object({ agent: AgentProfile }),
+      input,
+    ).then((r) => r.agent);
+  updateAgent = (id: AgentId, change: ProfileChange) =>
+    this.call(
+      "PATCH",
+      `/agents/${id}`,
+      Type.Object({ agent: AgentProfile }),
+      change,
+    ).then((r) => r.agent);
+  deleteAgent = (id: AgentId) =>
+    this.call(
+      "DELETE",
+      `/agents/${id}`,
+      Type.Object({ deleted: Type.String() }),
     );
-  updateAgent = (id: string, change: ProfileChange) =>
-    this.call<{ agent: AgentProfile }>("PATCH", `/agents/${id}`, change).then(
-      (r) => r.agent,
-    );
-  deleteAgent = (id: string) =>
-    this.call<{ deleted: string }>("DELETE", `/agents/${id}`);
 
   settings = () =>
-    this.call<{ settings: SettingsShape }>("GET", "/settings").then(
-      (r) => r.settings,
-    );
+    this.call(
+      "GET",
+      "/settings",
+      Type.Object({ settings: SettingsShape }),
+    ).then((r) => r.settings);
   updateSettings = (change: Partial<SettingsShape>) =>
-    this.call<{ settings: SettingsShape }>("PUT", "/settings", change).then(
-      (r) => r.settings,
-    );
+    this.call(
+      "PUT",
+      "/settings",
+      Type.Object({ settings: SettingsShape }),
+      change,
+    ).then((r) => r.settings);
   providers = () =>
-    this.call<{ providers: ProviderInfo[] }>("GET", "/providers").then(
-      (r) => r.providers,
-    );
+    this.call(
+      "GET",
+      "/providers",
+      Type.Object({ providers: Type.Array(ProviderInfo) }),
+    ).then((r) => r.providers);
   putProvider = (config: ProviderConfig) =>
-    this.call<{ providers: ProviderInfo[] }>(
+    this.call(
       "PUT",
       `/providers/${config.id}`,
+      Type.Object({ providers: Type.Array(ProviderInfo) }),
       config,
     ).then((r) => r.providers);
   removeProvider = (id: string) =>
-    this.call<{ providers: ProviderInfo[] }>("DELETE", `/providers/${id}`).then(
-      (r) => r.providers,
-    );
+    this.call(
+      "DELETE",
+      `/providers/${id}`,
+      Type.Object({ providers: Type.Array(ProviderInfo) }),
+    ).then((r) => r.providers);
   detectProviders = () =>
-    this.call<{ found: ProviderConfig[] }>("GET", "/providers/detect").then(
-      (r) => r.found,
-    );
+    this.call(
+      "GET",
+      "/providers/detect",
+      Type.Object({ found: Type.Array(ProviderConfig) }),
+    ).then((r) => r.found);
   models = () =>
-    this.call<{ models: AvailableModel[]; default: ModelRef | null }>(
+    this.call(
       "GET",
       "/models",
+      Type.Object({
+        models: Type.Array(AvailableModel),
+        default: Type.Union([ModelRef, Type.Null()]),
+      }),
     );
 }
 
-/** One agent: its API lives under `<instance>/agents/<id>`. */
 export class AgentClient extends Http {
-  status = () => this.call<AgentState>("GET", "/status");
+  status = () => this.call("GET", "/status", AgentState);
   profile = () =>
-    this.call<{ agent: AgentState["agent"] }>("GET", "/agent").then(
+    this.call("GET", "/agent", Type.Object({ agent: AgentView })).then(
       (r) => r.agent,
     );
 
@@ -249,102 +277,137 @@ export class AgentClient extends Http {
     text: string,
     options: { clientId?: string; attachments?: AttachmentInput[] } = {},
   ) =>
-    this.call<{ message: MailboxMessage }>("POST", "/messages", {
+    this.call("POST", "/messages", Type.Object({ message: MailboxMessage }), {
       text,
       ...options,
     }).then((r) => r.message);
-  upload = async (
-    file: Blob,
-    name: string,
-  ): Promise<Upload & AttachmentInput> => {
-    const { upload } = (await (
-      await this.raw(`/uploads${query({ name })}`, {
-        method: "POST",
-        headers: { "content-type": "application/octet-stream" },
-        body: file,
-      })
-    ).json()) as { upload: Upload };
+  upload = async (file: Blob, name: string) => {
+    const { upload } = parse(
+      Type.Object({ upload: Upload }),
+      await (
+        await this.raw(`/uploads${query({ name })}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: file,
+        })
+      ).json(),
+    );
     return { ...upload, ...(file.type ? { mimeType: file.type } : {}) };
   };
-  fileBlob = async (path: string): Promise<Blob> =>
+  fileBlob = async (path: string) =>
     (
       await this.raw(`/attachments${query({ path })}`, { method: "GET" })
     ).blob();
   transcript = (options: { before?: number; limit?: number } = {}) =>
-    this.call<TranscriptPage>("GET", `/transcript${query(options)}`);
+    this.call("GET", `/transcript${query(options)}`, TranscriptPage);
   turn = (id: string) =>
-    this.call<{ turn: Turn; messages: MailboxMessage[] }>(
+    this.call(
       "GET",
       `/turns/${id}`,
+      Type.Object({ turn: Turn, messages: Type.Array(MailboxMessage) }),
     );
-  stop = () => this.call<{ stopped: boolean }>("POST", "/stop");
-  pause = () => this.call<{ paused: boolean }>("POST", "/pause");
-  resume = () => this.call<{ paused: boolean }>("POST", "/resume");
+  stop = () =>
+    this.call("POST", "/stop", Type.Object({ stopped: Type.Boolean() }));
+  pause = () =>
+    this.call("POST", "/pause", Type.Object({ paused: Type.Boolean() }));
+  resume = () =>
+    this.call("POST", "/resume", Type.Object({ paused: Type.Boolean() }));
 
   queue = () =>
-    this.call<{ queue: MailboxMessage[] }>("GET", "/queue").then(
-      (r) => r.queue,
-    );
+    this.call(
+      "GET",
+      "/queue",
+      Type.Object({ queue: Type.Array(MailboxMessage) }),
+    ).then((r) => r.queue);
   editQueued = (id: string, text: string) =>
-    this.call<{ message: MailboxMessage }>("PATCH", `/queue/${id}`, {
-      text,
-    });
+    this.call(
+      "PATCH",
+      `/queue/${id}`,
+      Type.Object({ message: MailboxMessage }),
+      {
+        text,
+      },
+    );
   cancelQueued = (id: string) =>
-    this.call<{ cancelled: string }>("DELETE", `/queue/${id}`);
+    this.call(
+      "DELETE",
+      `/queue/${id}`,
+      Type.Object({ cancelled: Type.String() }),
+    );
   steerQueued = (id: string) =>
-    this.call<{ steered: string }>("POST", `/queue/${id}/steer`);
+    this.call(
+      "POST",
+      `/queue/${id}/steer`,
+      Type.Object({ steered: Type.String() }),
+    );
   reorderQueue = (order: string[]) =>
-    this.call<{ queue: MailboxMessage[] }>("PUT", "/queue/order", {
-      order,
-    }).then((r) => r.queue);
+    this.call(
+      "PUT",
+      "/queue/order",
+      Type.Object({ queue: Type.Array(MailboxMessage) }),
+      {
+        order,
+      },
+    ).then((r) => r.queue);
 
   schedules = () =>
-    this.call<{ schedules: Schedule[] }>("GET", "/schedules").then(
-      (r) => r.schedules,
-    );
+    this.call(
+      "GET",
+      "/schedules",
+      Type.Object({ schedules: Type.Array(Schedule) }),
+    ).then((r) => r.schedules);
   toggleSchedule = (id: string, enabled: boolean) =>
-    this.call<{ schedule: Schedule }>("PATCH", `/schedules/${id}`, {
-      enabled,
-    }).then((r) => r.schedule);
+    this.call(
+      "PATCH",
+      `/schedules/${id}`,
+      Type.Object({ schedule: Schedule }),
+      {
+        enabled,
+      },
+    ).then((r) => r.schedule);
 
-  async file(path: string): Promise<
-    | {
-        kind: "directory";
-        path: string;
-        entries: {
-          path: string;
-          name: string;
-          kind: "file" | "directory";
-          size: number;
-          mtimeMs: number;
-        }[];
-      }
+  async file(
+    path: string,
+  ): Promise<
+    | ({ kind: "directory" } & Static<typeof Directory>)
     | { kind: "file"; path: string; text: string }
   > {
     const response = await this.fetcher(this.url(`/files${query({ path })}`), {
       headers: { authorization: `Bearer ${this.options.token}` },
     });
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
-      throw new NeoApiError(
-        response.status,
-        String(data.error ?? response.statusText),
-        data,
-      );
-    }
+    if (!response.ok) throw await apiError(response);
     if ((response.headers.get("content-type") ?? "").includes("json"))
       return {
         kind: "directory",
-        ...((await response.json()) as { path: string; entries: never[] }),
+        ...parse(Directory, await response.json()),
       };
     return { kind: "file", path, text: await response.text() };
   }
 }
 
-function query(params: Record<string, string | number | undefined>): string {
+const Directory = Type.Object({
+  path: Type.String(),
+  entries: Type.Array(
+    Type.Object({
+      path: Type.String(),
+      name: Type.String(),
+      kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
+      size: Type.Number(),
+      mtimeMs: Type.Number(),
+    }),
+  ),
+});
+
+const ErrorBody = Type.Object({ error: Type.Optional(Type.String()) });
+
+async function apiError(response: Response) {
+  const data: unknown = await response.json().catch(() => ({}));
+  const body = Value.Check(JsonObject, data) ? data : {};
+  const message = Value.Check(ErrorBody, body) ? body.error : undefined;
+  return new NeoApiError(response.status, message ?? response.statusText, body);
+}
+
+function query(params: Record<string, string | number | undefined>) {
   const entries = Object.entries(params).filter(
     ([, v]) => v !== undefined && v !== "",
   );
@@ -358,7 +421,7 @@ async function* sseFrames(
 ): AsyncGenerator<{ event: string; data: string }> {
   const decoder = new TextDecoder();
   let buffer = "";
-  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+  for await (const chunk of chunks(body)) {
     buffer += decoder.decode(chunk, { stream: true });
     let end: number;
     while ((end = buffer.indexOf("\n\n")) >= 0) {
@@ -372,5 +435,18 @@ async function* sseFrames(
       }
       if (data.length) yield { event, data: data.join("\n") };
     }
+  }
+}
+
+async function* chunks<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }

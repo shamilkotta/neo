@@ -1,29 +1,37 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { Type } from "typebox";
 
-export interface BlobStore {
-  put(key: string, body: ReadableStream<Uint8Array>): Promise<void>;
-  get(
-    key: string,
-    range?: { offset: number; length: number },
-  ): Promise<ReadableStream<Uint8Array> | null>;
-  delete(key: string): Promise<void>;
-  clear(): Promise<void>;
+export type BlobKey = string & { readonly __brand: "BlobKey" };
+
+const BLOB_KEY = "^[A-Za-z0-9-]{8,64}$";
+
+export const isBlobKey = (key: string): key is BlobKey =>
+  new RegExp(BLOB_KEY).test(key);
+
+export const BlobKey = Type.Unsafe<BlobKey>(Type.String({ pattern: BLOB_KEY }));
+
+export function newBlobKey() {
+  const key = crypto.randomUUID();
+  if (!isBlobKey(key)) throw new Error(`Bad blob key: ${key}`);
+  return key;
 }
 
-export function checkBlobKey(key: string): void {
-  if (!/^[A-Za-z0-9-]{8,64}$/.test(key))
-    throw new Error(`Bad blob key: ${key}`);
+export interface BlobStore {
+  put(key: BlobKey, body: ReadableStream<Uint8Array>): Promise<void>;
+  get(
+    key: BlobKey,
+    range?: { offset: number; length: number },
+  ): Promise<ReadableStream<Uint8Array> | null>;
+  delete(key: BlobKey): Promise<void>;
+  clear(): Promise<void>;
 }
 
 export function measured(
   stream: ReadableStream<Uint8Array>,
   max: number,
   tooLarge: () => Error,
-): {
-  stream: ReadableStream<Uint8Array>;
-  result(): { size: number; hash: string };
-} {
+) {
   const hash = sha256.create();
   let size = 0;
   let digest: string | undefined;
@@ -52,7 +60,7 @@ export function measured(
 
 export function concatStreams(
   parts: (() => Promise<ReadableStream<Uint8Array>>)[],
-): ReadableStream<Uint8Array> {
+) {
   let index = 0;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   return new ReadableStream<Uint8Array>({
@@ -74,7 +82,7 @@ export function concatStreams(
   });
 }
 
-export function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+export function bytesStream(bytes: Uint8Array) {
   return new ReadableStream({
     start(controller) {
       if (bytes.length) controller.enqueue(bytes);
@@ -83,7 +91,7 @@ export function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
-export function zeroStream(length: number): ReadableStream<Uint8Array> {
+export function zeroStream(length: number) {
   let left = length;
   return new ReadableStream({
     pull(controller) {
@@ -98,10 +106,10 @@ export function zeroStream(length: number): ReadableStream<Uint8Array> {
 export async function collect(
   stream: ReadableStream<Uint8Array>,
   size?: number,
-): Promise<Uint8Array> {
+) {
   const parts: Uint8Array[] = [];
   let total = 0;
-  for await (const part of stream as unknown as AsyncIterable<Uint8Array>) {
+  for await (const part of stream) {
     parts.push(part);
     total += part.length;
   }

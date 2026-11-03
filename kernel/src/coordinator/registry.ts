@@ -1,14 +1,16 @@
-import type {
-  AgentProfile,
+import { present } from "../errors";
+import {
+  agentId,
+  type AgentId,
   AgentStatus,
-  AgentSummary,
-  NewAgent,
-  ProfileChange,
+  type NewAgent,
+  type ProfileChange,
+  parseJson,
 } from "@neo/client";
 import { PRIMARY_AGENT_ID } from "../agent/agents";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 
-export const REGISTRY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const REGISTRY_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_agents (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -32,7 +34,7 @@ const DESCRIPTION_MAX = 1_000;
 const INSTRUCTIONS_MAX = 8_000;
 
 interface Row {
-  id: string;
+  id: AgentId;
   name: string;
   title: string | null;
   description: string | null;
@@ -52,7 +54,7 @@ export class Registry {
     private readonly now: () => number,
   ) {}
 
-  async ensurePrimary(): Promise<AgentProfile> {
+  async ensurePrimary() {
     const time = this.now();
     await this.db.run(
       `INSERT INTO neo_agents (id, name, is_primary, created_at, updated_at) VALUES (?, 'Neo', 1, ?, ?) ON CONFLICT(id) DO NOTHING`,
@@ -60,40 +62,39 @@ export class Registry {
       time,
       time,
     );
-    return (await this.get(PRIMARY_AGENT_ID))!;
+    return present(
+      await this.get(PRIMARY_AGENT_ID),
+      `agent ${PRIMARY_AGENT_ID}`,
+    );
   }
 
-  async get(id: string): Promise<AgentProfile | undefined> {
+  async get(id: AgentId) {
     const row = await this.row(id);
     return row && row.state === "active" ? toProfile(row) : undefined;
   }
 
-  async row(id: string): Promise<Row | undefined> {
+  async row(id: AgentId) {
     return this.db.get<Row>(`SELECT * FROM neo_agents WHERE id = ?`, id);
   }
 
-  async list(): Promise<AgentSummary[]> {
+  async list() {
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_agents WHERE state = 'active' ORDER BY is_primary DESC, created_at`,
     );
     return rows.map((row) => ({
       ...toProfile(row),
-      status: row.status ? (JSON.parse(row.status) as AgentStatus) : null,
+      status: row.status ? parseJson(AgentStatus, row.status) : null,
     }));
   }
 
-  async ids(): Promise<string[]> {
-    const rows = await this.db.all<{ id: string }>(
+  async ids() {
+    const rows = await this.db.all<{ id: AgentId }>(
       `SELECT id FROM neo_agents ORDER BY created_at`,
     );
     return rows.map((r) => r.id);
   }
 
-  async create(
-    input: NewAgent,
-    by: string | null,
-    key?: string,
-  ): Promise<AgentProfile> {
+  async create(input: NewAgent, by: string | null, key?: string) {
     if (key) {
       const made = await this.db.get<Row>(
         `SELECT * FROM neo_agents WHERE create_key = ?`,
@@ -125,10 +126,10 @@ export class Registry {
       time,
       time,
     );
-    return (await this.get(id))!;
+    return present(await this.get(id), `agent ${id}`);
   }
 
-  async update(id: string, change: ProfileChange): Promise<AgentProfile> {
+  async update(id: AgentId, change: ProfileChange) {
     const current = await this.get(id);
     if (!current) throw new RegistryError(`No agent ${id}`);
     const fields = clean(change);
@@ -156,10 +157,10 @@ export class Registry {
       this.now(),
       id,
     );
-    return (await this.get(id))!;
+    return present(await this.get(id), `agent ${id}`);
   }
 
-  async setStatus(id: string, status: AgentStatus): Promise<boolean> {
+  async setStatus(id: AgentId, status: AgentStatus) {
     const changed = await this.db.get(
       `UPDATE neo_agents SET status = ? WHERE id = ? AND state = 'active' AND (status IS NULL OR json_extract(status, '$.at') <= ?) RETURNING id`,
       JSON.stringify(status),
@@ -169,7 +170,7 @@ export class Registry {
     return changed !== undefined;
   }
 
-  async markDeleting(id: string): Promise<void> {
+  async markDeleting(id: AgentId) {
     await this.db.run(
       `UPDATE neo_agents SET state = 'deleting', updated_at = ? WHERE id = ?`,
       this.now(),
@@ -177,62 +178,72 @@ export class Registry {
     );
   }
 
-  async deleting(): Promise<string[]> {
-    const rows = await this.db.all<{ id: string }>(
+  async deleting() {
+    const rows = await this.db.all<{ id: AgentId }>(
       `SELECT id FROM neo_agents WHERE state = 'deleting'`,
     );
     return rows.map((r) => r.id);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: AgentId) {
     await this.db.run(`DELETE FROM neo_agents WHERE id = ?`, id);
   }
 
-  private async byName(name: string): Promise<Row | undefined> {
+  private async byName(name: string) {
     return this.db.get<Row>(`SELECT * FROM neo_agents WHERE name = ?`, name);
   }
 
-  private async freeId(name: string): Promise<string> {
+  private async freeId(name: string) {
     const base =
       name
         .toLowerCase()
         .normalize("NFKD")
         .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 40) || "agent";
+        .slice(0, 40)
+        .replace(/^-+|-+$/g, "") || "agent";
     for (let n = 1; ; n++) {
       const id = n === 1 ? base : `${base}-${n}`;
-      if (!(await this.row(id))) return id;
+      if (!(await this.row(agentId(id)))) return agentId(id);
     }
   }
 }
 
 export class RegistryError extends Error {}
 
-function clean(input: ProfileChange): ProfileChange {
-  const out: ProfileChange = {};
-  const text = (
-    key: keyof ProfileChange,
-    max: number,
-    value: string | null | undefined,
-  ) => {
-    if (value === undefined) return;
-    if (value !== null && typeof value !== "string")
-      throw new RegistryError(`${key} is text`);
-    const trimmed = value?.trim() ?? "";
-    if (trimmed.length > max)
-      throw new RegistryError(`${key} is at most ${max} characters`);
-    (out as Record<string, string | null>)[key] = trimmed || null;
-  };
-  text("name", NAME_MAX, input.name);
-  text("title", TITLE_MAX, input.title);
-  text("description", DESCRIPTION_MAX, input.description);
-  text("instructions", INSTRUCTIONS_MAX, input.instructions);
-  if (out.name === null) out.name = "";
-  return out;
+function cleanText(
+  key: keyof ProfileChange,
+  max: number,
+  value: string | null | undefined,
+) {
+  if (value === undefined) return undefined;
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length > max)
+    throw new RegistryError(`${key} is at most ${max} characters`);
+  return trimmed || null;
 }
 
-function toProfile(row: Row): AgentProfile {
+function clean(input: ProfileChange) {
+  const name = cleanText("name", NAME_MAX, input.name);
+  const title = cleanText("title", TITLE_MAX, input.title);
+  const description = cleanText(
+    "description",
+    DESCRIPTION_MAX,
+    input.description,
+  );
+  const instructions = cleanText(
+    "instructions",
+    INSTRUCTIONS_MAX,
+    input.instructions,
+  );
+  return {
+    ...(name !== undefined ? { name: name ?? "" } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+  };
+}
+
+function toProfile(row: Row) {
   return {
     id: row.id,
     name: row.name,
