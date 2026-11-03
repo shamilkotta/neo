@@ -1,17 +1,14 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
-import { caller, json, refuse, type ToolServices } from "./shared";
+import { json, refuse, type ToolServices } from "./shared";
 
 const READ_CHARS = 8_000;
 const PAGE = 20;
 const STEPS = 20;
 
 export function historyTools(services: ToolServices) {
-  const ready = async (conversationId: number) => {
-    const c = await caller(services, conversationId);
-    await services.history.sync(await services.conversation());
-    return c;
-  };
+  const ready = async () =>
+    services.history.sync(await services.conversation());
   return [
     defineTool({
       name: "history_search",
@@ -26,14 +23,14 @@ export function historyTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await ready(api.conversationId);
+        await ready();
         const results = await services.history.search(args.query, {
           ...(args.before !== undefined ? { before: args.before } : {}),
           limit: args.limit ?? 8,
         });
         return json({
           results,
-          nextCursor: results.length ? results.at(-1)!.messageId : null,
+          nextCursor: results.at(-1)?.messageId ?? null,
         });
       },
     }),
@@ -49,24 +46,24 @@ export function historyTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await ready(api.conversationId);
+        await ready();
         if (args.messageId !== undefined) {
           const line = await services.history.message(args.messageId);
           if (!line) refuse("No such message.");
           const offset = args.offset ?? 0;
           const stepsFrom = args.workStepsOffset ?? 0;
           return json({
-            messageId: line!.messageId,
-            role: line!.role,
-            text: line!.text.slice(offset, offset + READ_CHARS),
+            messageId: line.messageId,
+            role: line.role,
+            text: line.text.slice(offset, offset + READ_CHARS),
             offset,
             nextOffset:
-              offset + READ_CHARS < line!.text.length
+              offset + READ_CHARS < line.text.length
                 ? offset + READ_CHARS
                 : null,
-            workSteps: line!.steps.slice(stepsFrom, stepsFrom + STEPS),
+            workSteps: line.steps.slice(stepsFrom, stepsFrom + STEPS),
             nextWorkStepsOffset:
-              stepsFrom + STEPS < line!.steps.length ? stepsFrom + STEPS : null,
+              stepsFrom + STEPS < line.steps.length ? stepsFrom + STEPS : null,
           });
         }
         const page = await services.history.page(args.before, PAGE);

@@ -28,14 +28,13 @@ export default {
         signal: request.signal,
       },
     });
-    const agent = /^\/agents\/([^/]+)(\/.+)$/.exec(path);
-    if (agent) {
-      const [, agentId, inner] = agent;
-      if (!NAME.test(agentId!))
+    const [, agentId, inner] = /^\/agents\/([^/]+)(\/.+)$/.exec(path) ?? [];
+    if (agentId !== undefined && inner !== undefined) {
+      if (!NAME.test(agentId))
         return Response.json({ error: "No such agent" }, { status: 404 });
-      headers.set("x-neo-agent", agentId!);
-      const { url: target, init } = forward(inner!);
-      return env.AGENT.getByName(agentName(instance, agentId!)).fetch(
+      headers.set("x-neo-agent", agentId);
+      const { url: target, init } = forward(inner);
+      return env.AGENT.getByName(agentName(instance, agentId)).fetch(
         new Request(target, init),
       );
     }

@@ -1,9 +1,10 @@
-import type {
-  Attachment,
-  MailboxMessage,
-  AgentClient,
-  TranscriptItem,
-  Turn,
+import {
+  NeoApiError,
+  type Attachment,
+  type MailboxMessage,
+  type AgentClient,
+  type TranscriptItem,
+  type Turn,
 } from "@neo/client";
 import {
   type ClipboardEvent,
@@ -319,7 +320,7 @@ export function Queue({
               onClick={() =>
                 act(() => {
                   const ids = queue.map((q) => q.id);
-                  [ids[n - 1], ids[n]] = [ids[n]!, ids[n - 1]!];
+                  ids.splice(n - 1, 0, ...ids.splice(n, 1));
                   return client.reorderQueue(ids);
                 })
               }
@@ -388,8 +389,7 @@ export function Composer({
       setText("");
       setFiles([]);
     } catch (err) {
-      const body = (err as { body?: { setup?: boolean } }).body;
-      if (body?.setup) onNeedsSetup();
+      if (err instanceof NeoApiError && err.body.setup === true) onNeedsSetup();
       alert(err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);

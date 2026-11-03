@@ -1,13 +1,12 @@
 import type {
+  AgentId,
   AgentProfile,
   AgentStatus,
-  ModelRef,
   NewAgent,
   ProfileChange,
   SettingsShape,
 } from "@neo/client";
 import type { CoordinatorPorts } from "../host";
-import type { AgentConfig, AgentInit, AgentLink } from "../links";
 import {
   BUNDLE_FORMAT,
   BUNDLE_VERSION,
@@ -25,6 +24,7 @@ import {
   writePart,
 } from "../move/bundle";
 import { wipeDatabase } from "../move/snapshot";
+import { storedState } from "../errors";
 import { IMPORT_MARKER, type InstanceState, StateError } from "../neo";
 import { createCoordinatorSchema, getMeta, hasTable, setMeta } from "../schema";
 import { Events } from "../services/events";
@@ -33,7 +33,7 @@ import type { ProviderConfig } from "../services/providers";
 import { Secrets } from "../services/secrets";
 import { Settings } from "../services/settings";
 import { TEST_MODEL } from "../testing";
-import { serveShared, type SharedOp, type SharedResult } from "../vfs/mount";
+import { serveShared, type SharedRequest } from "../vfs/mount";
 import { Vfs } from "../vfs/vfs";
 import { handleCoordinatorApi } from "./api";
 import { Registry, RegistryError } from "./registry";
@@ -46,11 +46,6 @@ interface Services {
   registry: Registry;
 }
 
-/**
- * What every agent of an instance shares: the agent registry, providers and keys, the model,
- * settings, and moves. Agents live elsewhere (one home each); this reaches them through
- * `ports.cells`.
- */
 export class NeoCoordinator {
   readonly events: Events;
   readonly now: () => number;
@@ -65,7 +60,7 @@ export class NeoCoordinator {
     this.events = new Events(host.db, this.now);
   }
 
-  static async open(host: CoordinatorPorts): Promise<NeoCoordinator> {
+  static async open(host: CoordinatorPorts) {
     const coordinator = new NeoCoordinator(host);
     if (await hasTable(host.db, IMPORT_MARKER)) {
       await wipeDatabase(host.db);
@@ -77,47 +72,56 @@ export class NeoCoordinator {
     }
     coordinator.instanceId_ = await getMeta(host.db, "instance_id");
     coordinator.instance_ = await getMeta(host.db, "instance");
-    coordinator.state_ =
-      ((await getMeta(host.db, "state")) as InstanceState | undefined) ??
-      "empty";
+    coordinator.state_ = storedState(await getMeta(host.db, "state"));
     await coordinator.start();
     return coordinator;
   }
 
-  get state(): InstanceState {
+  get state() {
     return this.state_;
   }
 
-  get instanceId(): string | undefined {
+  get instanceId() {
     return this.instanceId_;
   }
 
-  async epoch(): Promise<number | undefined> {
+  async epoch() {
     const value = await getMeta(this.host.db, "epoch").catch(() => undefined);
     return value === undefined ? undefined : Number(value);
   }
 
-  services(): Services {
+  services() {
     if (!this.live) throw new StateError(this.state_, "The instance is empty");
     return this.live;
   }
 
-  fetch(request: Request): Promise<Response> {
+  fetch(request: Request) {
     return handleCoordinatorApi(this, request);
   }
 
-  async setInstance(name: string): Promise<void> {
+  async setInstance(name: string) {
     if (this.instance_ === name) return;
     this.instance_ = name;
     await setMeta(this.host.db, "instance", name);
   }
 
-  private cell(agentId: string): AgentLink {
-    if (!this.instance_) throw new Error("The instance has no name yet");
-    return this.host.cells(this.instance_).get(agentId);
+  private instance() {
+    if (!this.instance_)
+      throw new StateError(this.state_, "The instance has no name yet");
+    return this.instance_;
   }
 
-  private async init(): Promise<void> {
+  private activeInstanceId() {
+    if (!this.instanceId_)
+      throw new StateError(this.state_, "The instance has no id yet");
+    return this.instanceId_;
+  }
+
+  private cell(agentId: AgentId) {
+    return this.host.cells(this.instance()).get(agentId);
+  }
+
+  private async init() {
     const { db } = this.host;
     await createCoordinatorSchema(db);
     this.instanceId_ = crypto.randomUUID();
@@ -130,10 +134,10 @@ export class NeoCoordinator {
       await new Settings(db).update({ timezone: this.host.timezone });
     await this.setState("active");
     await this.start();
-    await this.live!.registry.ensurePrimary();
+    await this.services().registry.ensurePrimary();
   }
 
-  private async start(): Promise<void> {
+  private async start() {
     const { db } = this.host;
     const secrets = new Secrets(db, this.host.masterKey, this.now);
     await secrets.init();
@@ -150,27 +154,26 @@ export class NeoCoordinator {
     await this.catalog.rebuild(await providers.resolved());
   }
 
-  private async setState(state: InstanceState): Promise<void> {
+  private async setState(state: InstanceState) {
     this.state_ = state;
     await setMeta(this.host.db, "state", state);
   }
 
-  /** The agent's init, if the registry has an active agent by that id. */
-  async agentInit(agentId: string): Promise<AgentInit | undefined> {
+  async agentInit(agentId: AgentId) {
     if (this.state_ !== "active") return undefined;
     const profile = await this.services().registry.get(agentId);
     return profile ? this.initOf(profile) : undefined;
   }
 
-  private initOf(profile: AgentProfile): AgentInit {
+  private initOf(profile: AgentProfile) {
     return {
-      instance: this.instance_!,
-      instanceId: this.instanceId_!,
+      instance: this.instance(),
+      instanceId: this.activeInstanceId(),
       profile,
     };
   }
 
-  async agentConfig(): Promise<AgentConfig> {
+  async agentConfig() {
     const live = this.services();
     const settings = await live.settings.all();
     return {
@@ -182,23 +185,24 @@ export class NeoCoordinator {
     };
   }
 
-  /** One /shared operation for an agent. */
-  sharedCall(op: SharedOp, args: unknown[]): Promise<SharedResult> {
-    return serveShared(this.services().shared, op, args);
+  sharedCall(request: SharedRequest) {
+    return serveShared(this.services().shared, request);
   }
 
-  sharedStream(path: string): Promise<ReadableStream<Uint8Array>> {
+  sharedStream(path: string) {
     return this.services().shared.readStream(path);
   }
 
-  async report(agentId: string, status: AgentStatus): Promise<void> {
+  async report(agentId: AgentId, status: AgentStatus) {
     if (!this.live) return;
     if (await this.live.registry.setStatus(agentId, status))
-      await this.events.emit("agent.status", { agentId, status });
+      await this.events.emit({
+        type: "agent.status",
+        data: { agentId, status },
+      });
   }
 
-  /** The model every agent uses: the person's choice, else the first one available. */
-  async model(): Promise<ModelRef | undefined> {
+  async model() {
     const chosen = await this.services().settings.get("model");
     if (chosen) return chosen;
     if (this.host.test) return TEST_MODEL;
@@ -206,8 +210,7 @@ export class NeoCoordinator {
     return first ? { provider: first.provider, modelId: first.id } : undefined;
   }
 
-  /** After a change to providers, the model or the timezone: tells every agent. */
-  private async configChanged(): Promise<void> {
+  private async configChanged() {
     const { db } = this.host;
     const revision = Number((await getMeta(db, "revision")) ?? 1) + 1;
     await setMeta(db, "revision", String(revision));
@@ -219,49 +222,44 @@ export class NeoCoordinator {
     );
   }
 
-  async updateSettings(change: Partial<SettingsShape>): Promise<SettingsShape> {
+  async updateSettings(change: Partial<SettingsShape>) {
     const settings = await this.services().settings.update(change);
     await this.configChanged();
-    await this.events.emit("settings.changed", {});
+    await this.events.emit({ type: "settings.changed", data: {} });
     return settings;
   }
 
-  async putProvider(config: ProviderConfig): Promise<void> {
+  async putProvider(config: ProviderConfig) {
     await this.services().providers.put(config);
     await this.configChanged();
-    await this.events.emit("providers.changed", {});
+    await this.events.emit({ type: "providers.changed", data: {} });
   }
 
-  async removeProvider(id: string): Promise<void> {
+  async removeProvider(id: string) {
     await this.services().providers.remove(id);
     await this.configChanged();
-    await this.events.emit("providers.changed", {});
+    await this.events.emit({ type: "providers.changed", data: {} });
   }
 
-  async createAgent(
-    input: NewAgent,
-    by: string | null = null,
-    key?: string,
-  ): Promise<AgentProfile> {
+  async createAgent(input: NewAgent, by: string | null = null, key?: string) {
     this.requireActive();
     const profile = await this.services().registry.create(input, by, key);
     await this.cell(profile.id).provision(this.initOf(profile));
-    await this.events.emit("agent.created", { agent: profile });
+    await this.events.emit({ type: "agent.created", data: { agent: profile } });
     return profile;
   }
 
-  async updateAgent(id: string, change: ProfileChange): Promise<AgentProfile> {
+  async updateAgent(id: AgentId, change: ProfileChange) {
     this.requireActive();
     const profile = await this.services().registry.update(id, change);
     await this.cell(id)
       .profileChanged(profile)
       .catch(() => {});
-    await this.events.emit("agent.changed", { agent: profile });
+    await this.events.emit({ type: "agent.changed", data: { agent: profile } });
     return profile;
   }
 
-  /** The person's delete. Not the primary agent, and not while it works. */
-  async deleteAgent(id: string): Promise<void> {
+  async deleteAgent(id: AgentId) {
     this.requireActive();
     const { registry } = this.services();
     const profile = await registry.get(id);
@@ -274,11 +272,10 @@ export class NeoCoordinator {
     await registry.markDeleting(id);
     await this.cell(id).destroy();
     await registry.remove(id);
-    await this.events.emit("agent.deleted", { agentId: id });
+    await this.events.emit({ type: "agent.deleted", data: { agentId: id } });
   }
 
-  /** Deletes that a crash cut short. */
-  async finishDeletes(): Promise<void> {
+  async finishDeletes() {
     if (!this.live) return;
     for (const id of await this.live.registry.deleting()) {
       await this.cell(id).destroy();
@@ -286,46 +283,45 @@ export class NeoCoordinator {
     }
   }
 
-  private requireActive(): void {
+  private requireActive() {
     if (this.state_ !== "active")
       throw new StateError(this.state_, `The instance is ${this.state_}`);
   }
 
-  private async agentIds(): Promise<string[]> {
+  private async agentIds() {
     return this.services().registry.ids();
   }
 
-  async seal(): Promise<void> {
+  async seal() {
     if (this.state_ !== "active")
       throw new StateError(
         this.state_,
         `Only an active instance can be sealed (it is ${this.state_})`,
       );
     await this.setState("sealed");
-    // An agent nobody has opened yet is made first, so every agent has a part to export.
     for (const agent of await this.services().registry.list()) {
       await this.cell(agent.id).provision(this.initOf(agent));
       await this.cell(agent.id).seal();
     }
-    await this.events.emit("instance.sealed");
+    await this.events.emit({ type: "instance.sealed", data: {} });
   }
 
-  async unseal(): Promise<void> {
+  async unseal() {
     if (this.state_ !== "sealed")
       throw new StateError(this.state_, "The instance is not sealed");
     for (const id of await this.agentIds()) await this.cell(id).unseal();
     await this.setState("active");
-    await this.events.emit("instance.unsealed");
+    await this.events.emit({ type: "instance.unsealed", data: {} });
   }
 
-  async markMoved(): Promise<void> {
+  async markMoved() {
     if (this.state_ !== "sealed")
       throw new StateError(this.state_, "Seal and export the instance first");
     for (const id of await this.agentIds()) await this.cell(id).markMoved();
     await this.setState("moved");
   }
 
-  async exportBundle(passphrase?: string): Promise<ReadableStream<Uint8Array>> {
+  async exportBundle(passphrase?: string) {
     if (this.state_ !== "sealed" && this.state_ !== "moved")
       throw new StateError(
         this.state_,
@@ -336,7 +332,7 @@ export class NeoCoordinator {
     const header: BundleHeader = {
       t: BUNDLE_FORMAT,
       version: BUNDLE_VERSION,
-      instanceId: this.instanceId_!,
+      instanceId: this.activeInstanceId(),
       epoch: ((await this.epoch()) ?? 1) + 1,
       createdAt: this.now(),
       source: { host: this.host.name },
@@ -345,7 +341,7 @@ export class NeoCoordinator {
         : {}),
     };
     const ids = await this.agentIds();
-    const cell = (id: string) => this.cell(id);
+    const cell = (id: AgentId) => this.cell(id);
     async function* records(): AsyncGenerator<BundleRecord> {
       yield header;
       yield { t: "part", kind: "coordinator" };
@@ -362,23 +358,17 @@ export class NeoCoordinator {
     return encodeBundle(records());
   }
 
-  async isNew(): Promise<boolean> {
+  async isNew() {
     if (this.state_ !== "active") return false;
     const live = this.services();
     if ((await live.providers.list()).length) return false;
     const agents = await live.registry.list();
-    if (agents.length !== 1 || !agents[0]!.primary) return false;
-    return this.cell(agents[0]!.id).isNew();
+    const [only, ...others] = agents;
+    if (!only || others.length || !only.primary) return false;
+    return this.cell(only.id).isNew();
   }
 
-  async importBundle(
-    body: ReadableStream<Uint8Array>,
-    passphrase?: string,
-  ): Promise<{
-    instanceId: string;
-    epoch: number;
-    secrets: "kept" | "dropped";
-  }> {
+  async importBundle(body: ReadableStream<Uint8Array>, passphrase?: string) {
     const homecoming = this.state_ === "moved";
     if (!homecoming && !(await this.isNew()))
       throw new StateError(
@@ -413,7 +403,7 @@ export class NeoCoordinator {
     await wipeDatabase(db);
     await blobs.clear();
     await db.exec(`CREATE TABLE ${IMPORT_MARKER} (started_at INTEGER) STRICT`);
-    const touched: string[] = [];
+    const touched: AgentId[] = [];
     try {
       const first = await records.next();
       if (
@@ -434,7 +424,6 @@ export class NeoCoordinator {
         await db.run(`DELETE FROM neo_meta WHERE key = 'dek'`);
         await db.run(`DELETE FROM neo_secrets`);
       }
-      // Agents ask for their config while they load.
       await this.start();
       const registry = this.services().registry;
       let parts = 1;
@@ -480,12 +469,15 @@ export class NeoCoordinator {
       throw error;
     }
     this.state_ = "active";
-    await this.events.emit("instance.imported", {
-      from: header.source.host,
-      epoch: header.epoch,
+    await this.events.emit({
+      type: "instance.imported",
+      data: {
+        from: header.source.host,
+        epoch: header.epoch,
+      },
     });
     return {
-      instanceId: this.instanceId_!,
+      instanceId: this.activeInstanceId(),
       epoch: header.epoch,
       secrets: dek ? "kept" : "dropped",
     };

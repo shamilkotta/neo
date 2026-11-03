@@ -1,21 +1,26 @@
-import type {
-  AgentClient,
-  AvailableModel,
-  ModelRef,
-  NeoClient,
-  ProviderConfig,
-  ProviderInfo,
-  SettingsShape,
-  Schedule,
-  Status,
+import {
+  ProviderKind,
+  ThinkingLevel,
+  type AgentClient,
+  type AgentId,
+  type BuiltinKind,
+  type ModelRef,
+  type NeoClient,
+  type ProviderConfig,
+  type ProviderInfo,
+  type ProviderSetup,
+  type Schedule,
+  type Status,
 } from "@neo/client";
 import {
   type FormEvent,
   type ReactNode,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
+import Value from "typebox/value";
 
 export const TABS = [
   "Schedules",
@@ -29,7 +34,7 @@ export type Tab = (typeof TABS)[number];
 interface PanelProps {
   root: NeoClient;
   client: AgentClient;
-  agentId: string;
+  agentId: AgentId;
   version: number;
   status?: Status;
   onForget: () => void;
@@ -102,7 +107,7 @@ export function Panel({ tab, ...props }: PanelProps & { tab: Tab }) {
   }
 }
 
-function describe(s: Schedule): string {
+function describe(s: Schedule) {
   if (s.spec.kind === "once")
     return `once, ${new Date(s.spec.at).toLocaleString()}`;
   if (s.spec.kind === "every") return `every ${s.spec.minutes} min`;
@@ -224,7 +229,7 @@ function ProvidersPanel({ root: client, version, status }: PanelProps) {
     [client, version],
   );
   const [found, setFound] = useState<ProviderConfig[]>([]);
-  const [kind, setKind] = useState<ProviderConfig["kind"]>("anthropic");
+  const [kind, setKind] = useState<ProviderKind>("anthropic");
   useEffect(() => {
     if (status?.capabilities.sockets)
       client.detectProviders().then(setFound, () => {});
@@ -240,9 +245,9 @@ function ProvidersPanel({ root: client, version, status }: PanelProps) {
       {providers?.map((p: ProviderInfo) => (
         <div className="row" key={p.id}>
           <b>{p.id}</b> · {p.kind}
-          {p.baseUrl && ` · ${p.baseUrl}`}
+          {p.kind === "openai-compatible" && ` · ${p.baseUrl}`}
           {p.hasKey && " · key set"}
-          {!!p.models?.length && (
+          {p.kind === "openai-compatible" && (
             <div className="muted">{p.models.map((m) => m.id).join(", ")}</div>
           )}
           <div className="actions">
@@ -263,7 +268,8 @@ function ProvidersPanel({ root: client, version, status }: PanelProps) {
           <h3>Found on this machine</h3>
           {found.map((p) => (
             <div className="row" key={p.id}>
-              {p.id} · {p.models?.length ?? 0} models{" "}
+              {p.id} · {p.kind === "openai-compatible" ? p.models.length : 0}{" "}
+              models{" "}
               <button
                 className="small"
                 onClick={() => attempt(() => client.putProvider(p), reload)}
@@ -277,27 +283,32 @@ function ProvidersPanel({ root: client, version, status }: PanelProps) {
       <Form
         onSubmit={(f) => {
           const apiKey = String(f.get("apiKey") ?? "");
-          const config: ProviderConfig = compat
-            ? {
-                id: String(f.get("id")),
-                kind,
-                baseUrl: String(f.get("baseUrl")),
-                models: String(f.get("models"))
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-                  .map((id) => ({ id })),
-              }
-            : { id: kind, kind };
-          if (apiKey) config.apiKey = apiKey;
-          return client.putProvider(config).then(reload);
+          const setup: ProviderSetup =
+            kind === "openai-compatible"
+              ? {
+                  id: String(f.get("id")),
+                  kind,
+                  baseUrl: String(f.get("baseUrl")),
+                  models: String(f.get("models"))
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                    .map((id) => ({ id })),
+                }
+              : builtinSetup(kind);
+          return client
+            .putProvider(apiKey ? { ...setup, apiKey } : setup)
+            .then(reload);
         }}
       >
         <h3>Add a provider</h3>
         <label>Kind</label>
         <select
           value={kind}
-          onChange={(e) => setKind(e.target.value as ProviderConfig["kind"])}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (Value.Check(ProviderKind, value)) setKind(value);
+          }}
         >
           <option value="anthropic">anthropic</option>
           <option value="openai">openai</option>
@@ -328,7 +339,19 @@ function ProvidersPanel({ root: client, version, status }: PanelProps) {
   );
 }
 
+function builtinSetup(kind: BuiltinKind) {
+  switch (kind) {
+    case "anthropic":
+      return { id: kind, kind };
+    case "openai":
+      return { id: kind, kind };
+    case "openrouter":
+      return { id: kind, kind };
+  }
+}
+
 function SettingsPanel({ root, version, status, onForget }: PanelProps) {
+  const timezone = useRef<HTMLInputElement>(null);
   const [data, reload, error] = useLoad(
     async () => ({
       settings: await root.settings(),
@@ -338,10 +361,7 @@ function SettingsPanel({ root, version, status, onForget }: PanelProps) {
   );
   if (error) return <p className="err">{error}</p>;
   if (!data) return null;
-  const { settings: s, models } = data as {
-    settings: SettingsShape;
-    models: { models: AvailableModel[]; default: ModelRef | null };
-  };
+  const { settings: s, models } = data;
   return (
     <>
       <form
@@ -351,6 +371,7 @@ function SettingsPanel({ root, version, status, onForget }: PanelProps) {
           const f = new FormData(e.currentTarget);
           const model = String(f.get("model") ?? "");
           const slash = model.indexOf("/");
+          const thinking = String(f.get("thinking"));
           void attempt(
             () =>
               root.updateSettings({
@@ -361,8 +382,9 @@ function SettingsPanel({ root, version, status, onForget }: PanelProps) {
                       modelId: model.slice(slash + 1),
                     }
                   : null,
-                thinking: (String(f.get("thinking")) ||
-                  null) as SettingsShape["thinking"],
+                thinking: Value.Check(ThinkingLevel, thinking)
+                  ? thinking
+                  : null,
               }),
             reload,
           );
@@ -391,13 +413,14 @@ function SettingsPanel({ root, version, status, onForget }: PanelProps) {
           ))}
         </select>
         <label>Your timezone</label>
-        <input name="timezone" id="tz" defaultValue={s.timezone} />
+        <input name="timezone" ref={timezone} defaultValue={s.timezone} />
         <button
           type="button"
           className="small"
           onClick={() => {
-            (document.getElementById("tz") as HTMLInputElement).value =
-              Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (timezone.current)
+              timezone.current.value =
+                Intl.DateTimeFormat().resolvedOptions().timeZone;
           }}
         >
           Use this browser's

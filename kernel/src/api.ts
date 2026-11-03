@@ -1,35 +1,25 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { watchEvents } from "@earendil-works/pi-durable";
-import {
-  ATTACHMENTS_ROOT,
-  type AttachmentInput,
-  USER_ROOT,
-} from "./agent/attachments";
+import { AttachmentInput, ScheduleInput } from "@neo/client";
+import { Type } from "typebox";
+import { ATTACHMENTS_ROOT, USER_ROOT } from "./agent/attachments";
 import { readTranscript } from "./agent/transcript";
-import type { ScheduleInput } from "./agent/schedules";
+import { ScriptStep } from "./testing";
 import { body, eventStream, HttpError, json, matcher, serve } from "./http";
 import type { NeoAgent } from "./neo";
 import { joinPath, type Vfs, type VfsStat } from "./vfs/vfs";
 
 export { authorized, preflight, unauthorized } from "./http";
 
-/** One agent's API. The host routes `/i/agents/<id>/…` here as `/…`. */
-export function handleAgentApi(
-  neo: NeoAgent,
-  request: Request,
-): Promise<Response> {
+export function handleAgentApi(neo: NeoAgent, request: Request) {
   return serve(request, (request, url) => route(neo, request, url));
 }
 
-async function route(
-  neo: NeoAgent,
-  request: Request,
-  url: URL,
-): Promise<Response> {
+async function route(neo: NeoAgent, request: Request, url: URL) {
   const { method } = request;
   const path = url.pathname;
-  const { is, match } = matcher(request, url);
-  let m: RegExpExecArray | null;
+  const { is, param } = matcher(request, url);
+  let id: string | undefined;
 
   if (neo.state === "empty") throw new HttpError(404, "No such agent");
   if (is("GET", "/status")) {
@@ -63,15 +53,12 @@ async function route(
     return json({ upload }, 201);
   }
   if (is("POST", "/messages")) {
-    const input = await body<{
-      text?: string;
-      clientId?: string;
-      attachments?: AttachmentInput[];
-    }>(request);
-    const files = attachmentsOf(input);
+    const input = await body(request, MessageBody);
+    const files = input.attachments ?? [];
     if (typeof input.text !== "string" && !files.length)
       throw new HttpError(400, "text is required");
     const message = await neo.send({
+      source: "user",
       text: input.text ?? "",
       ...(input.clientId ? { clientId: input.clientId } : {}),
       ...(files.length ? { files } : {}),
@@ -106,8 +93,8 @@ async function route(
       compactions,
     });
   }
-  if ((m = match("GET", /^\/turns\/([\w-]+)$/))) {
-    const turn = await live.mailbox.turn(m[1]!);
+  if ((id = param("GET", /^\/turns\/([\w-]+)$/)) !== undefined) {
+    const turn = await live.mailbox.turn(id);
     if (!turn) throw new HttpError(404, "No such turn");
     return json({ turn, messages: await live.mailbox.turnMessages(turn.id) });
   }
@@ -123,36 +110,33 @@ async function route(
 
   if (is("GET", "/queue")) return json({ queue: await live.mailbox.queue() });
   if (is("PUT", "/queue/order")) {
-    const input = await body<{ order?: string[] }>(request);
-    if (!Array.isArray(input.order))
-      throw new HttpError(400, "order is a list of message ids");
+    const input = await body(
+      request,
+      Type.Object({ order: Type.Array(Type.String()) }),
+    );
     return json({ queue: await live.mailbox.reorder(input.order) });
   }
-  if ((m = match("PATCH", /^\/queue\/([\w-]+)$/))) {
-    const input = await body<{ text?: string }>(request);
-    if (typeof input.text !== "string")
-      throw new HttpError(400, "text is required");
+  if ((id = param("PATCH", /^\/queue\/([\w-]+)$/)) !== undefined) {
+    const input = await body(request, Type.Object({ text: Type.String() }));
     return json({
-      message: await live.mailbox.edit(m[1]!, input.text),
+      message: await live.mailbox.edit(id, input.text),
     });
   }
-  if ((m = match("DELETE", /^\/queue\/([\w-]+)$/))) {
-    await live.mailbox.cancel(m[1]!);
-    return json({ cancelled: m[1] });
+  if ((id = param("DELETE", /^\/queue\/([\w-]+)$/)) !== undefined) {
+    await live.mailbox.cancel(id);
+    return json({ cancelled: id });
   }
-  if ((m = match("POST", /^\/queue\/([\w-]+)\/steer$/))) {
-    await live.mailbox.steer(m[1]!);
-    return json({ steered: m[1] });
+  if ((id = param("POST", /^\/queue\/([\w-]+)\/steer$/)) !== undefined) {
+    await live.mailbox.steer(id);
+    return json({ steered: id });
   }
 
   if (is("GET", "/schedules"))
     return json({ schedules: await live.schedules.list() });
-  if ((m = match("PATCH", /^\/schedules\/([\w-]+)$/))) {
-    const input = await body<{ enabled?: boolean }>(request);
-    if (typeof input.enabled !== "boolean")
-      throw new HttpError(400, "enabled is required");
+  if ((id = param("PATCH", /^\/schedules\/([\w-]+)$/)) !== undefined) {
+    const input = await body(request, Type.Object({ enabled: Type.Boolean() }));
     const schedule = await live.schedules.update(
-      m[1]!,
+      id,
       { enabled: input.enabled },
       await neo.timezone(),
     );
@@ -200,31 +184,36 @@ async function route(
   }
 
   if (neo.host.test && is("POST", "/test/script")) {
-    const input = await body<{
-      steps: Parameters<NonNullable<typeof neo.host.test>["script"]>[0];
-      append?: boolean;
-    }>(request);
+    const input = await body(
+      request,
+      Type.Object({
+        steps: Type.Array(ScriptStep),
+        append: Type.Optional(Type.Boolean()),
+      }),
+    );
     neo.host.test.script(input.steps, { append: input.append ?? false });
     return json({ pending: neo.host.test.pending() });
   }
   if (neo.host.test && is("POST", "/test/release")) {
-    const input = await body<{ gate: string }>(request);
+    const input = await body(request, Type.Object({ gate: Type.String() }));
     neo.host.test.release(input.gate);
     return json({ released: input.gate });
   }
   if (neo.host.test && is("GET", "/test/seen"))
     return json({ seen: neo.host.test.seen });
   if (neo.host.test && is("POST", "/test/messages")) {
-    const input = await body<{
-      text?: string;
-      attachments?: AttachmentInput[];
-    }>(request);
-    const files = attachmentsOf(input);
-    if (typeof input.text !== "string")
-      throw new HttpError(400, "text is required");
+    const input = await body(
+      request,
+      Type.Object({
+        text: Type.String(),
+        attachments: Type.Optional(Type.Array(AttachmentInput)),
+      }),
+    );
+    const files = input.attachments ?? [];
     return json(
       {
         message: await neo.send({
+          source: "user",
           text: input.text,
           ...(files.length ? { files } : {}),
           steer: false,
@@ -236,7 +225,7 @@ async function route(
   if (neo.host.test && is("GET", "/test/memories"))
     return json({ memories: await live.memories.list() });
   if (neo.host.test && is("POST", "/test/schedules")) {
-    const input = await body<ScheduleInput>(request);
+    const input = await body(request, ScheduleInput);
     const schedule = await live.schedules.create(
       input,
       "agent",
@@ -245,10 +234,13 @@ async function route(
     await neo.schedulesChanged();
     return json({ schedule }, 201);
   }
-  if (neo.host.test && (m = match("PATCH", /^\/test\/schedules\/([\w-]+)$/))) {
+  if (
+    neo.host.test &&
+    (id = param("PATCH", /^\/test\/schedules\/([\w-]+)$/)) !== undefined
+  ) {
     const schedule = await live.schedules.update(
-      m[1]!,
-      await body<ScheduleInput>(request),
+      id,
+      await body(request, ScheduleInput),
       await neo.timezone(),
     );
     if (!schedule) throw new HttpError(404, "No such schedule");
@@ -257,24 +249,22 @@ async function route(
   }
   if (
     neo.host.test &&
-    (m = match("POST", /^\/test\/schedules\/([\w-]+)\/due$/))
+    (id = param("POST", /^\/test\/schedules\/([\w-]+)\/due$/)) !== undefined
   ) {
-    const id =
-      m[1] === "heartbeat"
-        ? (await live.schedules.system("heartbeat"))?.id
-        : m[1];
+    const scheduleId =
+      id === "heartbeat" ? (await live.schedules.system("heartbeat"))?.id : id;
     const ago = Number(url.searchParams.get("ago") ?? 1);
-    if (!id || !(await live.schedules.dueNow(id, ago)))
+    if (!scheduleId || !(await live.schedules.dueNow(scheduleId, ago)))
       throw new HttpError(404, "No such schedule");
-    return json({ due: id });
+    return json({ due: scheduleId });
   }
   if (
     neo.host.test &&
-    (m = match("GET", /^\/test\/schedules\/([\w-]+)\/runs$/))
+    (id = param("GET", /^\/test\/schedules\/([\w-]+)\/runs$/)) !== undefined
   ) {
     const runs = await neo.host.db.all(
       `SELECT status, reason FROM neo_schedule_runs WHERE schedule_id = ? ORDER BY due_at DESC`,
-      m[1]!,
+      id,
     );
     return json({ runs });
   }
@@ -286,14 +276,13 @@ async function route(
   throw new HttpError(404, "Not found");
 }
 
-function attachmentsOf(input: { attachments?: unknown }): AttachmentInput[] {
-  if (input.attachments === undefined) return [];
-  if (!Array.isArray(input.attachments))
-    throw new HttpError(400, "attachments is a list of { id, mimeType? }");
-  return input.attachments as AttachmentInput[];
-}
+const MessageBody = Type.Object({
+  text: Type.Optional(Type.String()),
+  clientId: Type.Optional(Type.String()),
+  attachments: Type.Optional(Type.Array(AttachmentInput)),
+});
 
-async function fileResponse(vfs: Vfs, stat: VfsStat): Promise<Response> {
+async function fileResponse(vfs: Vfs, stat: VfsStat) {
   return new Response(await vfs.readStream(stat.path), {
     headers: {
       "content-type": "application/octet-stream",

@@ -1,10 +1,13 @@
+import { present } from "../errors";
+import { Type, type Static } from "typebox";
 import { ulid } from "../ids";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type {
+import {
   MemoryKind,
   MemoryOrigin,
   MemoryOwnerKind,
   Memory,
+  parseJson,
 } from "@neo/client";
 export type {
   MemoryKind,
@@ -13,7 +16,7 @@ export type {
   Memory,
 } from "@neo/client";
 
-export const MEMORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const MEMORY_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_memories (
     id TEXT PRIMARY KEY,
     owner_kind TEXT NOT NULL DEFAULT 'agent',
@@ -74,29 +77,33 @@ interface MemoryRow {
   updated_at: number;
 }
 
-export type StagedOp =
-  | {
-      type: "remember";
-      text: string;
-      memoryId?: string;
-      inclusion: MemoryKind;
-      newId: string;
-    }
-  | { type: "forget"; memoryId: string }
-  | {
-      type: "selection";
-      changes: {
-        memoryId: string;
-        inclusion: MemoryKind;
-        expectedRevision: number;
-      }[];
-    };
+const StagedOp = Type.Union([
+  Type.Object({
+    type: Type.Literal("remember"),
+    text: Type.String(),
+    memoryId: Type.Optional(Type.String()),
+    inclusion: MemoryKind,
+    newId: Type.String(),
+  }),
+  Type.Object({ type: Type.Literal("forget"), memoryId: Type.String() }),
+  Type.Object({
+    type: Type.Literal("selection"),
+    changes: Type.Array(
+      Type.Object({
+        memoryId: Type.String(),
+        inclusion: MemoryKind,
+        expectedRevision: Type.Number(),
+      }),
+    ),
+  }),
+]);
+export type StagedOp = Static<typeof StagedOp>;
 
 export class MemoryError extends Error {}
 
 export function serializeEssential(
   memories: Pick<Memory, "id" | "text" | "origin">[],
-): string {
+) {
   const entries = memories.map(({ id, text, origin }) => ({
     id,
     text,
@@ -121,7 +128,7 @@ export class Memories {
     kind: MemoryKind = "searchable",
     id: string = ulid(this.now()),
     options: { origin?: MemoryOrigin; ownerKind?: MemoryOwnerKind } = {},
-  ): Promise<Memory> {
+  ) {
     const existing = await this.get(id);
     if (existing) return existing;
     const value = normalize(text);
@@ -161,10 +168,10 @@ export class Memories {
       time,
       time,
     );
-    return (await this.get(id))!;
+    return present(await this.get(id), `memory ${id}`);
   }
 
-  async get(id: string): Promise<Memory | undefined> {
+  async get(id: string) {
     const row = await this.db.get<MemoryRow>(
       `SELECT * FROM neo_memories WHERE id = ?`,
       id,
@@ -172,10 +179,7 @@ export class Memories {
     return row ? toMemory(row) : undefined;
   }
 
-  async list(
-    kind?: MemoryKind,
-    ownerKind: MemoryOwnerKind = "agent",
-  ): Promise<Memory[]> {
+  async list(kind?: MemoryKind, ownerKind: MemoryOwnerKind = "agent") {
     const rows = kind
       ? await this.db.all<MemoryRow>(
           `SELECT * FROM neo_memories WHERE owner_kind = ? AND kind = ? ORDER BY id`,
@@ -189,7 +193,7 @@ export class Memories {
     return rows.map(toMemory);
   }
 
-  async count(ownerKind: MemoryOwnerKind = "agent"): Promise<number> {
+  async count(ownerKind: MemoryOwnerKind = "agent") {
     return (
       (
         await this.db.get<{ n: number }>(
@@ -200,10 +204,7 @@ export class Memories {
     );
   }
 
-  async update(
-    id: string,
-    change: { text?: string; kind?: MemoryKind },
-  ): Promise<Memory | undefined> {
+  async update(id: string, change: { text?: string; kind?: MemoryKind }) {
     const current = await this.get(id);
     if (!current) return undefined;
     const text =
@@ -231,14 +232,14 @@ export class Memories {
     return this.get(id);
   }
 
-  async remove(id: string): Promise<boolean> {
+  async remove(id: string) {
     const current = await this.get(id);
     if (!current) return false;
     await this.db.run(`DELETE FROM neo_memories WHERE id = ?`, id);
     return true;
   }
 
-  async clear(ownerKind: MemoryOwnerKind = "agent"): Promise<number> {
+  async clear(ownerKind: MemoryOwnerKind = "agent") {
     const n = await this.count(ownerKind);
     await this.db.run(
       `DELETE FROM neo_memories WHERE owner_kind = ?`,
@@ -247,11 +248,7 @@ export class Memories {
     return n;
   }
 
-  async search(
-    query: string,
-    limit = 8,
-    ownerKind: MemoryOwnerKind = "agent",
-  ): Promise<Memory[]> {
+  async search(query: string, limit = 8, ownerKind: MemoryOwnerKind = "agent") {
     const terms = query
       .toLowerCase()
       .split(/[^\p{L}\p{N}]+/u)
@@ -279,29 +276,28 @@ export class Memories {
     const memories = rows.slice(0, LIST_PAGE).map(toMemory);
     return {
       memories,
-      nextCursor: rows.length > LIST_PAGE ? memories.at(-1)!.id : null,
+      nextCursor:
+        rows.length > LIST_PAGE ? (memories.at(-1)?.id ?? null) : null,
     };
   }
 
-  private async projected(requestId: string): Promise<Map<string, Memory>> {
+  private async projected(requestId: string) {
     const all = new Map((await this.list()).map((m) => [m.id, m]));
     for (const op of await this.stagedOps(requestId)) {
       if (op.type === "remember") {
         const target = op.memoryId ?? op.newId;
-        const current = all.get(target);
-        all.set(target, {
-          ...(current ?? {
-            id: target,
-            ownerKind: "agent",
-            origin: "automatic",
-            userControlled: false,
-            revision: 0,
-            createdAt: 0,
-            updatedAt: 0,
-          }),
-          text: op.text,
+        const current: Memory = all.get(target) ?? {
+          id: target,
+          ownerKind: "agent",
           kind: op.inclusion,
-        } as Memory);
+          origin: "automatic",
+          userControlled: false,
+          revision: 0,
+          text: op.text,
+          createdAt: 0,
+          updatedAt: 0,
+        };
+        all.set(target, { ...current, text: op.text, kind: op.inclusion });
       } else if (op.type === "forget") all.delete(op.memoryId);
       else
         for (const c of op.changes) {
@@ -312,19 +308,15 @@ export class Memories {
     return all;
   }
 
-  private async stagedOps(requestId: string): Promise<StagedOp[]> {
+  private async stagedOps(requestId: string) {
     const rows = await this.db.all<{ op: string }>(
       `SELECT op FROM neo_memory_staged WHERE request_id = ? ORDER BY seq`,
       requestId,
     );
-    return rows.map((r) => JSON.parse(r.op) as StagedOp);
+    return rows.map((r) => parseJson(StagedOp, r.op));
   }
 
-  private async stage(
-    requestId: string,
-    callId: string,
-    op: StagedOp,
-  ): Promise<void> {
+  private async stage(requestId: string, callId: string, op: StagedOp) {
     await this.db.run(
       `INSERT INTO neo_memory_staged (request_id, call_id, op, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(call_id) DO NOTHING`,
       requestId,
@@ -338,12 +330,7 @@ export class Memories {
     requestId: string,
     callId: string,
     input: { text: string; memoryId?: string; inclusion?: MemoryKind },
-  ): Promise<{
-    status: string;
-    memoryId: string | null;
-    inclusion?: MemoryKind;
-    note?: string;
-  }> {
+  ) {
     const text = normalize(input.text);
     if (!text) throw new MemoryError("A memory needs text");
     if (text.length > MEMORY_TEXT_LIMIT)
@@ -482,7 +469,7 @@ export class Memories {
     return { status: "staged" };
   }
 
-  async finish(requestId: string, completed: boolean): Promise<number> {
+  async finish(requestId: string, completed: boolean) {
     const rows = await this.db.all<{ op: string }>(
       `SELECT op FROM neo_memory_staged WHERE request_id = ? ORDER BY seq`,
       requestId,
@@ -491,7 +478,7 @@ export class Memories {
     let applied = 0;
     if (completed) {
       for (const row of rows) {
-        const op = JSON.parse(row.op) as StagedOp;
+        const op = parseJson(StagedOp, row.op);
         try {
           applied += await this.apply(op);
         } catch {}
@@ -504,7 +491,7 @@ export class Memories {
     return applied;
   }
 
-  private async apply(op: StagedOp): Promise<number> {
+  private async apply(op: StagedOp) {
     const time = this.now();
     if (op.type === "remember") {
       if (op.memoryId) {
@@ -560,7 +547,7 @@ export class Memories {
   }
 }
 
-function toMemory(row: MemoryRow): Memory {
+function toMemory(row: MemoryRow) {
   return {
     id: row.id,
     ownerKind: row.owner_kind ?? "agent",

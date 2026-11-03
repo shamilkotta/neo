@@ -23,14 +23,13 @@ export const text = (value: string) => ({
 export const json = (value: unknown) => text(JSON.stringify(value, null, 2));
 
 export class ToolRefusal extends Error {}
-export const refuse = (message: string): never => {
+export function refuse(message: string): never {
   throw new ToolRefusal(message);
-};
+}
 
-export async function caller(
-  services: ToolServices,
-  _conversationId: number,
-): Promise<{ turnId: string | undefined }> {
+export async function turnId(services: ToolServices) {
   const turn = await services.mailbox.currentTurn();
-  return { turnId: turn?.id };
+  return turn
+    ? turn.id
+    : refuse("Memories change only in a turn that answers a message.");
 }

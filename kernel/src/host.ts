@@ -1,3 +1,4 @@
+import type { AgentId } from "@neo/client";
 import type { Cells, CoordinatorLink } from "./links";
 import { NeoAgent } from "./neo";
 import { NeoCoordinator } from "./coordinator/coordinator";
@@ -39,7 +40,7 @@ export interface CoordinatorPorts {
 
 export interface Address {
   instance: string;
-  agentId: string;
+  agentId: AgentId;
 }
 
 export abstract class AgentHost {

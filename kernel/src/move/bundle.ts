@@ -1,3 +1,6 @@
+import { Type, type Static } from "typebox";
+import Value from "typebox/value";
+import { AgentId } from "@neo/client";
 import {
   fromBase64,
   open,
@@ -8,54 +11,74 @@ import {
   toBase64,
 } from "../crypto";
 import type { SqliteDatabase } from "../sql";
-import { measured, type BlobStore } from "../vfs/blobs";
+import { plainBytes, plainChunks } from "../streams";
+import { BlobKey, measured, type BlobStore } from "../vfs/blobs";
 import { rechunk } from "../vfs/vfs";
-import { dumpDatabase, loadDatabase, type SnapshotRecord } from "./snapshot";
+import { dumpDatabase, loadDatabase, SnapshotRecord } from "./snapshot";
 
-// A bundle is gzipped ndjson: a header, then one part per Durable Object (the coordinator first,
-// then each agent), then an end record. A part is the DO's database and its blobs; each DO writes
-// and reads its own part, so the coordinator only passes agent parts through.
 export const BUNDLE_FORMAT = "neo-bundle";
 export const BUNDLE_VERSION = 2;
 export const BLOB_PIECE = 512 * 1024;
 
-export interface BundleHeader {
-  t: typeof BUNDLE_FORMAT;
-  version: number;
-  instanceId: string;
-  epoch: number;
-  createdAt: number;
-  source: { host: string };
-  dek?: {
-    kdf: "pbkdf2-sha256";
-    iterations: number;
-    salt: string;
-    sealed: string;
-  };
+const WrappedDek = Type.Object({
+  kdf: Type.Literal("pbkdf2-sha256"),
+  iterations: Type.Number(),
+  salt: Type.String(),
+  sealed: Type.String(),
+});
+export type WrappedDek = Static<typeof WrappedDek>;
+
+export const BundleHeader = Type.Object({
+  t: Type.Literal(BUNDLE_FORMAT),
+  version: Type.Number(),
+  instanceId: Type.String(),
+  epoch: Type.Number(),
+  createdAt: Type.Number(),
+  source: Type.Object({ host: Type.String() }),
+  dek: Type.Optional(WrappedDek),
+});
+export type BundleHeader = Static<typeof BundleHeader>;
+
+export const PartStart = Type.Union([
+  Type.Object({ t: Type.Literal("part"), kind: Type.Literal("coordinator") }),
+  Type.Object({
+    t: Type.Literal("part"),
+    kind: Type.Literal("agent"),
+    id: AgentId,
+  }),
+]);
+export type PartStart = Static<typeof PartStart>;
+
+export const BundleRecord = Type.Union([
+  SnapshotRecord,
+  BundleHeader,
+  PartStart,
+  Type.Object({
+    t: Type.Literal("blob"),
+    key: BlobKey,
+    size: Type.Number(),
+    hash: Type.String(),
+  }),
+  Type.Object({ t: Type.Literal("blob-data"), data: Type.String() }),
+  Type.Object({ t: Type.Literal("blob-end") }),
+  Type.Object({ t: Type.Literal("part-end"), records: Type.Number() }),
+  Type.Object({ t: Type.Literal("end"), parts: Type.Number() }),
+]);
+export type BundleRecord = Static<typeof BundleRecord>;
+
+function parseRecord(line: string) {
+  const value: unknown = JSON.parse(line);
+  if (!Value.Check(BundleRecord, value))
+    throw new BundleError("The bundle is damaged (an unknown record)");
+  return value;
 }
-
-export type PartStart = {
-  t: "part";
-  kind: "coordinator" | "agent";
-  id?: string;
-};
-
-export type BundleRecord =
-  | SnapshotRecord
-  | BundleHeader
-  | PartStart
-  | { t: "blob"; key: string; size: number; hash: string }
-  | { t: "blob-data"; data: string }
-  | { t: "blob-end" }
-  | { t: "part-end"; records: number }
-  | { t: "end"; parts: number };
 
 export class BundleError extends Error {}
 
 export async function wrapDek(
-  dek: Uint8Array,
+  dek: Uint8Array<ArrayBuffer>,
   passphrase: string,
-): Promise<NonNullable<BundleHeader["dek"]>> {
+): Promise<WrappedDek> {
   const salt = randomBytes(16);
   const key = await passphraseKey(passphrase, salt, PASSPHRASE_ITERATIONS);
   return {
@@ -66,10 +89,7 @@ export async function wrapDek(
   };
 }
 
-export async function unwrapDek(
-  dek: NonNullable<BundleHeader["dek"]>,
-  passphrase: string,
-): Promise<Uint8Array> {
+export async function unwrapDek(dek: WrappedDek, passphrase: string) {
   const key = await passphraseKey(
     passphrase,
     fromBase64(dek.salt),
@@ -82,17 +102,17 @@ export async function unwrapDek(
   }
 }
 
-export function encodeNdjson(
-  records: AsyncIterable<BundleRecord>,
-): ReadableStream<Uint8Array> {
+export function encodeNdjson(records: AsyncIterable<BundleRecord>) {
   const encoder = new TextEncoder();
   const iterator = records[Symbol.asyncIterator]();
-  return new ReadableStream<Uint8Array>({
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
     async pull(controller) {
       const next = await iterator.next();
       if (next.done) controller.close();
       else
-        controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
+        controller.enqueue(
+          plainBytes(encoder.encode(`${JSON.stringify(next.value)}\n`)),
+        );
     },
     async cancel() {
       await iterator.return?.(undefined);
@@ -106,17 +126,17 @@ export async function* decodeNdjson(
   const decoder = new TextDecoder();
   let buffer = "";
   try {
-    for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+    for await (const chunk of stream) {
       buffer += decoder.decode(chunk, { stream: true });
       let newline: number;
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        if (line.trim()) yield JSON.parse(line) as BundleRecord;
+        if (line.trim()) yield parseRecord(line);
       }
     }
     buffer += decoder.decode();
-    if (buffer.trim()) yield JSON.parse(buffer) as BundleRecord;
+    if (buffer.trim()) yield parseRecord(buffer);
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof TypeError)
       throw new BundleError(`The bundle is damaged (${error.message})`);
@@ -125,24 +145,15 @@ export async function* decodeNdjson(
 }
 
 export const encodeBundle = (records: AsyncIterable<BundleRecord>) =>
-  encodeNdjson(records).pipeThrough(
-    new CompressionStream("gzip") as unknown as TransformStream<
-      Uint8Array,
-      Uint8Array
-    >,
-  );
+  encodeNdjson(records).pipeThrough(new CompressionStream("gzip"));
 
 export const decodeBundle = (body: ReadableStream<Uint8Array>) =>
   decodeNdjson(
-    body.pipeThrough(
-      new DecompressionStream("gzip") as unknown as TransformStream<
-        Uint8Array,
-        Uint8Array
-      >,
-    ),
+    body
+      .pipeThrough(plainChunks())
+      .pipeThrough(new DecompressionStream("gzip")),
   );
 
-/** One DO's part: its database, then its blobs, then a count. `keep` drops rows (the DEK). */
 export async function* writePart(
   db: SqliteDatabase,
   blobs: BlobStore,
@@ -161,11 +172,12 @@ export async function* writePart(
     `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vfs_blobs'`,
   );
   for (let after = ""; hasBlobs;) {
-    const page = await db.all<{ key: string; size: number; hash: string }>(
+    const page = await db.all<{ key: BlobKey; size: number; hash: string }>(
       `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
       after,
     );
-    if (page.length === 0) break;
+    const last = page.at(-1);
+    if (!last) break;
     for (const blob of page) {
       const stream = await blobs.get(blob.key);
       if (!stream) throw new Error(`A file's content is missing (${blob.key})`);
@@ -178,20 +190,19 @@ export async function* writePart(
       count++;
       yield { t: "blob-end" };
     }
-    after = page.at(-1)!.key;
+    after = last.key;
   }
   yield { t: "part-end", records: count };
 }
 
-/** Reads one part (positioned after its start) into an empty database and blob store. */
 export async function readPart(
   records: AsyncIterator<BundleRecord>,
   db: SqliteDatabase,
   blobs: BlobStore,
-): Promise<void> {
+) {
   let pending: BundleRecord | undefined;
   let count = 0;
-  const next = async (): Promise<BundleRecord | undefined> => {
+  const next = async () => {
     if (pending) {
       const value = pending;
       pending = undefined;
@@ -257,10 +268,7 @@ export async function readPart(
     );
 }
 
-/** Passes one part's records (up to and including its end) on as a stream for its DO. */
-export function forwardPart(
-  records: AsyncIterator<BundleRecord>,
-): ReadableStream<Uint8Array> {
+export function forwardPart(records: AsyncIterator<BundleRecord>) {
   let done = false;
   return encodeNdjson({
     async *[Symbol.asyncIterator]() {
@@ -275,15 +283,13 @@ export function forwardPart(
   });
 }
 
-export async function readHeader(
-  records: AsyncIterator<BundleRecord>,
-): Promise<BundleHeader> {
+export async function readHeader(records: AsyncIterator<BundleRecord>) {
   const first = await records
     .next()
     .catch(() => ({ done: true as const, value: undefined }));
-  const header = first.value as BundleHeader | undefined;
-  if (first.done || header?.t !== BUNDLE_FORMAT)
+  if (first.done || first.value.t !== BUNDLE_FORMAT)
     throw new BundleError("Not a Neo bundle");
+  const header = first.value;
   if (header.version !== BUNDLE_VERSION)
     throw new BundleError(
       `Bundle version ${header.version} is not supported (this Neo reads ${BUNDLE_VERSION})`,
