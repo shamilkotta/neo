@@ -1,7 +1,5 @@
-// What the coordinator and the agents ask each other. The kernel only sees these interfaces; a host
-// carries them (on Cloudflare, Durable Object RPC). Every argument and result is structured-clone
-// data or a byte stream.
 import type {
+  AgentId,
   AgentMessage,
   AgentProfile,
   AgentStatus,
@@ -33,13 +31,13 @@ export interface AgentInit {
 /** What an agent asks its coordinator. */
 export interface CoordinatorLink {
   /** The agent's init if the registry has it; undefined for an agent that does not exist. */
-  init(agentId: string): Promise<AgentInit | undefined>;
+  init(agentId: AgentId): Promise<AgentInit | undefined>;
   config(): Promise<AgentConfig>;
-  report(agentId: string, status: AgentStatus): Promise<void>;
+  report(agentId: AgentId, status: AgentStatus): Promise<void>;
   agents(): Promise<AgentSummary[]>;
   /** `key` makes a retried call return the agent it already made. */
   createAgent(by: string, input: NewAgent, key: string): Promise<AgentProfile>;
-  updateProfile(agentId: string, change: ProfileChange): Promise<AgentProfile>;
+  updateProfile(agentId: AgentId, change: ProfileChange): Promise<AgentProfile>;
   /** /shared: the instance's folder every agent reads and writes. */
   shared: SharedCall;
   sharedStream: SharedStream;
@@ -52,8 +50,8 @@ export interface AgentLink {
   /** From a teammate: stop work on its messages and drop its queued ones. */
   interrupt(
     instance: string,
-    agentId: string,
-    from: string,
+    agentId: AgentId,
+    from: AgentId,
   ): Promise<{ stopped: boolean; cancelled: number }>;
   provision(init: AgentInit): Promise<void>;
   profileChanged(profile: AgentProfile): Promise<void>;
@@ -70,5 +68,5 @@ export interface AgentLink {
 
 /** The host decides what an agent is (a Durable Object stub on Cloudflare). */
 export interface Cells {
-  get(agentId: string): AgentLink;
+  get(agentId: AgentId): AgentLink;
 }

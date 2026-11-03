@@ -1,5 +1,5 @@
 import { DEFAULT_IMAGE_LIMITS } from "@earendil-works/pi-durable/tools";
-import type { Attachment, AttachmentInput, Upload } from "@neo/client";
+import type { Attachment, AttachmentInput } from "@neo/client";
 import { ulid } from "../ids";
 import { baseName, type Vfs, VfsError, type VfsStat } from "../vfs/vfs";
 export type { Attachment, AttachmentInput, Upload } from "@neo/client";
@@ -53,12 +53,12 @@ const TYPES: Record<string, string> = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
-export function mimeTypeOf(name: string): string {
+export function mimeTypeOf(name: string) {
   const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
   return (ext && TYPES[ext]) || "application/octet-stream";
 }
 
-export function safeName(name: string): string {
+export function safeName(name: string) {
   const clean = name
     .replace(/[/\\\u0000-\u001f]/g, "_")
     .replace(/^\.+/, "_")
@@ -67,7 +67,7 @@ export function safeName(name: string): string {
   return clean || "file";
 }
 
-function uniqueName(name: string, taken: Set<string>): string {
+function uniqueName(name: string, taken: Set<string>) {
   let candidate = name;
   const dot = name.lastIndexOf(".");
   const [stem, ext] =
@@ -84,7 +84,7 @@ export async function stageUpload(
   vfs: Vfs,
   name: string,
   body: ReadableStream<Uint8Array>,
-): Promise<Upload> {
+) {
   const id = ulid();
   const stat = await vfs.writeStream(
     `${STAGING_ROOT}/${id}/${safeName(name)}`,
@@ -94,10 +94,7 @@ export async function stageUpload(
   return { id, name: baseName(stat.path), size: stat.size };
 }
 
-export async function placeUploads(
-  vfs: Vfs,
-  inputs: AttachmentInput[],
-): Promise<Attachment[]> {
+export async function placeUploads(vfs: Vfs, inputs: AttachmentInput[]) {
   if (inputs.length > MAX_ATTACHMENTS)
     throw new AttachmentError(
       `A message attaches at most ${MAX_ATTACHMENTS} files`,
@@ -130,7 +127,7 @@ export async function placeOutgoing(
   path: string,
   callId: string,
   name?: string,
-): Promise<Attachment> {
+) {
   const stat = await vfs.stat(path).catch((e) => {
     if (e instanceof VfsError && e.code === "not_found")
       throw new AttachmentError(`No file at ${path}`);
@@ -143,7 +140,8 @@ export async function placeOutgoing(
     `out-${callId.replace(/[^\w-]/g, "_").slice(0, 80)}`,
     false,
   );
-  return placed!;
+  if (!placed) throw new AttachmentError(`${path} was not placed`);
+  return placed;
 }
 
 interface Source {
@@ -157,7 +155,7 @@ async function place(
   sources: Source[],
   folderId: string,
   move: boolean,
-): Promise<Attachment[]> {
+) {
   const total = sources.reduce((n, s) => n + s.stat.size, 0);
   if (total > MAX_ATTACHMENTS_SIZE)
     throw new AttachmentError(
@@ -183,7 +181,7 @@ async function place(
   return placed;
 }
 
-export async function sweepStaging(vfs: Vfs, now: number): Promise<void> {
+export async function sweepStaging(vfs: Vfs, now: number) {
   if (!(await vfs.exists(STAGING_ROOT))) return;
   for (const entry of await vfs.readdir(STAGING_ROOT, { limit: 1000 }))
     if (now - entry.mtimeMs > STAGING_TTL_MS)
@@ -194,7 +192,7 @@ export function attachmentsBlock(
   attachments: Attachment[],
   inline: Set<string>,
   notes: Map<string, string>,
-): string {
+) {
   const lines = attachments.map((a) => {
     const note = inline.has(a.path) ? "shown to you below" : notes.get(a.path);
     return `${a.path} (${a.mimeType}, ${size(a.size)}${note ? `; ${note}` : ""})`;
@@ -244,10 +242,11 @@ export async function inlineCheck(
 export function imageSize(
   b: Uint8Array,
 ): { width: number; height: number } | undefined {
-  const u16 = (i: number) => (b[i]! << 8) | b[i + 1]!;
-  const le16 = (i: number) => b[i]! | (b[i + 1]! << 8);
+  const at = (i: number) => b[i] ?? 0;
+  const u16 = (i: number) => (at(i) << 8) | at(i + 1);
+  const le16 = (i: number) => at(i) | (at(i + 1) << 8);
   const u32 = (i: number) =>
-    ((b[i]! << 24) | (b[i + 1]! << 16) | (b[i + 2]! << 8) | b[i + 3]!) >>> 0;
+    ((at(i) << 24) | (at(i + 1) << 16) | (at(i + 2) << 8) | at(i + 3)) >>> 0;
   const tag = (i: number, s: string) =>
     [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
   if (b.length >= 24 && b[0] === 0x89 && tag(1, "PNG"))
@@ -258,7 +257,7 @@ export function imageSize(
     if (tag(12, "VP8 "))
       return { width: le16(26) & 0x3fff, height: le16(28) & 0x3fff };
     if (tag(12, "VP8L")) {
-      const bits = b[21]! | (b[22]! << 8) | (b[23]! << 16) | (b[24]! << 24);
+      const bits = at(21) | (at(22) << 8) | (at(23) << 16) | (at(24) << 24);
       return {
         width: (bits & 0x3fff) + 1,
         height: ((bits >> 14) & 0x3fff) + 1,
@@ -266,15 +265,15 @@ export function imageSize(
     }
     if (tag(12, "VP8X"))
       return {
-        width: (b[24]! | (b[25]! << 8) | (b[26]! << 16)) + 1,
-        height: (b[27]! | (b[28]! << 8) | (b[29]! << 16)) + 1,
+        width: (at(24) | (at(25) << 8) | (at(26) << 16)) + 1,
+        height: (at(27) | (at(28) << 8) | (at(29) << 16)) + 1,
       };
     return undefined;
   }
   if (b[0] === 0xff && b[1] === 0xd8) {
     for (let i = 2; i + 9 < b.length;) {
       if (b[i] !== 0xff) return undefined;
-      const marker = b[i + 1]!;
+      const marker = at(i + 1);
       if (marker === 0xff) {
         i++;
         continue;
@@ -291,11 +290,7 @@ export function imageSize(
   return undefined;
 }
 
-async function sniffedType(
-  vfs: Vfs,
-  path: string,
-  claimed: string,
-): Promise<string> {
+async function sniffedType(vfs: Vfs, path: string, claimed: string) {
   if (!claimed.startsWith("image/")) return claimed;
   const file = await vfs.open(path);
   const head = await file.read(0, 16);
@@ -311,7 +306,7 @@ async function sniffedType(
 
 const mb = (n: number) => `${Math.round(n / 1024 / 1024)} MB`;
 
-function size(n: number): string {
+function size(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;

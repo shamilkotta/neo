@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { NeoClient } from "@neo/client";
-import { type Instance, instance, until } from "./harness";
+import { AgentProfile, parseJson, type NeoClient, agentId } from "@neo/client";
+import type { ScriptStep } from "@neo/kernel/testing";
+import { Type } from "typebox";
+import {
+  AgentState,
+  inputs as inputsOf,
+  type Instance,
+  instance,
+  Queue,
+  seen as seenBy,
+  toolResults,
+  until,
+} from "./harness";
 
 let neo: Instance;
 let root: NeoClient;
@@ -13,38 +24,28 @@ afterEach(async () => {
 });
 
 const at = (id: string) => neo.agent(id);
-const script = (id: string, steps: unknown[], append = false) =>
-  at(id).call("POST", "/test/script", { steps, append });
+const Profile = Type.Object({ agent: AgentProfile });
+const script = (id: string, steps: ScriptStep[], append = false) =>
+  at(id).act("POST", "/test/script", { steps, append });
 const idle = (id: string) =>
   until(
     async () => {
-      const s = await at(id).call("GET", "/status");
+      const s = await at(id).call("GET", "/status", AgentState);
       return !s.turn && s.queued === 0 ? s : undefined;
     },
     8000,
     `${id} idle`,
   );
-const inputs = async (id: string) =>
-  ((await at(id).call("GET", "/transcript")).items as any[])
-    .filter((i) => i.type === "input")
-    .flatMap((i) => i.messages as { source: string; text: string }[]);
+const inputs = (id: string) => inputsOf(at(id));
 const fromTeammates = async (id: string) =>
   (await inputs(id)).filter((m) => m.source === "agent");
-const toolOutputs = async (id: string) =>
-  ((await at(id).call("GET", "/transcript")).items as any[])
-    .filter((i) => i.type === "tool")
-    .map((i) => ({
-      name: i.name as string,
-      output: i.output as string,
-      isError: i.isError as boolean,
-    }));
-const seen = async (id: string) =>
-  ((await at(id).call("GET", "/test/seen")).seen as string[]).join("\n");
+const toolOutputs = (id: string) => toolResults(at(id));
+const seen = async (id: string) => (await seenBy(at(id))).join("\n");
 
 describe("messages between agents", () => {
   test("a request and its reply; the reply is framed as one", async () => {
     await root.createAgent({ name: "Helper" });
-    await at("helper").call("POST", "/pause");
+    await at("helper").act("POST", "/pause");
     await script("neo", [
       {
         tool: "send_message",
@@ -52,14 +53,15 @@ describe("messages between agents", () => {
       },
       { text: "asked helper" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "ask helper" });
+    await at("neo").act("POST", "/messages", { text: "ask helper" });
     await idle("neo");
-    const [queued] = (await at("helper").call("GET", "/queue")).queue;
-    expect(queued.source).toBe("agent");
+    const [queued] = (await at("helper").call("GET", "/queue", Queue)).queue;
+    if (queued?.source !== "agent" || queued.meta.kind !== "message")
+      throw new Error("Expected a message from a teammate");
     expect(queued.text).toBe("find x");
-    expect(queued.meta.from).toEqual({ id: "neo", name: "Neo" });
+    expect(queued.meta.from).toEqual({ id: agentId("neo"), name: "Neo" });
     expect(queued.meta.expectsReply).toBe(true);
-    const id = queued.meta.messageId as string;
+    const id = queued.meta.messageId;
 
     await script("helper", [
       {
@@ -74,7 +76,7 @@ describe("messages between agents", () => {
       { recall: "replied" },
     ]);
     await script("neo", [{ recall: "x is 1" }]);
-    await at("helper").call("POST", "/resume");
+    await at("helper").act("POST", "/resume");
     await until(
       async () => (await fromTeammates("neo")).length === 1,
       8000,
@@ -82,10 +84,9 @@ describe("messages between agents", () => {
     );
     await idle("neo");
     await idle("helper");
-    expect((await fromTeammates("neo"))[0]!.text).toContain("Result: x = 1");
+    expect((await fromTeammates("neo"))[0]?.text).toContain("Result: x = 1");
     expect(await seen("helper")).toContain("is waiting for your answer");
     expect(await seen("neo")).toContain(`A reply to your message ${id}`);
-    // Answered: no "No answer" note follows.
     expect((await fromTeammates("neo")).length).toBe(1);
   });
 
@@ -99,14 +100,14 @@ describe("messages between agents", () => {
       { text: "sent" },
       { recall: "noted" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "ask quiet" });
+    await at("neo").act("POST", "/messages", { text: "ask quiet" });
     await until(
       async () => (await fromTeammates("neo")).length === 1,
       8000,
       "no answer",
     );
     await idle("neo");
-    expect((await fromTeammates("neo"))[0]!.text).toContain("did not answer");
+    expect((await fromTeammates("neo"))[0]?.text).toContain("did not answer");
     expect(await seen("neo")).toContain(
       "No answer from teammate Quiet (quiet)",
     );
@@ -123,7 +124,7 @@ describe("messages between agents", () => {
       { text: "asked both" },
       { recall: "got both" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "ask both" });
+    await at("neo").act("POST", "/messages", { text: "ask both" });
     await until(
       async () => (await fromTeammates("neo")).length >= 1,
       8000,
@@ -132,8 +133,8 @@ describe("messages between agents", () => {
     await idle("neo");
     const got = await fromTeammates("neo");
     expect(got.length).toBe(1);
-    expect(got[0]!.text).toContain("From A (a)");
-    expect(got[0]!.text).toContain("From B (b)");
+    expect(got[0]?.text).toContain("From A (a)");
+    expect(got[0]?.text).toContain("From B (b)");
     expect(await seen("neo")).toContain("Replies from 2 teammates");
   });
 
@@ -151,14 +152,23 @@ describe("messages between agents", () => {
       { tool: "list_agents", args: {} },
       { text: "done" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "try" });
+    await at("neo").act("POST", "/messages", { text: "try" });
     await idle("neo");
     const [unknown, self, list] = await toolOutputs("neo");
-    expect(unknown!.isError).toBe(true);
-    expect(unknown!.output).toContain("No agent nobody");
-    expect(self!.isError).toBe(true);
-    const team = JSON.parse(list!.output);
-    expect(team.map((a: any) => [a.id, a.title ?? null, !!a.you])).toEqual([
+    expect(unknown?.isError).toBe(true);
+    expect(unknown?.output).toContain("No agent nobody");
+    expect(self?.isError).toBe(true);
+    const team = parseJson(
+      Type.Array(
+        Type.Object({
+          id: Type.String(),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          you: Type.Optional(Type.Boolean()),
+        }),
+      ),
+      list?.output ?? "",
+    );
+    expect(team.map((a) => [a.id, a.title ?? null, !!a.you])).toEqual([
       ["neo", null, true],
       ["helper", "Helps", false],
     ]);
@@ -179,7 +189,7 @@ describe("team tools", () => {
       },
       { text: "made writer" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "make a writer" });
+    await at("neo").act("POST", "/messages", { text: "make a writer" });
     await idle("neo");
     const agents = await root.agents();
     const writer = agents.find((a) => a.id === "writer");
@@ -198,12 +208,12 @@ describe("team tools", () => {
       { tool: "update_profile", args: { title: "Chief of staff" } },
       { text: "ok" },
     ]);
-    await at("neo").call("POST", "/messages", {
+    await at("neo").act("POST", "/messages", {
       text: "you are my chief of staff",
     });
     await idle("neo");
-    expect((await root.agents())[0]!.title).toBe("Chief of staff");
-    expect((await at("neo").call("GET", "/agent")).agent.title).toBe(
+    expect((await root.agents())[0]?.title).toBe("Chief of staff");
+    expect((await at("neo").call("GET", "/agent", Profile)).agent.title).toBe(
       "Chief of staff",
     );
   });
@@ -218,10 +228,10 @@ describe("team tools", () => {
       },
       { text: "sent" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "start" });
+    await at("neo").act("POST", "/messages", { text: "start" });
     await idle("neo");
     await until(
-      async () => (await at("slow").call("GET", "/status")).turn,
+      async () => (await at("slow").call("GET", "/status", AgentState)).turn,
       5000,
       "slow working",
     );
@@ -229,11 +239,11 @@ describe("team tools", () => {
       { tool: "interrupt_agent", args: { agentId: "slow" } },
       { text: "stopped it" },
     ]);
-    await at("neo").call("POST", "/messages", { text: "stop slow" });
+    await at("neo").act("POST", "/messages", { text: "stop slow" });
     await idle("neo");
     await idle("slow");
     const outputs = await toolOutputs("neo");
-    expect(JSON.parse(outputs.at(-1)!.output)).toEqual({
+    expect(JSON.parse(outputs.at(-1)?.output ?? "")).toEqual({
       stopped: true,
       cancelled: 0,
     });

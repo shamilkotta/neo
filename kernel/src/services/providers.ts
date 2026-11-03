@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import {
   createProvider,
   envApiKeyAuth,
@@ -17,10 +18,21 @@ import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import type { ModelRef } from "@earendil-works/pi-durable";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 import type { Secrets } from "./secrets";
-import type { ProviderKind, CustomModel, ProviderConfig } from "@neo/client";
+import {
+  BuiltinKind,
+  CustomModel,
+  parse,
+  parseJson,
+  ProviderSetup,
+  StringMap,
+  type ProviderConfig,
+  type ProviderInfo,
+  type ProviderKind,
+} from "@neo/client";
+import Value from "typebox/value";
 export type { ProviderKind, CustomModel, ProviderConfig } from "@neo/client";
 
-export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_providers (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -31,12 +43,6 @@ export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-export const BUILTIN_KINDS = [
-  "anthropic",
-  "openai",
-  "openrouter",
-] as const satisfies readonly ProviderKind[];
-
 interface ProviderRow {
   id: string;
   kind: ProviderKind;
@@ -46,7 +52,7 @@ interface ProviderRow {
   created_at: number;
 }
 
-const BUILTIN: Record<(typeof BUILTIN_KINDS)[number], () => Provider> = {
+const BUILTIN: Record<BuiltinKind, () => Provider> = {
   anthropic: anthropicProvider,
   openai: openaiProvider,
   openrouter: openrouterProvider,
@@ -57,19 +63,27 @@ const LOCAL_SERVERS = [
     id: "ollama",
     baseUrl: "http://127.0.0.1:11434/v1",
     list: "http://127.0.0.1:11434/api/tags",
-    pick: (j: any) => (j.models ?? []).map((m: any) => m.name as string),
+    pick: (json: unknown) =>
+      parse(
+        Type.Object({
+          models: Type.Array(Type.Object({ name: Type.String() })),
+        }),
+        json,
+      ).models.map((m) => m.name),
   },
   {
     id: "lmstudio",
     baseUrl: "http://127.0.0.1:1234/v1",
     list: "http://127.0.0.1:1234/v1/models",
-    pick: (j: any) => (j.data ?? []).map((m: any) => m.id as string),
+    pick: (json: unknown) =>
+      parse(
+        Type.Object({ data: Type.Array(Type.Object({ id: Type.String() })) }),
+        json,
+      ).data.map((m) => m.id),
   },
 ];
 
-export async function detectLocalProviders(
-  fetcher: typeof fetch = fetch,
-): Promise<ProviderConfig[]> {
+export async function detectLocalProviders(fetcher: typeof fetch = fetch) {
   const found: ProviderConfig[] = [];
   for (const server of LOCAL_SERVERS) {
     try {
@@ -77,7 +91,7 @@ export async function detectLocalProviders(
         signal: AbortSignal.timeout(1_500),
       });
       if (!response.ok) continue;
-      const models = server.pick(await response.json()) as string[];
+      const models = server.pick(await response.json());
       if (models.length)
         found.push({
           id: server.id,
@@ -92,17 +106,8 @@ export async function detectLocalProviders(
 
 export const providerSecretName = (id: string) => `provider:${id}`;
 
-/** A provider with its key, as the coordinator hands it to an agent (never stored there). */
-export interface ResolvedProvider {
-  id: string;
-  kind: ProviderKind;
-  baseUrl: string | null;
-  models: CustomModel[];
-  env: Record<string, string>;
-  apiKey?: string;
-}
+export type ResolvedProvider = ProviderConfig;
 
-/** The providers and keys the person set up; lives in the coordinator. */
 export class ProviderStore {
   constructor(
     private readonly db: SqliteDatabase,
@@ -110,7 +115,7 @@ export class ProviderStore {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async resolved(): Promise<ResolvedProvider[]> {
+  async resolved() {
     const out: ResolvedProvider[] = [];
     for (const row of await this.rows()) {
       const key = await this.secrets.get(providerSecretName(row.id));
@@ -119,10 +124,8 @@ export class ProviderStore {
     return out;
   }
 
-  async list(): Promise<
-    (Omit<ProviderConfig, "apiKey"> & { hasKey: boolean })[]
-  > {
-    const out: (Omit<ProviderConfig, "apiKey"> & { hasKey: boolean })[] = [];
+  async list() {
+    const out: ProviderInfo[] = [];
     for (const row of await this.rows()) {
       out.push({
         ...toConfig(row),
@@ -133,32 +136,19 @@ export class ProviderStore {
     return out;
   }
 
-  async put(config: ProviderConfig): Promise<void> {
-    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(config.id))
-      throw new Error(
-        "Provider id must be lowercase letters, digits and dashes",
-      );
-    if (config.kind === "openai-compatible") {
-      if (!config.baseUrl)
-        throw new Error("An OpenAI-compatible provider needs baseUrl");
-      if (!config.models?.length)
-        throw new Error(
-          "An OpenAI-compatible provider needs at least one model",
-        );
-      if ((BUILTIN_KINDS as readonly string[]).includes(config.id))
-        throw new Error("That id is reserved for a built-in provider");
-    } else if (config.id !== config.kind) {
-      throw new Error(
-        `A built-in provider's id must be its kind ("${config.kind}")`,
-      );
-    }
+  async put(config: ProviderConfig) {
+    if (
+      config.kind === "openai-compatible" &&
+      Value.Check(BuiltinKind, config.id)
+    )
+      throw new Error("That id is reserved for a built-in provider");
     await this.db.run(
       `INSERT INTO neo_providers (id, kind, base_url, models, env, created_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, base_url = excluded.base_url, models = excluded.models, env = excluded.env`,
       config.id,
       config.kind,
-      config.baseUrl ?? null,
-      JSON.stringify(config.models ?? []),
+      config.kind === "openai-compatible" ? config.baseUrl : null,
+      JSON.stringify(config.kind === "openai-compatible" ? config.models : []),
       JSON.stringify(config.env ?? {}),
       this.now(),
     );
@@ -166,28 +156,27 @@ export class ProviderStore {
       await this.secrets.set(providerSecretName(config.id), config.apiKey);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string) {
     await this.db.run(`DELETE FROM neo_providers WHERE id = ?`, id);
     await this.secrets.delete(providerSecretName(id));
   }
 
-  private async rows(): Promise<ProviderRow[]> {
+  private async rows() {
     return this.db.all<ProviderRow>(`SELECT * FROM neo_providers ORDER BY id`);
   }
 }
 
-/** Pi's model registry, built from resolved providers (in memory only). */
 export class ModelCatalog {
   private current: Models = createModels();
   private readonly extra: Provider[] = [];
 
-  models = (): Models => this.current;
+  models = () => this.current;
 
-  addHostProvider(provider: Provider): void {
+  addHostProvider(provider: Provider) {
     this.extra.push(provider);
   }
 
-  async rebuild(providers: ResolvedProvider[]): Promise<void> {
+  async rebuild(providers: ResolvedProvider[]) {
     const credentials = new InMemoryCredentialStore();
     const models: MutableModels = createModels({
       credentials,
@@ -199,11 +188,12 @@ export class ModelCatalog {
     for (const provider of this.extra) models.setProvider(provider);
     for (const p of providers) {
       models.setProvider(build(p));
-      if (p.apiKey || Object.keys(p.env).length > 0) {
+      const env = p.env && Object.keys(p.env).length > 0 ? p.env : undefined;
+      if (p.apiKey || env) {
         const credential: Credential = {
           type: "api_key",
           ...(p.apiKey ? { key: p.apiKey } : {}),
-          ...(Object.keys(p.env).length > 0 ? { env: p.env } : {}),
+          ...(env ? { env } : {}),
         };
         await credentials.modify(p.id, async () => credential);
       }
@@ -220,7 +210,7 @@ export class ModelCatalog {
     }));
   }
 
-  vision(model: ModelRef): boolean {
+  vision(model: ModelRef) {
     return (
       this.current
         .getModel(model.provider, model.modelId)
@@ -229,13 +219,9 @@ export class ModelCatalog {
   }
 }
 
-function build(p: ResolvedProvider): Provider {
-  if (p.kind !== "openai-compatible") {
-    const factory = BUILTIN[p.kind];
-    if (!factory) throw new Error(`Unknown provider kind ${p.kind}`);
-    return factory();
-  }
-  const baseUrl = p.baseUrl!;
+function build(p: ResolvedProvider) {
+  if (p.kind !== "openai-compatible") return BUILTIN[p.kind]();
+  const { baseUrl } = p;
   const models = p.models.map((m) => ({
     id: m.id,
     name: m.name ?? m.id,
@@ -258,12 +244,16 @@ function build(p: ResolvedProvider): Provider {
   });
 }
 
-function toConfig(row: ProviderRow): Omit<ResolvedProvider, "apiKey"> {
-  return {
+function toConfig(row: ProviderRow) {
+  return parse(ProviderSetup, {
     id: row.id,
     kind: row.kind,
-    baseUrl: row.base_url,
-    models: JSON.parse(row.models) as CustomModel[],
-    env: JSON.parse(row.env) as Record<string, string>,
-  };
+    env: parseJson(StringMap, row.env),
+    ...(row.kind === "openai-compatible"
+      ? {
+          baseUrl: row.base_url,
+          models: parseJson(Type.Array(CustomModel), row.models),
+        }
+      : {}),
+  });
 }

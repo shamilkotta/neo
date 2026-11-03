@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import Value from "typebox/value";
 import type {
   AgentClient,
   AgentState,
@@ -111,23 +113,20 @@ export function useNeo(client: AgentClient, onDurable?: (e: NeoEvent) => void) {
   };
 }
 
-function applyLive(
-  current: LiveTurn,
-  event: LiveEvent,
-  settle: () => void,
-): LiveTurn {
-  const e = event.data as { type: string; [k: string]: any };
+function applyLive(current: LiveTurn, event: LiveEvent, settle: () => void) {
+  if (!Value.Check(PiEvent, event.data)) return current;
+  const e = event.data;
   switch (e.type) {
     case "run_start":
       return { active: true, text: "", tools: [] };
     case "message_start":
-      return e.message?.role === "assistant"
+      return e.message.role === "assistant"
         ? { ...current, active: true, text: "" }
         : current;
     case "message_update": {
       let text = current.text;
-      for (const c of e.changes ?? [])
-        if (c.type === "text_delta") text += c.delta;
+      for (const c of e.changes)
+        if (c.type === "text_delta" && c.delta !== undefined) text += c.delta;
       return { ...current, active: true, text };
     }
     case "message_end":
@@ -151,7 +150,7 @@ function applyLive(
             : {
                 ...t,
                 output:
-                  e.output?.set !== undefined
+                  e.output && "set" in e.output
                     ? e.output.set
                     : t.output + (e.output?.append ?? ""),
               },
@@ -166,7 +165,48 @@ function applyLive(
     case "run_end":
       settle();
       return IDLE;
-    default:
-      return current;
+    default: {
+      const unhandled: never = e;
+      return unhandled;
+    }
   }
 }
+
+const toolEvent = <const T extends string>(type: T) =>
+  Type.Object({
+    type: Type.Literal(type),
+    toolCallId: Type.String(),
+    toolName: Type.String(),
+  });
+
+const PiEvent = Type.Union([
+  Type.Object({ type: Type.Literal("run_start") }),
+  Type.Object({ type: Type.Literal("run_end") }),
+  Type.Object({
+    type: Type.Literal("message_start"),
+    message: Type.Object({ role: Type.String() }),
+  }),
+  Type.Object({
+    type: Type.Literal("message_update"),
+    changes: Type.Array(
+      Type.Object({
+        type: Type.String(),
+        delta: Type.Optional(Type.String()),
+      }),
+    ),
+  }),
+  Type.Object({ type: Type.Literal("message_end") }),
+  toolEvent("tool_execution_start"),
+  Type.Intersect([
+    toolEvent("tool_execution_update"),
+    Type.Object({
+      output: Type.Optional(
+        Type.Union([
+          Type.Object({ set: Type.String() }),
+          Type.Object({ append: Type.Optional(Type.String()) }),
+        ]),
+      ),
+    }),
+  ]),
+  toolEvent("tool_execution_end"),
+]);

@@ -1,32 +1,47 @@
-import type { NewAgent, ProfileChange, SettingsShape } from "@neo/client";
-import { body, eventStream, HttpError, json, matcher, serve } from "../http";
-import { NEO_VERSION } from "../neo";
 import {
-  detectLocalProviders,
-  type ProviderConfig,
-} from "../services/providers";
+  isAgentId,
+  NewAgent,
+  ProfileChange,
+  JsonObject,
+  ProviderConfig,
+  SettingsChange,
+  type AgentId,
+  type Status,
+} from "@neo/client";
+import { Type } from "typebox";
+import {
+  body,
+  eventStream,
+  HttpError,
+  json,
+  matcher,
+  serve,
+  valid,
+} from "../http";
+import { NEO_VERSION } from "../neo";
+import { detectLocalProviders } from "../services/providers";
 import type { NeoCoordinator } from "./coordinator";
 
-export function handleCoordinatorApi(
-  neo: NeoCoordinator,
-  request: Request,
-) {
+export function handleCoordinatorApi(neo: NeoCoordinator, request: Request) {
   return serve(request, async (request, url) => {
     await neo.finishDeletes();
     return route(neo, request, url);
   });
 }
 
-async function route(
-  neo: NeoCoordinator,
-  request: Request,
-  url: URL,
-): Promise<Response> {
-  const { is, match } = matcher(request, url);
-  let m: RegExpExecArray | null;
+async function route(neo: NeoCoordinator, request: Request, url: URL) {
+  const { is, param } = matcher(request, url);
+  let id: string | undefined;
+  const agentParam = (method: string) => {
+    const raw = param(method, /^\/agents\/([\w-]+)$/);
+    if (raw !== undefined && !isAgentId(raw))
+      throw new HttpError(404, "No such agent");
+    return raw;
+  };
+  let agentId: AgentId | undefined;
 
   if (is("GET", "/status")) {
-    const status: Record<string, unknown> = {
+    const status: Status = {
       version: NEO_VERSION,
       host: neo.host.name,
       state: neo.state,
@@ -53,7 +68,10 @@ async function route(
     return json({ state: neo.state });
   }
   if (is("POST", "/move/export")) {
-    const { passphrase } = await body<{ passphrase?: string }>(request);
+    const { passphrase } = await body(
+      request,
+      Type.Object({ passphrase: Type.Optional(Type.String()) }),
+    );
     return new Response(await neo.exportBundle(passphrase || undefined), {
       headers: {
         "content-type": "application/x-neo-bundle",
@@ -80,30 +98,28 @@ async function route(
 
   if (is("GET", "/agents")) return json({ agents: await live.registry.list() });
   if (is("POST", "/agents")) {
-    const agent = await neo.createAgent(await body<NewAgent>(request));
+    const agent = await neo.createAgent(await body(request, NewAgent));
     return json({ agent }, 201);
   }
-  if ((m = match("GET", /^\/agents\/([\w-]+)$/))) {
-    const agent = await live.registry.get(m[1]!);
+  if ((agentId = agentParam("GET")) !== undefined) {
+    const agent = await live.registry.get(agentId);
     if (!agent) throw new HttpError(404, "No such agent");
     return json({ agent });
   }
-  if ((m = match("PATCH", /^\/agents\/([\w-]+)$/)))
+  if ((agentId = agentParam("PATCH")) !== undefined)
     return json({
-      agent: await neo.updateAgent(m[1]!, await body<ProfileChange>(request)),
+      agent: await neo.updateAgent(agentId, await body(request, ProfileChange)),
     });
-  if ((m = match("DELETE", /^\/agents\/([\w-]+)$/))) {
-    await neo.deleteAgent(m[1]!);
-    return json({ deleted: m[1] });
+  if ((agentId = agentParam("DELETE")) !== undefined) {
+    await neo.deleteAgent(agentId);
+    return json({ deleted: agentId });
   }
 
   if (is("GET", "/settings"))
     return json({ settings: await live.settings.all() });
   if (is("PUT", "/settings"))
     return json({
-      settings: await neo.updateSettings(
-        await body<Partial<SettingsShape>>(request),
-      ),
+      settings: await neo.updateSettings(await body(request, SettingsChange)),
     });
 
   if (is("GET", "/providers"))
@@ -112,13 +128,16 @@ async function route(
     return json({
       found: neo.host.capabilities.sockets ? await detectLocalProviders() : [],
     });
-  if ((m = match("PUT", /^\/providers\/([\w-]+)$/))) {
-    const config = await body<ProviderConfig>(request);
-    await neo.putProvider({ ...config, id: m[1]! });
+  if ((id = param("PUT", /^\/providers\/([\w-]+)$/)) !== undefined) {
+    const config = valid(ProviderConfig, {
+      ...(await body(request, JsonObject)),
+      id,
+    });
+    await neo.putProvider(config);
     return json({ providers: await live.providers.list() });
   }
-  if ((m = match("DELETE", /^\/providers\/([\w-]+)$/))) {
-    await neo.removeProvider(m[1]!);
+  if ((id = param("DELETE", /^\/providers\/([\w-]+)$/)) !== undefined) {
+    await neo.removeProvider(id);
     return json({ providers: await live.providers.list() });
   }
   if (is("GET", "/models"))

@@ -7,7 +7,9 @@
       "devDependencies": {
         "@neo/bun": "workspace:*",
         "@neo/client": "workspace:*",
+        "@neo/kernel": "workspace:*",
         "@types/bun": "^1.4.4",
+        "typebox": "1.3.27",
         "typescript": "5",
       },
     },
@@ -17,6 +19,7 @@
         "@neo/client": "workspace:*",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
+        "typebox": "1.3.27",
       },
       "devDependencies": {
         "@types/react": "^19.0.0",
@@ -58,10 +61,14 @@
         "@noble/hashes": "^2.4.0",
         "croner": "9",
         "just-bash": "3.6.0",
+        "typebox": "1.3.27",
       },
     },
     "packages/client": {
       "name": "@neo/client",
+      "dependencies": {
+        "typebox": "1.3.27",
+      },
     },
   },
   "packages": {

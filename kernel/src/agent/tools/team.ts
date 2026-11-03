@@ -1,10 +1,12 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
-import type {
-  AgentProfile,
-  AgentSummary,
-  NewAgent,
-  ProfileChange,
+import {
+  type AgentId,
+  type AgentProfile,
+  type AgentSummary,
+  isAgentId,
+  type NewAgent,
+  type ProfileChange,
 } from "@neo/client";
 import { MAX_RECIPIENTS, Messaging, MessagingError } from "../messaging";
 import { json, refuse } from "./shared";
@@ -15,7 +17,7 @@ export interface TeamServices {
   create(input: NewAgent, key: string): Promise<AgentProfile>;
   updateSelf(change: ProfileChange): Promise<AgentProfile>;
   messaging(): Messaging;
-  interrupt(agentId: string): Promise<{ stopped: boolean; cancelled: number }>;
+  interrupt(agentId: AgentId): Promise<{ stopped: boolean; cancelled: number }>;
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -92,7 +94,7 @@ export function teamTools(team: TeamServices) {
         const agent = (await team.agents()).find((a) => a.id === args.agentId);
         if (!agent)
           refuse(`No teammate ${args.agentId}; list_agents shows who exists.`);
-        return json({ ...agent!, state: state(agent!) });
+        return json({ ...agent, state: state(agent) });
       },
     }),
     defineTool({
@@ -178,7 +180,13 @@ export function teamTools(team: TeamServices) {
       replay: "safe",
       execute: async (args) =>
         json(
-          await team.interrupt(args.agentId).catch((e) => refuse(errorText(e))),
+          await team
+            .interrupt(
+              isAgentId(args.agentId)
+                ? args.agentId
+                : refuse(`No teammate ${args.agentId}`),
+            )
+            .catch((e) => refuse(errorText(e))),
         ),
     }),
   ];

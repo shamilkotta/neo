@@ -1,13 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import { formatTime } from "../mailbox";
-import {
-  describeSpec,
-  type Schedule,
-  ScheduleError,
-  type ScheduleInput,
-} from "../schedules";
-import { caller, json, refuse, type ToolServices } from "./shared";
+import { describeSpec, type Schedule, ScheduleError } from "../schedules";
+import { json, refuse, type ToolServices } from "./shared";
 
 const Window = Type.Object({
   start: Type.String({ description: "HH:MM local" }),
@@ -104,7 +99,7 @@ export function scheduleTools(services: ToolServices) {
       prompt: s.prompt,
     };
   };
-  const attempt = async <T>(work: () => Promise<T>): Promise<T> => {
+  const attempt = async <T>(work: () => Promise<T>) => {
     try {
       return await work();
     } catch (error) {
@@ -120,10 +115,9 @@ export function scheduleTools(services: ToolServices) {
       parameters: Type.Object({ ...fields, prompt: Prompt }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
         const timezone = await services.timezone();
         const schedule = await attempt(() =>
-          services.schedules.create(args as ScheduleInput, "agent", timezone, {
+          services.schedules.create(args, "agent", timezone, {
             originKey: `tool:${api.taskId}`,
           }),
         );
@@ -144,7 +138,6 @@ export function scheduleTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
         const list = await services.schedules.list(args.all ? "all" : "active");
         return json({ schedules: await Promise.all(list.map(view)) });
       },
@@ -159,19 +152,14 @@ export function scheduleTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
         const { scheduleId, ...change } = args;
         const timezone = await services.timezone();
         const schedule = await attempt(() =>
-          services.schedules.update(
-            scheduleId,
-            change as ScheduleInput,
-            timezone,
-          ),
+          services.schedules.update(scheduleId, change, timezone),
         );
         if (!schedule) refuse("No schedule has that id.");
         await services.changed();
-        return json({ updated: await view(schedule!) });
+        return json({ updated: await view(schedule) });
       },
     }),
     defineTool({
@@ -180,7 +168,6 @@ export function scheduleTools(services: ToolServices) {
       parameters: Type.Object({ scheduleId: Type.String({ minLength: 1 }) }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
         const removed = await attempt(() =>
           services.schedules.remove(args.scheduleId),
         );

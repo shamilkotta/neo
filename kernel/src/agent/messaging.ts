@@ -1,17 +1,20 @@
+import { Type } from "typebox";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import type { AgentMessage, MailboxMessage, Turn } from "@neo/client";
+import {
+  type AgentId,
+  isAgentId,
+  type AgentMessage,
+  type MailboxMessage,
+  type Turn,
+  parseJson,
+  type AgentMeta,
+} from "@neo/client";
 import type { Cells } from "../links";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 import type { Mailbox } from "./mailbox";
 
-// Agents talk directly, Durable Object to Durable Object, on the same path as the person's
-// messages: the sender calls the recipient's `deliver`, which is `mailbox.send` with a clientId
-// made from the message id (a repeat is ignored). No outbox: a failed call is the tool's error.
-// The sender keeps what it sent (for grouped replies); the recipient keeps what it got (to send
-// "No answer from X" when its turn ends without a reply).
-
-export const MESSAGING_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const MESSAGING_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_sent (
     id TEXT PRIMARY KEY,
     recipients TEXT NOT NULL,
@@ -42,17 +45,8 @@ export const MAX_RECIPIENTS = 32;
 export const RATE_PER_MINUTE = 30;
 const MAX_TEXT = 20_000;
 
-export interface AgentMeta {
-  [key: string]: unknown;
-  kind: AgentMessage["kind"] | "group";
-  messageId: string;
-  from: { id: string; name: string };
-  replyTo: string | null;
-  expectsReply: boolean;
-}
-
 interface Me {
-  id: string;
+  id: AgentId;
   name: string;
   instance: string;
 }
@@ -66,8 +60,7 @@ export class Messaging {
     private readonly now: () => number,
   ) {}
 
-  /** A stable message id for one tool call (a replay sends the same id). */
-  static idFor(key: string): string {
+  static idFor(key: string) {
     return `am-${bytesToHex(sha256(new TextEncoder().encode(key))).slice(0, 24)}`;
   }
 
@@ -77,10 +70,7 @@ export class Messaging {
     text: string;
     replyTo?: string;
     expectsReply: boolean;
-  }): Promise<{
-    delivered: string[];
-    failed: { id: string; error: string }[];
-  }> {
+  }) {
     const me = await this.me();
     const to = [...new Set(input.to.map((t) => t.trim()).filter(Boolean))];
     const text = input.text.trim();
@@ -124,6 +114,10 @@ export class Messaging {
     const delivered: string[] = [];
     const failed: { id: string; error: string }[] = [];
     for (const id of to) {
+      if (!isAgentId(id)) {
+        failed.push({ id, error: `No teammate ${id}` });
+        continue;
+      }
       const message: AgentMessage = {
         id: input.id,
         kind: "message",
@@ -145,8 +139,7 @@ export class Messaging {
     return { delivered, failed };
   }
 
-  /** A message from a teammate. Replies to a message sent to several wait for the rest. */
-  async deliver(message: AgentMessage): Promise<void> {
+  async deliver(message: AgentMessage) {
     if (message.kind === "message")
       await this.db.run(
         `INSERT INTO neo_inbox (id, from_id, from_name, expects_reply, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
@@ -156,14 +149,17 @@ export class Messaging {
         message.expectsReply ? 1 : 0,
         this.now(),
       );
-    const sent = message.replyTo
+    const { replyTo } = message;
+    const sent = replyTo
       ? await this.db.get<{ recipients: string; expects_reply: number }>(
           `SELECT recipients, expects_reply FROM neo_sent WHERE id = ?`,
-          message.replyTo,
+          replyTo,
         )
       : undefined;
-    const recipients = sent ? (JSON.parse(sent.recipients) as string[]) : [];
-    if (sent && sent.expects_reply === 1 && recipients.length > 1) {
+    const recipients = sent
+      ? parseJson(Type.Array(Type.String()), sent.recipients)
+      : [];
+    if (replyTo && sent && sent.expects_reply === 1 && recipients.length > 1) {
       await this.db.run(
         `INSERT INTO neo_replies (sent_id, from_id, from_name, kind, text, at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         message.replyTo,
@@ -196,10 +192,8 @@ export class Messaging {
         clientId: `group:${message.replyTo}`,
         meta: {
           kind: "group",
-          messageId: message.replyTo!,
+          messageId: replyTo,
           from: message.from,
-          replyTo: message.replyTo,
-          expectsReply: false,
           count: replies.length,
         } satisfies AgentMeta,
       });
@@ -225,8 +219,7 @@ export class Messaging {
       );
   }
 
-  /** After a turn: teammates still waiting on a message it held get "No answer". */
-  async turnSettled(turn: Turn, messages: MailboxMessage[]): Promise<void> {
+  async turnSettled(turn: Turn, messages: MailboxMessage[]) {
     const why =
       turn.status === "completed"
         ? "it finished without replying"
@@ -235,11 +228,11 @@ export class Messaging {
           : "its work failed";
     for (const m of messages) {
       if (m.source !== "agent" || m.meta.kind !== "message") continue;
-      await this.noAnswer(String(m.meta.messageId), why);
+      await this.noAnswer(m.meta.messageId, why);
     }
   }
 
-  async cancelled(mailboxId: string): Promise<void> {
+  async cancelled(mailboxId: string) {
     const row = await this.db.get<{ id: string }>(
       `SELECT id FROM neo_inbox WHERE mailbox_id = ?`,
       mailboxId,
@@ -247,10 +240,10 @@ export class Messaging {
     if (row) await this.noAnswer(row.id, "the person cancelled it");
   }
 
-  private async noAnswer(messageId: string, why: string): Promise<void> {
+  private async noAnswer(messageId: string, why: string) {
     const row = await this.db.get<{
       id: string;
-      from_id: string;
+      from_id: AgentId;
       expects_reply: number;
     }>(
       `UPDATE neo_inbox SET closed = 1 WHERE id = ? AND closed = 0 RETURNING id, from_id, expects_reply`,
@@ -274,8 +267,7 @@ export class Messaging {
       .catch(() => {});
   }
 
-  /** A teammate interrupts its own requests here: they are closed (no "No answer" back). */
-  async closeFrom(agentId: string): Promise<string[]> {
+  async closeFrom(agentId: AgentId) {
     const rows = await this.db.all<{ mailbox_id: string | null }>(
       `UPDATE neo_inbox SET closed = 1 WHERE from_id = ? AND closed = 0 RETURNING mailbox_id`,
       agentId,
@@ -288,8 +280,7 @@ export class MessagingError extends Error {}
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The header the model sees on a teammate's message. */
-export function agentHeader(meta: AgentMeta, at: string): string {
+export function agentHeader(meta: AgentMeta, at: string) {
   const who = `${meta.from.name} (${meta.from.id})`;
   if (meta.kind === "group")
     return `[Replies from ${meta.count} teammates to your message ${meta.messageId} · ${at}]

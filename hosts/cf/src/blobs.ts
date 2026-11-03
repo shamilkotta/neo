@@ -1,4 +1,4 @@
-import { type BlobStore, checkBlobKey, rechunk } from "@neo/kernel";
+import { type BlobKey, type BlobStore, rechunk } from "@neo/kernel";
 
 const PART = 5 * 1024 * 1024;
 
@@ -8,12 +8,11 @@ export class CloudflareBlobs implements BlobStore {
     private readonly prefix: string,
   ) {}
 
-  private name(key: string): string {
-    checkBlobKey(key);
+  private name(key: BlobKey) {
     return `${this.prefix}/${key}`;
   }
 
-  async put(key: string, body: ReadableStream<Uint8Array>) {
+  async put(key: BlobKey, body: ReadableStream<Uint8Array>) {
     const name = this.name(key);
     let upload: R2MultipartUpload | undefined;
     const parts: R2UploadedPart[] = [];
@@ -39,7 +38,7 @@ export class CloudflareBlobs implements BlobStore {
     }
   }
 
-  async get(key: string, range?: { offset: number; length: number }) {
+  async get(key: BlobKey, range?: { offset: number; length: number }) {
     if (range?.length === 0) return new Blob([]).stream();
     const object = await this.bucket.get(
       this.name(key),
@@ -48,7 +47,7 @@ export class CloudflareBlobs implements BlobStore {
     return object?.body ?? null;
   }
 
-  async delete(key: string) {
+  async delete(key: BlobKey) {
     await this.bucket.delete(this.name(key));
   }
 

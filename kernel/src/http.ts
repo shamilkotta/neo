@@ -1,3 +1,5 @@
+import type { TSchema } from "typebox";
+import Value from "typebox/value";
 import { AttachmentError } from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
 import { ScheduleError } from "./agent/schedules";
@@ -28,7 +30,7 @@ const CORS = {
 export const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "cache-control": "no-store" } });
 
-export function withCors(response: Response): Response {
+export function withCors(response: Response) {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
   return new Response(response.body, {
@@ -38,18 +40,33 @@ export function withCors(response: Response): Response {
   });
 }
 
-export async function body<T>(request: Request): Promise<T> {
-  try {
-    return (await request.json()) as T;
-  } catch {
+export async function body<const S extends TSchema>(
+  request: Request,
+  schema: S,
+) {
+  const data: unknown = await request.json().catch(() => {
     throw new HttpError(400, "The body is not JSON");
-  }
+  });
+  return valid(schema, data);
+}
+
+export function valid<const S extends TSchema>(schema: S, data: unknown) {
+  if (!Value.Check(schema, data))
+    throw new HttpError(400, invalid(schema, data));
+  return data;
+}
+
+function invalid(schema: TSchema, data: unknown) {
+  const [first] = Value.Errors(schema, data);
+  return first
+    ? `Invalid body: ${first.instancePath || "/"} ${first.message}`
+    : "Invalid body";
 }
 
 export const preflight = () =>
   new Response(null, { status: 204, headers: CORS });
 
-export function authorized(request: Request, token: string): boolean {
+export function authorized(request: Request, token: string) {
   const given = request.headers
     .get("authorization")
     ?.replace(/^Bearer\s+/i, "");
@@ -61,11 +78,7 @@ export const unauthorized = () =>
 
 export type Router = (request: Request, url: URL) => Promise<Response>;
 
-/** CORS, preflight and error mapping around a router. Hosts route and check the token before this. */
-export async function serve(
-  request: Request,
-  route: Router,
-): Promise<Response> {
+export async function serve(request: Request, route: Router) {
   if (request.method === "OPTIONS") return preflight();
   const url = new URL(request.url);
   let response: Response;
@@ -77,7 +90,7 @@ export async function serve(
   return withCors(response);
 }
 
-function errorResponse(error: unknown): Response {
+function errorResponse(error: unknown) {
   if (error instanceof HttpError)
     return json({ error: error.message }, error.status);
   const message = error instanceof Error ? error.message : String(error);
@@ -102,14 +115,13 @@ function errorResponse(error: unknown): Response {
   return json({ error: message }, 500);
 }
 
-/** The durable and live event stream (SSE, resumable with `after` or Last-Event-ID). */
 export function eventStream(
   events: {
     stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array>;
   },
   request: Request,
   url: URL,
-): Response {
+) {
   const after =
     Number(
       url.searchParams.get("after") ??
@@ -130,7 +142,7 @@ export function matcher(request: Request, url: URL) {
   const path = url.pathname;
   return {
     is: (m: string, p: string) => method === m && path === p,
-    match: (m: string, pattern: RegExp) =>
-      method === m ? pattern.exec(path) : null,
+    param: (m: string, pattern: RegExp) =>
+      method === m ? pattern.exec(path)?.[1] : undefined,
   };
 }

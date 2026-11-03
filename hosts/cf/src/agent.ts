@@ -1,6 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { type AgentInit, RECOVERY_MS } from "@neo/kernel";
-import type { AgentMessage, AgentProfile, AgentStatus } from "@neo/client";
+import {
+  type AgentId,
+  type AgentMessage,
+  type AgentProfile,
+  isAgentId,
+} from "@neo/client";
 import { CloudflareAgentHost } from "./host";
 
 export class AgentDO extends DurableObject<Env> {
@@ -27,10 +32,11 @@ export class AgentDO extends DurableObject<Env> {
 
   override async fetch(request: Request) {
     await this.ready;
-    return this.host.fetch(request, {
-      instance: request.headers.get("x-neo-instance")!,
-      agentId: request.headers.get("x-neo-agent")!,
-    });
+    const instance = request.headers.get("x-neo-instance");
+    const agentId = request.headers.get("x-neo-agent");
+    if (!instance || !agentId || !isAgentId(agentId))
+      return Response.json({ error: "No such agent" }, { status: 404 });
+    return this.host.fetch(request, { instance, agentId });
   }
 
   override async alarm() {
@@ -42,11 +48,7 @@ export class AgentDO extends DurableObject<Env> {
     await (await this.agent()).deliver(message);
   }
 
-  async interrupt(
-    instance: string,
-    agentId: string,
-    from: string,
-  ) {
+  async interrupt(instance: string, agentId: AgentId, from: AgentId) {
     return (await this.agent()).interrupt({ instance, agentId }, from);
   }
 
@@ -86,10 +88,7 @@ export class AgentDO extends DurableObject<Env> {
     return (await this.agent()).exportPart();
   }
 
-  async importPart(
-    init: AgentInit,
-    part: ReadableStream<Uint8Array>,
-  ) {
+  async importPart(init: AgentInit, part: ReadableStream<Uint8Array>) {
     await (await this.agent()).importPart(init, part);
   }
 

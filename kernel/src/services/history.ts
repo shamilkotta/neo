@@ -1,9 +1,12 @@
+import { Type } from "typebox";
+import { parse, parseJson } from "@neo/client";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, EntryRecord } from "@earendil-works/pi-durable";
-import { INPUT_ENTRY, type InputEntryData } from "../agent/mailbox";
+import { INPUT_ENTRY, InputEntryData } from "../agent/mailbox";
+import { isEntryId } from "../pi-ids";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 
-export const HISTORY_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const HISTORY_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_history (
     id INTEGER PRIMARY KEY,
     entry_id INTEGER NOT NULL,
@@ -41,46 +44,33 @@ const SYNC_PAGE = 200;
 
 export function lineOf(entry: EntryRecord): HistoryLine | undefined {
   if (entry.kind === INPUT_ENTRY) {
-    const data = entry.data as InputEntryData | undefined;
-    const text = (data?.messages ?? [])
-      .map((m) =>
-        [m.text, ...(m.attachments ?? []).map((f) => `[attached ${f.name}]`)]
+    const text = parse(InputEntryData, entry.data)
+      .messages.map((m) =>
+        [m.text, ...m.attachments.map((f) => `[attached ${f.name}]`)]
           .filter(Boolean)
           .join("\n"),
       )
       .join("\n\n");
     if (!text.trim()) return undefined;
     return {
-      messageId: entry.id as unknown as number,
+      messageId: entry.id,
       role: "user",
       text,
       steps: [],
     };
   }
-  const message = entry.model?.[0] as
-    { role?: string; content?: unknown } | undefined;
-  if (!message || message.role !== "assistant") return undefined;
-  const parts =
-    typeof message.content === "string"
-      ? [{ type: "text", text: message.content }]
-      : ((message.content as {
-          type: string;
-          text?: string;
-          name?: string;
-          arguments?: unknown;
-        }[]) ?? []);
-  const text = parts
-    .filter((p) => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-  const steps = parts
-    .filter((p) => p.type === "toolCall")
-    .map(
-      (p) => `${p.name}(${JSON.stringify(p.arguments ?? {}).slice(0, 200)})`,
-    );
+  const message = entry.model?.[0];
+  if (message?.role !== "assistant") return undefined;
+  const parts = message.content;
+  const text = parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+  const steps = parts.flatMap((p) =>
+    p.type === "toolCall"
+      ? [`${p.name}(${JSON.stringify(p.arguments).slice(0, 200)})`]
+      : [],
+  );
   if (!text.trim() && steps.length === 0) return undefined;
   return {
-    messageId: entry.id as unknown as number,
+    messageId: entry.id,
     role: "assistant",
     text,
     steps,
@@ -92,23 +82,26 @@ export class History {
 
   constructor(private readonly db: SqliteDatabase) {}
 
-  sync(conversation: Conversation): Promise<void> {
+  sync(conversation: Conversation) {
     this.syncing ??= this.catchUp(conversation).finally(() => {
       this.syncing = undefined;
     });
     return this.syncing;
   }
 
-  private async catchUp(conversation: Conversation): Promise<void> {
+  private async catchUp(conversation: Conversation) {
     const last = await this.db.get<{ id: number | null }>(
       `SELECT max(entry_id) AS id FROM neo_history`,
     );
+    const next = last?.id ? last.id + 1 : undefined;
     let cursor: Parameters<Conversation["entries"]>[2];
     for (;;) {
       const page = await conversation.entries(
         {
           order: "ascending",
-          ...(last?.id ? { minEntryId: (last.id + 1) as never } : {}),
+          ...(next !== undefined && isEntryId(next)
+            ? { minEntryId: next }
+            : {}),
         },
         SYNC_PAGE,
         cursor,
@@ -171,7 +164,7 @@ export class History {
     }));
   }
 
-  async message(messageId: number): Promise<HistoryLine | undefined> {
+  async message(messageId: number) {
     const row = await this.db.get<Row>(
       `SELECT entry_id, role, text, steps FROM neo_history WHERE entry_id = ?`,
       messageId,
@@ -190,15 +183,15 @@ export class History {
     );
     const more = rows.length > limit;
     const lines = rows.slice(0, limit).reverse().map(toLine);
-    return { lines, before: more && lines.length ? lines[0]!.messageId : null };
+    return { lines, before: more ? (lines[0]?.messageId ?? null) : null };
   }
 }
 
-function toLine(row: Row): HistoryLine {
+function toLine(row: Row) {
   return {
     messageId: row.entry_id,
     role: row.role,
     text: row.text,
-    steps: JSON.parse(row.steps) as string[],
+    steps: parseJson(Type.Array(Type.String()), row.steps),
   };
 }

@@ -1,3 +1,4 @@
+import { isConversationId } from "./pi-ids";
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -18,7 +19,13 @@ import {
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-durable/tools";
-import type { AgentMessage, AgentProfile, AgentStatus } from "@neo/client";
+import {
+  type AgentId,
+  type AgentMessage,
+  type AgentProfile,
+  type EventType,
+  isAgentId,
+} from "@neo/client";
 import { AgentSelf } from "./agent/agents";
 import {
   ATTACHMENTS_ROOT,
@@ -26,7 +33,6 @@ import {
   inlineCheck,
   placeUploads,
   stageUpload,
-  type Upload,
   sweepStaging,
 } from "./agent/attachments";
 import { fileTools } from "./agent/tools/files";
@@ -41,9 +47,9 @@ import { scheduleTools } from "./agent/tools/schedules";
 import { HEARTBEAT, Schedules } from "./agent/schedules";
 import { handleAgentApi } from "./api";
 import type { Address, AgentPorts } from "./host";
-import type { AgentConfig, AgentInit, CoordinatorLink } from "./links";
+import type { AgentConfig, AgentInit } from "./links";
 import { toBase64 } from "./crypto";
-import { SetupError, StateError } from "./errors";
+import { SetupError, StateError, storedState } from "./errors";
 import { decodeNdjson, encodeNdjson, readPart, writePart } from "./move/bundle";
 import { wipeDatabase } from "./move/snapshot";
 import { createAgentSchema, getMeta, hasTable, setMeta } from "./schema";
@@ -77,8 +83,16 @@ export interface Live {
   watches: AgentEventStream[];
 }
 
-/** Events that change what list_agents and the sidebar show. */
-const STATUS_EVENTS = new Set([
+type Held = {
+  state: Exclude<InstanceState, "empty">;
+  agentId: AgentId;
+  instance: string;
+};
+type Home = { state: "empty" } | Held;
+
+const EMPTY: Home = { state: "empty" };
+
+const STATUS_EVENTS = new Set<EventType>([
   "message.queued",
   "message.cancelled",
   "message.steered",
@@ -89,15 +103,12 @@ const STATUS_EVENTS = new Set([
   "agent.resumed",
 ]);
 
-/** One agent: its queue, turns, memory, schedules and workspace. A host runs one per agent. */
 export class NeoAgent {
   readonly events: Events;
   readonly now: () => number;
   readonly catalog = new ModelCatalog();
   private live: Live | undefined;
-  private state_: InstanceState = "empty";
-  private agentId_: string | undefined;
-  private instance_: string | undefined;
+  private home: Home = EMPTY;
   private readonly context: Context = BACKGROUND_CONTEXT;
   private armed: number | undefined | null = null;
   private arming: Promise<void> = Promise.resolve();
@@ -117,55 +128,58 @@ export class NeoAgent {
       if (STATUS_EVENTS.has(event.type)) this.report();
       if (event.type === "message.cancelled" && this.live)
         void this.live.messaging
-          .cancelled(String(event.data.messageId))
+          .cancelled(event.data.messageId)
           .catch(() => {});
     });
   }
 
-  static async open(host: AgentPorts): Promise<NeoAgent> {
+  static async open(host: AgentPorts) {
     const agent = new NeoAgent(host);
     if (await hasTable(host.db, IMPORT_MARKER)) {
       await wipeDatabase(host.db);
       await host.blobs.clear();
     }
     if (await hasTable(host.db, "neo_meta")) {
-      agent.agentId_ = await getMeta(host.db, "agent_id");
-      agent.instance_ = await getMeta(host.db, "instance");
-      agent.state_ =
-        ((await getMeta(host.db, "state")) as InstanceState | undefined) ??
-        "empty";
+      const state = storedState(await getMeta(host.db, "state"));
+      const agentId = await getMeta(host.db, "agent_id");
+      const instance = await getMeta(host.db, "instance");
+      if (state !== "empty" && agentId && isAgentId(agentId) && instance)
+        agent.home = { state, agentId, instance };
     }
-    if (agent.state_ === "active") await agent.start();
+    if (agent.home.state === "active") await agent.start();
     return agent;
   }
 
-  get state(): InstanceState {
-    return this.state_;
+  get state() {
+    return this.home.state;
   }
 
-  get agentId(): string {
-    if (!this.agentId_) throw new StateError("empty", "No such agent");
-    return this.agentId_;
+  get agentId() {
+    return this.held().agentId;
   }
 
-  services(): Live {
+  private held() {
+    if (this.home.state === "empty")
+      throw new StateError("empty", "No such agent");
+    return this.home;
+  }
+
+  services() {
     if (!this.live)
-      throw new StateError(this.state_, `The agent is ${this.state_}`);
+      throw new StateError(this.home.state, `The agent is ${this.home.state}`);
     return this.live;
   }
 
-  fetch(request: Request): Promise<Response> {
+  fetch(request: Request) {
     return handleAgentApi(this, request);
   }
 
-  private link(): CoordinatorLink {
-    if (!this.instance_) throw new StateError(this.state_, "No such agent");
-    return this.host.coordinator(this.instance_);
+  private link() {
+    return this.host.coordinator(this.held().instance);
   }
 
-  /** A request for an agent this DO has not made yet: ask the registry whether it exists. */
-  async claim(address: Address): Promise<boolean> {
-    if (this.state_ !== "empty") return true;
+  async claim(address: Address) {
+    if (this.home.state !== "empty") return true;
     const init = await this.host
       .coordinator(address.instance)
       .init(address.agentId);
@@ -174,13 +188,12 @@ export class NeoAgent {
     return true;
   }
 
-  /** Makes this agent (idempotent: a made agent only takes the newer profile and name). */
-  async provision(init: AgentInit): Promise<void> {
+  async provision(init: AgentInit) {
     const { db } = this.host;
-    if (this.state_ !== "empty") {
-      if (this.agentId_ !== init.profile.id)
-        throw new StateError(this.state_, "This home holds another agent");
-      await this.setInstance(init.instance);
+    if (this.home.state !== "empty") {
+      if (this.home.agentId !== init.profile.id)
+        throw new StateError(this.home.state, "This home holds another agent");
+      await this.setInstance(this.home, init.instance);
       if (this.live) await this.live.self.setProfile(init.profile);
       return;
     }
@@ -190,27 +203,27 @@ export class NeoAgent {
     await setMeta(db, "instance", init.instance);
     await setMeta(db, "created_at", String(this.now()));
     await new AgentSelf(db).init(init.profile);
-    this.agentId_ = init.profile.id;
-    this.instance_ = init.instance;
-    await this.setState("active");
+    await this.setState(
+      { state: "active", agentId: init.profile.id, instance: init.instance },
+      "active",
+    );
     await this.start();
   }
 
-  private async setInstance(instance: string): Promise<void> {
-    if (this.instance_ === instance) return;
-    this.instance_ = instance;
+  private async setInstance(home: Held, instance: string) {
+    if (home.instance === instance) return;
+    this.home = { ...home, instance };
     await setMeta(this.host.db, "instance", instance);
   }
 
-  async profileChanged(profile: AgentProfile): Promise<void> {
-    if (this.agentId_ !== profile.id) return;
+  async profileChanged(profile: AgentProfile) {
+    if (this.home.state === "empty" || this.home.agentId !== profile.id) return;
     await new AgentSelf(this.host.db).setProfile(profile);
     if (this.live) await this.live.self.setProfile(profile);
-    await this.events.emit("agent.changed", {});
+    await this.events.emit({ type: "agent.changed", data: { agent: profile } });
   }
 
-  /** The instance's providers, model and timezone; fetched when stale, held in memory only. */
-  async config(): Promise<AgentConfig> {
+  async config() {
     if (this.config_ && !this.stale) return this.config_;
     let fresh: AgentConfig;
     try {
@@ -230,17 +243,17 @@ export class NeoAgent {
     return fresh;
   }
 
-  async configChanged(revision: number): Promise<void> {
+  async configChanged(revision: number) {
     if (this.config_ && revision <= this.config_.revision) return;
     this.stale = true;
     if (this.live) await this.config().catch(() => {});
   }
 
-  async timezone(): Promise<string> {
+  async timezone() {
     return (await this.config()).timezone;
   }
 
-  async status(): Promise<AgentStatus | undefined> {
+  async status() {
     const live = this.live;
     if (!live) return undefined;
     return {
@@ -251,8 +264,7 @@ export class NeoAgent {
     };
   }
 
-  /** Tells the coordinator what this agent is doing (one report in flight; the last one wins). */
-  private report(): void {
+  private report() {
     if (this.reporting) {
       this.reportAgain = true;
       return;
@@ -261,9 +273,11 @@ export class NeoAgent {
       do {
         this.reportAgain = false;
         const status = await this.status().catch(() => undefined);
-        if (status && this.agentId_)
-          await this.link()
-            .report(this.agentId_, status)
+        const home = this.home;
+        if (status && home.state !== "empty")
+          await this.host
+            .coordinator(home.instance)
+            .report(home.agentId, status)
             .catch(() => {});
       } while (this.reportAgain);
     })().finally(() => {
@@ -271,30 +285,29 @@ export class NeoAgent {
     });
   }
 
-  /** A message from a teammate. An agent nobody has opened yet makes itself first. */
-  async deliver(message: AgentMessage): Promise<void> {
-    if (this.state_ === "empty")
-      await this.claim({ instance: message.instance, agentId: message.to });
-    if (this.state_ === "empty") throw new Error(`No agent ${message.to}`);
-    if (this.state_ !== "active")
+  async deliver(message: AgentMessage) {
+    if (
+      this.home.state === "empty" &&
+      !(await this.claim({ instance: message.instance, agentId: message.to }))
+    )
+      throw new Error(`No agent ${message.to}`);
+    if (this.home.state !== "active")
       throw new StateError(
-        this.state_,
-        `${message.to} is not taking messages right now (${this.state_})`,
+        this.home.state,
+        `${message.to} is not taking messages right now (${this.home.state})`,
       );
     await this.services().messaging.deliver(message);
   }
 
-  /** A teammate stops what it asked of this agent. */
   async interrupt(
     address: Address,
-    from: string,
+    from: AgentId,
   ): Promise<{ stopped: boolean; cancelled: number }> {
-    if (this.state_ === "empty") await this.claim(address);
+    if (this.home.state === "empty") await this.claim(address);
     const live = this.services();
     await live.messaging.closeFrom(from);
     const fromThem = (m: MailboxMessage) =>
-      m.source === "agent" &&
-      (m.meta.from as { id?: string } | undefined)?.id === from;
+      m.source === "agent" && m.meta.from.id === from;
     let cancelled = 0;
     for (const m of await live.mailbox.queue())
       if (fromThem(m)) {
@@ -309,51 +322,50 @@ export class NeoAgent {
     return { stopped, cancelled };
   }
 
-  async isNew(): Promise<boolean> {
-    if (this.state_ === "empty") return true;
-    if (this.state_ !== "active") return false;
+  async isNew() {
+    if (this.home.state === "empty") return true;
+    if (this.home.state !== "active") return false;
     const used = await this.host.db.get(
       `SELECT 1 FROM neo_mailbox UNION ALL SELECT 1 FROM neo_memories UNION ALL SELECT 1 FROM vfs_nodes WHERE kind = 'file' LIMIT 1`,
     );
     return used === undefined;
   }
 
-  async seal(): Promise<void> {
-    if (this.state_ === "sealed") return;
-    if (this.state_ !== "active")
-      throw new StateError(this.state_, `The agent is ${this.state_}`);
+  async seal() {
+    if (this.home.state === "sealed") return;
+    if (this.home.state !== "active")
+      throw new StateError(this.home.state, `The agent is ${this.home.state}`);
     await this.stop();
-    await this.setState("sealed");
-    await this.events.emit("instance.sealed");
+    await this.setState(this.home, "sealed");
+    await this.events.emit({ type: "instance.sealed", data: {} });
   }
 
-  async unseal(): Promise<void> {
-    if (this.state_ === "active") return;
-    if (this.state_ !== "sealed")
-      throw new StateError(this.state_, "The agent is not sealed");
-    await this.setState("active");
+  async unseal() {
+    if (this.home.state === "active") return;
+    if (this.home.state !== "sealed")
+      throw new StateError(this.home.state, "The agent is not sealed");
+    await this.setState(this.home, "active");
     await this.start();
-    await this.events.emit("instance.unsealed");
+    await this.events.emit({ type: "instance.unsealed", data: {} });
   }
 
-  async markMoved(): Promise<void> {
-    if (this.state_ === "moved") return;
-    if (this.state_ !== "sealed")
-      throw new StateError(this.state_, "Seal and export the agent first");
-    await this.setState("moved");
+  async markMoved() {
+    if (this.home.state === "moved") return;
+    if (this.home.state !== "sealed")
+      throw new StateError(this.home.state, "Seal and export the agent first");
+    await this.setState(this.home, "moved");
   }
 
-  exportPart(): ReadableStream<Uint8Array> {
-    if (this.state_ !== "sealed" && this.state_ !== "moved")
-      throw new StateError(this.state_, "Seal the agent before exporting it");
+  exportPart() {
+    if (this.home.state !== "sealed" && this.home.state !== "moved")
+      throw new StateError(
+        this.home.state,
+        "Seal the agent before exporting it",
+      );
     return encodeNdjson(writePart(this.host.db, this.host.blobs));
   }
 
-  /** Replaces this agent with one part of a bundle. A failure leaves it empty. */
-  async importPart(
-    init: AgentInit,
-    part: ReadableStream<Uint8Array>,
-  ): Promise<void> {
+  async importPart(init: AgentInit, part: ReadableStream<Uint8Array>) {
     const { db, blobs } = this.host;
     await this.reset();
     await db.exec(`CREATE TABLE ${IMPORT_MARKER} (started_at INTEGER) STRICT`);
@@ -370,30 +382,30 @@ export class NeoAgent {
       await this.reset();
       throw error;
     }
-    this.agentId_ = init.profile.id;
-    this.instance_ = init.instance;
-    this.state_ = "active";
+    this.home = {
+      state: "active",
+      agentId: init.profile.id,
+      instance: init.instance,
+    };
     await this.start();
-    await this.events.emit("instance.imported", {});
+    await this.events.emit({ type: "agent.imported", data: {} });
   }
 
-  /** Removes the agent: its database, its files and its alarm. */
-  async destroy(): Promise<void> {
+  async destroy() {
     await this.reset();
     await this.host.alarm.set(undefined);
   }
 
-  private async reset(): Promise<void> {
+  private async reset() {
     await this.stop();
     await wipeDatabase(this.host.db);
     await this.host.blobs.clear();
-    this.state_ = "empty";
-    this.agentId_ = undefined;
+    this.home = EMPTY;
     this.configured = undefined;
     this.conversation_ = undefined;
   }
 
-  arm(extra?: Wake): Promise<void> {
+  arm(extra?: Wake) {
     this.arming = this.arming
       .catch(() => {})
       .then(async () => {
@@ -417,13 +429,13 @@ export class NeoAgent {
     return this.arming;
   }
 
-  private async setAlarm(at: number | undefined): Promise<void> {
+  private async setAlarm(at: number | undefined) {
     if (this.armed !== null && this.armed === at) return;
     this.armed = at;
     await this.host.alarm.set(at);
   }
 
-  wake(): Promise<void> {
+  wake() {
     this.waking ??= (async () => {
       try {
         const live = this.live;
@@ -442,7 +454,7 @@ export class NeoAgent {
     return this.waking;
   }
 
-  private async fireSchedules(live: Live): Promise<void> {
+  private async fireSchedules(live: Live) {
     for (let pass = 0; pass < 10; pass++) {
       const { runs, more } = await live.schedules.fire({
         send: (input) => this.send(input),
@@ -455,34 +467,37 @@ export class NeoAgent {
         timezone: () => this.timezone(),
       });
       for (const run of runs)
-        await this.events.emit("schedule.fired", {
-          scheduleId: run.scheduleId,
-          status: run.status,
-          reason: run.reason,
-          messageId: run.messageId,
+        await this.events.emit({
+          type: "schedule.fired",
+          data: {
+            scheduleId: run.scheduleId,
+            status: run.status,
+            reason: run.reason,
+            messageId: run.messageId,
+          },
         });
       if (!more) return;
     }
   }
 
-  async schedulesChanged(): Promise<void> {
+  async schedulesChanged() {
     await this.arm();
-    await this.events.emit("schedule.changed", {});
+    await this.events.emit({ type: "schedule.changed", data: {} });
   }
 
-  async conversation(): Promise<Conversation> {
+  async conversation() {
     const live = this.services();
     let conversation = this.conversation_;
     if (!conversation) {
       const self = await live.self.get();
-      if (self.conversationId !== null)
+      if (self.conversationId !== null && isConversationId(self.conversationId))
         conversation = await live.harness.conversation(
-          self.conversationId as never,
+          self.conversationId,
           this.context,
         );
       if (!conversation) {
         conversation = await live.harness.root(this.context);
-        await live.self.setConversation(conversation.id as unknown as number);
+        await live.self.setConversation(conversation.id);
       }
       this.conversation_ = conversation;
     }
@@ -505,7 +520,7 @@ export class NeoAgent {
 
   async send(
     input: Parameters<Mailbox["send"]>[0] & { files?: AttachmentInput[] },
-  ): Promise<MailboxMessage> {
+  ) {
     const live = this.services();
     if (!(await this.config()).model)
       throw new SetupError("Add a model provider first (Settings → Providers)");
@@ -520,42 +535,40 @@ export class NeoAgent {
     return live.mailbox.send(rest);
   }
 
-  upload(name: string, body: ReadableStream<Uint8Array>): Promise<Upload> {
+  upload(name: string, body: ReadableStream<Uint8Array>) {
     return stageUpload(this.services().vfs, name, body);
   }
 
-  async pause(): Promise<void> {
+  async pause() {
     await this.services().self.setPaused(true);
-    await this.events.emit("agent.paused", {});
+    await this.events.emit({ type: "agent.paused", data: {} });
   }
 
-  async resume(): Promise<void> {
+  async resume() {
     await this.services().self.setPaused(false);
-    await this.events.emit("agent.resumed", {});
+    await this.events.emit({ type: "agent.resumed", data: {} });
     await this.services().mailbox.drain();
   }
 
-  async close(): Promise<void> {
+  async close() {
     await this.stop();
   }
 
-  private async setState(state: InstanceState): Promise<void> {
-    this.state_ = state;
+  private async setState(home: Held, state: Held["state"]) {
+    this.home = { ...home, state };
     await setMeta(this.host.db, "state", state);
   }
 
-  private async start(): Promise<void> {
+  private async start() {
     if (this.live) return;
     const { db } = this.host;
     const vfs = new Vfs(db, this.host.blobs, this.now);
     await vfs.repair();
-    // The agent sees the instance's /shared too; its tools may not change attachments
-    // (history points at them). The person's APIs use `vfs`, without /shared.
     const withShared = mount(
       vfs,
       SHARED_ROOT,
       remoteVfs(
-        (op, args) => this.link().shared(op, args),
+        (request) => this.link().shared(request),
         (path) => this.link().sharedStream(path),
       ),
     );
@@ -587,7 +600,7 @@ export class NeoAgent {
           new VfsExecutionEnv(
             agentVfs,
             cwd ?? "/",
-            `neo-vfs:${this.agentId_}`,
+            `neo-vfs:${this.agentId}`,
             shell,
           ),
         identity: { attribution: { name: "neo", url: "https://github.com/" } },
@@ -600,9 +613,12 @@ export class NeoAgent {
         onReport: (error, info) => {
           if (info.type === "listener_error") return;
           void this.events
-            .emit("error", {
-              where: info.type,
-              message: error instanceof Error ? error.message : String(error),
+            .emit({
+              type: "error",
+              data: {
+                where: info.type,
+                message: error instanceof Error ? error.message : String(error),
+              },
             })
             .catch(() => {});
         },
@@ -646,7 +662,7 @@ export class NeoAgent {
     const me = async () => ({
       id: this.agentId,
       name: (await self.get()).profile.name,
-      instance: this.instance_!,
+      instance: this.held().instance,
     });
     const messaging = new Messaging(
       db,
@@ -712,9 +728,9 @@ export class NeoAgent {
             messaging: () => messaging,
             interrupt: (agentId) =>
               this.host
-                .peers(this.instance_!)
+                .peers(this.held().instance)
                 .get(agentId)
-                .interrupt(this.instance_!, agentId, this.agentId),
+                .interrupt(this.held().instance, agentId, this.agentId),
           }),
         ],
       }),
@@ -733,7 +749,7 @@ export class NeoAgent {
     this.report();
   }
 
-  private async watch(): Promise<void> {
+  private async watch() {
     const live = this.services();
     const conversation = await this.conversation();
     const stream = await watchEvents(
@@ -755,10 +771,7 @@ export class NeoAgent {
     live.watches.push(stream);
   }
 
-  private async turnSettled(
-    turn: Turn,
-    messages: MailboxMessage[],
-  ): Promise<void> {
+  private async turnSettled(turn: Turn, messages: MailboxMessage[]) {
     const live = this.services();
     await live.messaging.turnSettled(turn, messages).catch(() => {});
     const applied = await live.memories.finish(
@@ -767,11 +780,14 @@ export class NeoAgent {
     );
     await live.history.sync(await this.conversation()).catch(() => {});
     if (applied > 0)
-      await this.events.emit("memory.changed", { turnId: turn.id, applied });
+      await this.events.emit({
+        type: "memory.changed",
+        data: { turnId: turn.id, applied },
+      });
     await this.arm();
   }
 
-  private async stop(): Promise<void> {
+  private async stop() {
     const live = this.live;
     if (!live) return;
     this.armed = null;
@@ -785,25 +801,18 @@ export class NeoAgent {
   }
 }
 
-function sizedEdit<T extends { execute: (...args: any[]) => any }>(
-  edit: T,
-  vfs: Vfs,
-): T {
+type EditTool = ReturnType<typeof createEditTool>;
+
+function sizedEdit(edit: EditTool, vfs: Vfs): EditTool {
   return {
     ...edit,
-    execute: async (
-      args: { path?: string },
-      api: { env?: { cwd?: string } },
-      context: unknown,
-    ) => {
-      if (typeof args.path === "string") {
-        const path = joinPath(api.env?.cwd ?? "/", args.path);
-        const stat = await vfs.stat(path).catch(() => undefined);
-        if (stat && stat.kind === "file" && stat.size > WHOLE_READ_MAX)
-          throw new Error(
-            `${path} is ${(stat.size / 1024 / 1024).toFixed(1)} MB; edit reads whole files and is limited to ${WHOLE_READ_MAX / 1024 / 1024} MB. Read it in parts with read (offset and limit), and write a new file instead.`,
-          );
-      }
+    execute: async (args, api, context) => {
+      const path = joinPath(api.env?.cwd ?? "/", args.path);
+      const stat = await vfs.stat(path).catch(() => undefined);
+      if (stat && stat.kind === "file" && stat.size > WHOLE_READ_MAX)
+        throw new Error(
+          `${path} is ${(stat.size / 1024 / 1024).toFixed(1)} MB; edit reads whole files and is limited to ${WHOLE_READ_MAX / 1024 / 1024} MB. Read it in parts with read (offset and limit), and write a new file instead.`,
+        );
       return edit.execute(args, api, context);
     },
   };

@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { NeoApiError, NeoClient } from "@neo/client";
+import { NeoApiError, parse, Status } from "@neo/client";
+import type { ScriptStep } from "@neo/kernel/testing";
 import {
+  failure,
   answers,
   idle,
   type Instance,
   instance,
   transcript,
   until,
+  AgentState,
+  Upload,
 } from "./harness";
 
 const opened: Instance[] = [];
@@ -21,14 +25,13 @@ async function open(): Promise<Instance> {
 }
 
 const client = (neo: Instance) => neo.client();
-const script = (neo: Instance, steps: unknown[]) =>
-  neo.call("POST", "/test/script", { steps });
+const script = (neo: Instance, steps: ScriptStep[]) =>
+  neo.act("POST", "/test/script", { steps });
 const send = (neo: Instance, text: string) =>
-  neo.call("POST", "/messages", { text });
+  neo.act("POST", "/messages", { text });
 const enqueue = (neo: Instance, text: string) =>
-  neo.call("POST", "/test/messages", { text });
+  neo.act("POST", "/test/messages", { text });
 
-/** Uploads a file; returns its path in the files API. */
 async function putFile(
   neo: Instance,
   name: string,
@@ -44,9 +47,7 @@ async function putFile(
     },
   );
   expect(response.ok).toBe(true);
-  const { upload } = (await response.json()) as {
-    upload: { id: string; name: string };
-  };
+  const { upload } = parse(Upload, await response.json());
   return `/.staging/${upload.id}/${upload.name}`;
 }
 
@@ -108,26 +109,35 @@ describe("move", () => {
       new TextEncoder().encode("helper's"),
       helper,
     );
-    await first.root("PUT", "/providers/anthropic", {
+    await first.root.act("PUT", "/providers/anthropic", {
       kind: "anthropic",
       apiKey: "sk-test",
     });
     await startLongTurn(first, "g1");
-    const { instanceId, epoch } = await first.root("GET", "/status");
+    const { instanceId, epoch } = await first.root.call(
+      "GET",
+      "/status",
+      Status,
+    );
     expect(epoch).toBe(1);
+    if (!instanceId) throw new Error("The instance has no id");
 
     const second = await open();
     const moved = await move(first, second, "correct horse");
     expect(moved).toEqual({ instanceId, epoch: 2, secrets: "kept" });
-    expect((await first.root("GET", "/status")).state).toBe("moved");
-    expect((await first.call("GET", "/status")).state).toBe("moved");
+    expect((await first.root.call("GET", "/status", Status)).state).toBe(
+      "moved",
+    );
+    expect((await first.call("GET", "/status", AgentState)).state).toBe(
+      "moved",
+    );
     await expect(send(first, "still there?")).rejects.toThrow();
 
     await script(second, [
       { text: "resumed after move" },
       { text: "then the queue" },
     ]);
-    await second.call("POST", "/test/release", { gate: "g1" });
+    await second.act("POST", "/test/release", { gate: "g1" });
     await idle(second);
     expect(await answers(second)).toEqual([
       "resumed after move",
@@ -141,9 +151,9 @@ describe("move", () => {
       "helper's",
     );
     const agents = (await client(second).agents()).map((a) => a.id);
-    expect(agents).toEqual(["neo", helper]);
-    const { providers } = await second.root("GET", "/providers");
-    expect(providers.map((p: any) => [p.id, p.hasKey])).toEqual([
+    expect<string[]>(agents).toEqual(["neo", helper]);
+    const providers = await client(second).providers();
+    expect(providers.map((p) => [p.id, p.hasKey])).toEqual([
       ["anthropic", true],
     ]);
 
@@ -152,13 +162,7 @@ describe("move", () => {
     const other = await new Response(
       await client(stranger).exportBundle(),
     ).arrayBuffer();
-    expect(
-      (
-        await client(first)
-          .importBundle(other)
-          .catch((e) => e)
-      ).status,
-    ).toBe(409);
+    expect((await failure(client(first).importBundle(other))).status).toBe(409);
 
     await startLongTurn(second, "g2");
     expect(await move(second, first)).toEqual({
@@ -167,27 +171,29 @@ describe("move", () => {
       secrets: "dropped",
     });
     await script(first, [{ text: "home again" }, { text: "queue again" }]);
-    await first.call("POST", "/test/release", { gate: "g2" });
+    await first.act("POST", "/test/release", { gate: "g2" });
     await idle(first);
     expect((await answers(first)).slice(-2)).toEqual([
       "home again",
       "queue again",
     ]);
     expect(Bun.hash(await getFile(first, data))).toBe(Bun.hash(big));
-    const after = await first.root("GET", "/providers");
-    expect(after.providers[0].hasKey).toBe(false);
+    const after = await client(first).providers();
+    expect(after[0]?.hasKey).toBe(false);
   });
 
   test("unseal cancels a move and the turn resumes in place", async () => {
     const neo = await open();
     await startLongTurn(neo, "g");
     await client(neo).seal();
-    expect((await neo.root("GET", "/status")).state).toBe("sealed");
-    expect((await neo.call("GET", "/status")).state).toBe("sealed");
+    expect((await neo.root.call("GET", "/status", Status)).state).toBe(
+      "sealed",
+    );
+    expect((await neo.call("GET", "/status", AgentState)).state).toBe("sealed");
     await expect(send(neo, "hello")).rejects.toThrow();
     await client(neo).unseal();
     await script(neo, [{ text: "back" }, { text: "queue" }]);
-    await neo.call("POST", "/test/release", { gate: "g" });
+    await neo.act("POST", "/test/release", { gate: "g" });
     await idle(neo);
     expect(await answers(neo)).toEqual(["back", "queue"]);
   });
@@ -200,16 +206,15 @@ describe("move", () => {
       await client(source).exportBundle("right"),
     ).arrayBuffer();
     const target = await open();
-    const before = (await target.root("GET", "/status")).instanceId;
-    const error = await client(target)
-      .importBundle(bundle, "wrong")
-      .catch((e) => e);
+    const before = (await target.root.call("GET", "/status", Status))
+      .instanceId;
+    const error = await failure(client(target).importBundle(bundle, "wrong"));
     expect(error).toBeInstanceOf(NeoApiError);
     expect(error.status).toBe(400);
-    expect((await target.root("GET", "/status")).instanceId).toBe(before);
-    const missing = await client(target)
-      .importBundle(bundle)
-      .catch((e) => e);
+    expect((await target.root.call("GET", "/status", Status)).instanceId).toBe(
+      before,
+    );
+    const missing = await failure(client(target).importBundle(bundle));
     expect(missing.status).toBe(400);
     expect((await client(target).importBundle(bundle, "right")).secrets).toBe(
       "kept",
@@ -228,19 +233,17 @@ describe("move", () => {
       "mine.txt",
       new TextEncoder().encode("mine"),
     );
-    const refused = await client(used)
-      .importBundle(bundle)
-      .catch((e) => e);
+    const refused = await failure(client(used).importBundle(bundle));
     expect(refused.status).toBe(409);
     expect(new TextDecoder().decode(await getFile(used, mine))).toBe("mine");
 
     const target = await open();
     const cut = bundle.slice(0, Math.floor(bundle.length * 0.6));
-    const damaged = await client(target)
-      .importBundle(cut)
-      .catch((e) => e);
+    const damaged = await failure(client(target).importBundle(cut));
     expect(damaged).toBeInstanceOf(NeoApiError);
-    expect((await target.root("GET", "/status")).state).toBe("active");
+    expect((await target.root.call("GET", "/status", Status)).state).toBe(
+      "active",
+    );
     expect((await client(target).importBundle(bundle)).epoch).toBe(2);
   });
 });

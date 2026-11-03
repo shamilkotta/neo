@@ -14,7 +14,7 @@ export function coordinatorLink(env: Env, instance: string): CoordinatorLink {
       stub().agentCreate(instance, by, input, key),
     updateProfile: (agentId, change) =>
       stub().agentUpdate(instance, agentId, change),
-    shared: (op, args) => stub().sharedCall(instance, op, args),
+    shared: (request) => stub().sharedCall(instance, request),
     sharedStream: (path) => stub().sharedStream(instance, path),
   };
 }

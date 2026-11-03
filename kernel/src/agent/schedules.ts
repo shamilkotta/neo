@@ -1,12 +1,14 @@
+import { present } from "../errors";
 import { Cron } from "croner";
 import { ulid } from "../ids";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type {
-  MailboxMessage,
-  Schedule,
-  ScheduleInput,
-  ScheduleRun,
+import {
+  type MailboxMessage,
+  type Schedule,
+  type ScheduleInput,
+  type ScheduleRun,
   ScheduleSpec,
+  parseJson,
 } from "@neo/client";
 import type { SendInput } from "./mailbox";
 export type {
@@ -16,7 +18,7 @@ export type {
   ScheduleSpec,
 } from "@neo/client";
 
-export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const SCHEDULES_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_schedules (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -126,7 +128,7 @@ export class Schedules {
     private readonly now: () => number,
   ) {}
 
-  async get(id: string): Promise<Schedule | undefined> {
+  async get(id: string) {
     const row = await this.db.get<Row>(
       `SELECT * FROM neo_schedules WHERE id = ?`,
       id,
@@ -134,7 +136,7 @@ export class Schedules {
     return row ? toSchedule(row) : undefined;
   }
 
-  async list(which: "active" | "all" = "all"): Promise<Schedule[]> {
+  async list(which: "active" | "all" = "all") {
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_schedules ${which === "active" ? "WHERE next_at IS NOT NULL" : ""}
        ORDER BY next_at IS NULL, next_at, updated_at DESC LIMIT 300`,
@@ -142,7 +144,7 @@ export class Schedules {
     return rows.map(toSchedule);
   }
 
-  async next(): Promise<number | undefined> {
+  async next() {
     const row = await this.db.get<{ at: number | null }>(
       `SELECT min(next_at) AS at FROM neo_schedules WHERE next_at IS NOT NULL`,
     );
@@ -154,7 +156,7 @@ export class Schedules {
     createdBy: Schedule["createdBy"],
     timezone: string,
     options: { originKey?: string; system?: string } = {},
-  ): Promise<Schedule> {
+  ) {
     if (options.originKey) {
       const existing = await this.db.get<Row>(
         `SELECT * FROM neo_schedules WHERE origin_key = ?`,
@@ -197,27 +199,29 @@ export class Schedules {
       time,
       time,
     );
-    if (!row) return (await this.system(options.system!))!;
+    if (!row) {
+      const existing = options.system
+        ? await this.system(options.system)
+        : undefined;
+      if (!existing) throw new ScheduleError("The schedule was not saved");
+      return existing;
+    }
     const created = toSchedule(row);
     await this.setNext(
       created.id,
       nextTime(created, time, time, timezone, true),
     );
-    return (await this.get(created.id))!;
+    return present(await this.get(created.id), `schedule ${created.id}`);
   }
 
-  async ensureSystem(
-    key: string,
-    defaults: ScheduleInput,
-    timezone: string,
-  ): Promise<Schedule> {
+  async ensureSystem(key: string, defaults: ScheduleInput, timezone: string) {
     return (
       (await this.system(key)) ??
       this.create(defaults, "system", timezone, { system: key })
     );
   }
 
-  async system(key: string): Promise<Schedule | undefined> {
+  async system(key: string) {
     const row = await this.db.get<Row>(
       `SELECT * FROM neo_schedules WHERE system = ?`,
       key,
@@ -225,11 +229,7 @@ export class Schedules {
     return row ? toSchedule(row) : undefined;
   }
 
-  async update(
-    id: string,
-    change: ScheduleInput,
-    timezone: string,
-  ): Promise<Schedule | undefined> {
+  async update(id: string, change: ScheduleInput, timezone: string) {
     const current = await this.get(id);
     if (!current) return undefined;
     const time = this.now();
@@ -257,7 +257,7 @@ export class Schedules {
       time,
       id,
     );
-    const updated = (await this.get(id))!;
+    const updated = present(await this.get(id), `schedule ${id}`);
     await this.setNext(
       id,
       nextTime(updated, await this.anchor(id), time, timezone, true),
@@ -265,7 +265,7 @@ export class Schedules {
     return this.get(id);
   }
 
-  async remove(id: string): Promise<boolean> {
+  async remove(id: string) {
     const current = await this.get(id);
     if (!current) return false;
     if (current.system)
@@ -279,7 +279,7 @@ export class Schedules {
     return true;
   }
 
-  async retime(timezone: string): Promise<void> {
+  async retime(timezone: string) {
     const time = this.now();
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_schedules WHERE next_at IS NOT NULL AND timezone IS NULL`,
@@ -294,7 +294,7 @@ export class Schedules {
     }
   }
 
-  async dueNow(id: string, ago = 1): Promise<boolean> {
+  async dueNow(id: string, ago = 1) {
     const row = await this.db.get(
       `UPDATE neo_schedules SET next_at = ? WHERE id = ? AND next_at IS NOT NULL RETURNING id`,
       this.now() - ago,
@@ -314,8 +314,9 @@ export class Schedules {
     const runs: ScheduleRun[] = [];
     const personTz = await delivery.timezone();
     for (const row of due.slice(0, BATCH)) {
+      if (row.next_at === null) continue;
       try {
-        const run = await this.fireOne(row, delivery, personTz);
+        const run = await this.fireOne(row, row.next_at, delivery, personTz);
         if (run) runs.push(run);
       } catch {
         await this.db.run(
@@ -329,11 +330,11 @@ export class Schedules {
 
   private async fireOne(
     row: Row,
+    dueAt: number,
     delivery: ScheduleDelivery,
     personTz: string,
-  ): Promise<ScheduleRun | undefined> {
+  ) {
     const schedule = toSchedule(row);
-    const dueAt = row.next_at!;
     const time = this.now();
     const timezone = schedule.timezone ?? personTz;
     const recurring = schedule.spec.kind !== "once";
@@ -389,13 +390,13 @@ export class Schedules {
       timezone,
       false,
     );
-    const retry = status === "failed" && row.failures < RETRY_MS.length;
-    if (retry) {
-      const at = time + RETRY_MS[row.failures]!;
+    const delay = status === "failed" ? RETRY_MS[row.failures] : undefined;
+    if (delay !== undefined) {
+      const at = time + delay;
       next = next === null ? at : Math.min(next, at);
       reason = `${reason} (trying again)`;
     }
-    const failures = retry ? row.failures + 1 : 0;
+    const failures = delay !== undefined ? row.failures + 1 : 0;
     const runId = ulid(time);
     let recorded = false;
     await this.db.transaction(async (tx) => {
@@ -440,14 +441,15 @@ export class Schedules {
     };
   }
 
-  private async anchor(id: string): Promise<number> {
-    return (await this.db.get<{ a: number }>(
+  private async anchor(id: string) {
+    const row = await this.db.get<{ a: number }>(
       `SELECT anchor_at AS a FROM neo_schedules WHERE id = ?`,
       id,
-    ))!.a;
+    );
+    return present(row, `schedule ${id}`).a;
   }
 
-  private async setNext(id: string, at: number | null): Promise<void> {
+  private async setNext(id: string, at: number | null) {
     await this.db.run(
       `UPDATE neo_schedules SET next_at = ? WHERE id = ?`,
       at,
@@ -462,7 +464,7 @@ export function nextTime(
   from: number,
   timezone: string,
   fresh: boolean,
-): number | null {
+) {
   if (!schedule.enabled) return null;
   if (schedule.maxRuns !== null && schedule.runCount >= schedule.maxRuns)
     return null;
@@ -493,11 +495,7 @@ export function nextTime(
   return at;
 }
 
-function cronNext(
-  expr: string,
-  timezone: string,
-  after: number,
-): number | null {
+function cronNext(expr: string, timezone: string, after: number) {
   const next = new Cron(expr, { timezone, paused: true }).nextRun(
     new Date(after),
   );
@@ -508,7 +506,7 @@ function intoWindow(
   at: number,
   window: { start: string; end: string },
   timezone: string,
-): number {
+) {
   if (inWindow(window, at, timezone)) return at;
   const start = toMinutes(window.start);
   const now = minutesOfDay(at, timezone);
@@ -523,7 +521,7 @@ export function inWindow(
   window: { start: string; end: string },
   at: number,
   timezone: string,
-): boolean {
+) {
   const now = minutesOfDay(at, timezone);
   const start = toMinutes(window.start);
   const end = toMinutes(window.end);
@@ -596,7 +594,7 @@ function resolve(
   const name = (
     input.name ??
     current?.name ??
-    prompt.split("\n")[0]!.slice(0, 60)
+    (prompt.split("\n")[0] ?? "").slice(0, 60)
   ).trim();
   if (!name || name.length > 80)
     throw new ScheduleError("The name is 1-80 characters");
@@ -636,7 +634,7 @@ function resolve(
   };
 }
 
-function checkTimezone(timezone: string): void {
+function checkTimezone(timezone: string) {
   try {
     new Intl.DateTimeFormat("en", { timeZone: timezone });
   } catch {
@@ -644,7 +642,7 @@ function checkTimezone(timezone: string): void {
   }
 }
 
-function checkCron(expr: string, timezone: string, now: number): string {
+function checkCron(expr: string, timezone: string, now: number) {
   if (expr.split(/\s+/).length !== 5)
     throw new ScheduleError(
       "cron has five fields: minute hour day month weekday",
@@ -676,7 +674,7 @@ export function parseTime(
   input: { at?: string; inMinutes?: number },
   now: number,
   timezone: string,
-): number {
+) {
   if (input.inMinutes !== undefined) {
     if (!(input.inMinutes > 0))
       throw new ScheduleError("inMinutes is more than 0");
@@ -696,8 +694,8 @@ export function parseTime(
     throw new ScheduleError(
       "A time is like 2026-10-29T09:00 (local) or has an offset",
     );
-  const [y, mo, d, h, mi] = match.slice(1, 6).map(Number) as number[];
-  return zonedToUtc(y!, mo!, d!, h!, mi!, Number(match[6] ?? 0), timezone);
+  const [y, mo, d, h, mi, s] = match.slice(1, 7).map((n) => Number(n ?? 0));
+  return zonedToUtc(y ?? 0, mo ?? 0, d ?? 0, h ?? 0, mi ?? 0, s ?? 0, timezone);
 }
 
 export function zonedToUtc(
@@ -708,14 +706,14 @@ export function zonedToUtc(
   mi: number,
   s: number,
   timezone: string,
-): number {
+) {
   const wall = Date.UTC(y, mo - 1, d, h, mi, s);
   let guess = wall;
   for (let i = 0; i < 2; i++) guess = wall - offsetAt(guess, timezone);
   return guess;
 }
 
-function offsetAt(at: number, timezone: string): number {
+function offsetAt(at: number, timezone: string) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
@@ -741,7 +739,7 @@ function offsetAt(at: number, timezone: string): number {
   return asUtc - Math.floor(at / 1000) * 1000;
 }
 
-function minutesOfDay(at: number, timezone: string): number {
+function minutesOfDay(at: number, timezone: string) {
   const [h, m] = new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
     hour: "2-digit",
@@ -751,26 +749,26 @@ function minutesOfDay(at: number, timezone: string): number {
     .format(at)
     .split(":")
     .map(Number);
-  return h! * 60 + m!;
+  return (h ?? 0) * 60 + (m ?? 0);
 }
 
 const toMinutes = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number);
-  return h! * 60 + m!;
+  return (h ?? 0) * 60 + (m ?? 0);
 };
 
-export function describeSpec(spec: ScheduleSpec, timezone: string): string {
+export function describeSpec(spec: ScheduleSpec, timezone: string) {
   if (spec.kind === "once") return `once at ${new Date(spec.at).toISOString()}`;
   if (spec.kind === "every") return `every ${spec.minutes} minutes`;
   return `cron "${spec.expr}" (${timezone})`;
 }
 
-function toSchedule(row: Row): Schedule {
+function toSchedule(row: Row) {
   return {
     id: row.id,
     name: row.name,
     prompt: row.prompt,
-    spec: JSON.parse(row.spec) as ScheduleSpec,
+    spec: parseJson(ScheduleSpec, row.spec),
     timezone: row.timezone,
     window:
       row.window_start && row.window_end

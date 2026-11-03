@@ -1,8 +1,9 @@
+import { present } from "../errors";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import type { NeoEvent, LiveEvent } from "@neo/client";
-export type { NeoEvent, LiveEvent } from "@neo/client";
+import { EventBody, parse, type NeoEvent, type LiveEvent } from "@neo/client";
+export type { EventBody, NeoEvent, LiveEvent } from "@neo/client";
 
-export const EVENTS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const EVENTS_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     at INTEGER NOT NULL,
@@ -23,18 +24,15 @@ export class Events {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async emit(
-    type: string,
-    data: Record<string, unknown> = {},
-  ): Promise<NeoEvent> {
+  async emit(body: EventBody) {
     const at = this.now();
     const row = await this.db.get<{ seq: number }>(
       `INSERT INTO neo_events (at, type, data) VALUES (?, ?, ?) RETURNING seq`,
       at,
-      type,
-      JSON.stringify(data),
+      body.type,
+      JSON.stringify(body.data),
     );
-    const event: NeoEvent = { seq: row!.seq, at, type, data };
+    const event: NeoEvent = { seq: present(row, "event").seq, at, ...body };
     for (const listener of [...this.durable]) {
       try {
         listener(event);
@@ -48,7 +46,7 @@ export class Events {
     return event;
   }
 
-  live(type: string, data: unknown): void {
+  live(type: string, data: unknown) {
     if (this.ephemeral.size === 0) return;
     const event: LiveEvent = { type, data };
     for (const listener of [...this.ephemeral]) {
@@ -58,7 +56,7 @@ export class Events {
     }
   }
 
-  async since(after: number, limit = 1000): Promise<NeoEvent[]> {
+  async since(after: number, limit = 1000) {
     const rows = await this.db.all<Row>(
       `SELECT * FROM neo_events WHERE seq > ? ORDER BY seq LIMIT ?`,
       after,
@@ -67,29 +65,28 @@ export class Events {
     return rows.map((r) => ({
       seq: r.seq,
       at: r.at,
-      type: r.type,
-      data: JSON.parse(r.data),
+      ...parse(EventBody, { type: r.type, data: JSON.parse(r.data) }),
     }));
   }
 
-  async latest(): Promise<number> {
+  async latest() {
     const row = await this.db.get<{ seq: number | null }>(
       `SELECT max(seq) AS seq FROM neo_events`,
     );
     return row?.seq ?? 0;
   }
 
-  subscribe(listener: (event: NeoEvent) => void): () => void {
+  subscribe(listener: (event: NeoEvent) => void) {
     this.durable.add(listener);
     return () => this.durable.delete(listener);
   }
 
-  subscribeLive(listener: (event: LiveEvent) => void): () => void {
+  subscribeLive(listener: (event: LiveEvent) => void) {
     this.ephemeral.add(listener);
     return () => this.ephemeral.delete(listener);
   }
 
-  stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array> {
+  stream(after: number, signal: AbortSignal) {
     const encoder = new TextEncoder();
     const cleanup: (() => void)[] = [];
     const stop = () => {
