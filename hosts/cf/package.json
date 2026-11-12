@@ -18,6 +18,7 @@
     "build": "bun run --filter @neo/web build",
     "dev": "bun run build && wrangler dev",
     "deploy": "bun run build && wrangler deploy",
+    "deploy:preview": "bun run build && wrangler deploy --env preview",
     "types": "wrangler types --strict-vars=false"
   }
 }

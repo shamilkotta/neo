@@ -22,4 +22,21 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["InstanceDO", "AgentDO"] },
   ],
+  "account_id": "364500b7193a511e00ed3c6702fe6a89",
+  "env": {
+    "preview": {
+      "name": "neo-preview",
+      "durable_objects": {
+        "bindings": [
+          { "name": "INSTANCE", "class_name": "InstanceDO" },
+          { "name": "AGENT", "class_name": "AgentDO" },
+        ],
+      },
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "neo-preview-blobs" }],
+      "vars": { "NEO_TEST": "0" },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["InstanceDO", "AgentDO"] },
+      ],
+    },
+  },
 }
