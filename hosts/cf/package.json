@@ -17,7 +17,8 @@
   "scripts": {
     "build": "bun run --filter @neo/web build",
     "dev": "bun run build && wrangler dev",
-    "deploy": "bun run build && wrangler deploy",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler preview",
     "types": "wrangler types --strict-vars=false"
   }
 }
