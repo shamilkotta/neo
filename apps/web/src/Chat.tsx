@@ -120,6 +120,97 @@ function FileCard({
   );
 }
 
+type Ask = NonNullable<(TranscriptItem & { type: "tool" })["ask"]>;
+
+function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [sent, setSent] = useState<Record<string, string> | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const answered = ask.answer?.answers ?? sent;
+  const single = ask.questions.length === 1;
+  const submit = async (answers: Record<string, string>) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await client.answer(
+        { questionId: ask.questionId, answers },
+        { clientId: `answer:${ask.questionId}` },
+      );
+      setSent(answers);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setBusy(false);
+  };
+  const ready = ask.questions.every((q) => drafts[q.id]?.trim());
+  return (
+    <div className={`question${answered ? " answered" : ""}`}>
+      {ask.questions.map((q) => {
+        const chosen = answered?.[q.id] ?? drafts[q.id];
+        return (
+          <div key={q.id} className="question-item">
+            <div className="question-text">{q.question}</div>
+            {q.options?.length ? (
+              <div className="question-options">
+                {q.options.map((o) => (
+                  <button
+                    key={o.label}
+                    className={`small${chosen === o.label ? " chosen" : ""}`}
+                    title={o.description}
+                    disabled={!!answered || busy}
+                    onClick={() =>
+                      single
+                        ? void submit({ [q.id]: o.label })
+                        : setDrafts({ ...drafts, [q.id]: o.label })
+                    }
+                  >
+                    {o.label}
+                    {o.description && (
+                      <span className="muted"> · {o.description}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {answered ? (
+              !q.options?.some((o) => o.label === answered[q.id]) && (
+                <div className="bubble">{answered[q.id] ?? "—"}</div>
+              )
+            ) : (
+              <input
+                placeholder={
+                  q.options?.length ? "Or type an answer" : "Your answer"
+                }
+                value={drafts[q.id] ?? ""}
+                disabled={busy}
+                onChange={(e) =>
+                  setDrafts({ ...drafts, [q.id]: e.target.value })
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && single && drafts[q.id]?.trim())
+                    void submit(drafts);
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+      {!answered && (
+        <button
+          className="small primary"
+          disabled={!ready || busy}
+          onClick={() => void submit(drafts)}
+        >
+          Answer
+        </button>
+      )}
+      {answered && <div className="muted">Answered</div>}
+      {error && <div className="err">{error}</div>}
+    </div>
+  );
+}
+
 const time = (at: number) =>
   new Date(at).toLocaleString([], {
     weekday: "short",
@@ -151,7 +242,13 @@ function Item({
                 <span className={`chip ${turn.status}`}>{turn.status}</span>
               )}
             </div>
-            {m.text && <div className="bubble">{m.text}</div>}
+            {m.answer ? (
+              <div className="bubble">
+                ↩ {Object.values(m.answer.answers).join(" · ")}
+              </div>
+            ) : (
+              m.text && <div className="bubble">{m.text}</div>
+            )}
             {m.attachments?.length ? (
               <div className="files">
                 {m.attachments.map((f) => (
@@ -176,6 +273,10 @@ function Item({
         )}
         {item.toolCalls.map((call) => {
           const result = results.get(call.id);
+          if (result?.ask)
+            return (
+              <QuestionCard key={call.id} client={client} ask={result.ask} />
+            );
           if (result?.file)
             return (
               <div key={call.id} className="files">

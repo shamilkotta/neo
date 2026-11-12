@@ -424,3 +424,34 @@ button.link {
     z-index: 5;
   }
 }
+.question {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 4px 0;
+  max-width: 480px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.question.answered {
+  border-color: var(--line);
+}
+.question-text {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.question-options button.chosen {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.question > button.primary {
+  align-self: flex-start;
+}

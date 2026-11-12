@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { watchEvents } from "@earendil-works/pi-durable";
-import { AttachmentInput, ScheduleInput } from "@neo/client";
+import { AttachmentInput, QuestionAnswer, ScheduleInput } from "@neo/client";
 import { Type } from "typebox";
 import { ATTACHMENTS_ROOT, USER_ROOT } from "./agent/attachments";
 import { readTranscript } from "./agent/transcript";
@@ -54,6 +54,14 @@ async function route(neo: NeoAgent, request: Request, url: URL) {
   }
   if (is("POST", "/messages")) {
     const input = await body(request, MessageBody);
+    if (input.answer) {
+      if (input.text !== undefined || input.attachments?.length)
+        throw new HttpError(400, "An answer has no text or attachments");
+      return json(
+        { message: await neo.answer(input.answer, input.clientId) },
+        202,
+      );
+    }
     const files = input.attachments ?? [];
     if (typeof input.text !== "string" && !files.length)
       throw new HttpError(400, "text is required");
@@ -280,6 +288,7 @@ const MessageBody = Type.Object({
   text: Type.Optional(Type.String()),
   clientId: Type.Optional(Type.String()),
   attachments: Type.Optional(Type.Array(AttachmentInput)),
+  answer: Type.Optional(QuestionAnswer),
 });
 
 async function fileResponse(vfs: Vfs, stat: VfsStat) {

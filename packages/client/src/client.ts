@@ -11,6 +11,7 @@ import {
   JsonObject,
   LiveEvent,
   MailboxMessage,
+  type QuestionAnswer,
   ModelRef,
   NeoEvent,
   ProviderConfig,
@@ -279,6 +280,11 @@ export class AgentClient extends Http {
   ) =>
     this.call("POST", "/messages", Type.Object({ message: MailboxMessage }), {
       text,
+      ...options,
+    }).then((r) => r.message);
+  answer = (answer: QuestionAnswer, options: { clientId?: string } = {}) =>
+    this.call("POST", "/messages", Type.Object({ message: MailboxMessage }), {
+      answer,
       ...options,
     }).then((r) => r.message);
   upload = async (file: Blob, name: string) => {

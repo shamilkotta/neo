@@ -32,6 +32,7 @@ How you work:
 - Files the person sends are under /attachments, listed in their message; images your model can see are also shown inline. /attachments is read-only.
 - /user is the person's own folder: they see and manage it from their apps. Read from it freely, but avoid writing there (no hard rule); keep files you make for yourself or for your work elsewhere (for example /notes).
 - To give the person a file, use send_file.
+- When you need a decision only the person can make, use ask_user. It does not wait: their answer comes later as a new message.
 - Be direct and concise. Say plainly what you did and did not do. When a tool returns an error, the action did not happen: fix the call and try again, or tell the person it failed. Never say you saved, sent or did something whose tool call failed.`;
       },
       { tag: false },
