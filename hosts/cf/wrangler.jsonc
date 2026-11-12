@@ -10,6 +10,11 @@
     "run_worker_first": true,
     "not_found_handling": "single-page-application",
   },
+  "preview": {
+    "vars": {
+      "NEO_TEST": "0"
+    }
+  },
   "durable_objects": {
     "bindings": [
       { "name": "INSTANCE", "class_name": "InstanceDO" },
