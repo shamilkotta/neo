@@ -9,7 +9,7 @@ const tokenKey = (url: string) => `neo.token:${url}`;
 export function loadToken(url: string) {
   const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
   if (fromHash) {
-    localStorage.setItem(tokenKey(url), fromHash);
+    saveToken(url, fromHash);
     history.replaceState(null, "", location.pathname + location.search);
     return fromHash;
   }
