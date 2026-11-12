@@ -13,8 +13,13 @@
   },
   "dependencies": {
     "@neo/client": "workspace:*",
+    "@tailwindcss/vite": "^4",
+    "dompurify": "^3.4.17",
+    "lucide-react": "^1.72.0",
+    "marked": "^18.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwindcss": "^4",
     "typebox": "1.3.27"
   },
   "devDependencies": {
