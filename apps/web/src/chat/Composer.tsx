@@ -1,5 +1,5 @@
 import { NeoApiError } from "@neo/client";
-import { ArrowUp, FileText, ImagePlus, Paperclip, Square, Upload, X } from "lucide-react";
+import { ArrowUp, FileText, ImagePlus, Plus, Square, Upload, X } from "lucide-react";
 import {
   type ClipboardEvent,
   forwardRef,
@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import type { AgentSession } from "../state/agent";
-import { bytes, cn, errorText } from "../lib/format";
+import { bytes, errorText } from "../lib/format";
 import { attempt, toast } from "../lib/toast";
 import { Spinner } from "../ui/Avatar";
 
@@ -30,11 +30,9 @@ export const Composer = forwardRef<
   {
     session: AgentSession;
     name: string;
-    model?: string;
     onNeedsSetup: () => void;
-    onModel: () => void;
   }
->(function Composer({ session, name, model, onNeedsSetup, onModel }, ref) {
+>(function Composer({ session, name, onNeedsSetup }, ref) {
   const [text, setText] = useState(() => sessionStorage.getItem(draftKey(session.id)) ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
@@ -122,13 +120,10 @@ export const Composer = forwardRef<
     }
   };
 
+  const stop = () => void attempt(() => session.client.stop().then(session.refresh));
   return (
-    <div className="mx-auto w-full max-w-[760px] px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-6 sm:pb-5">
-      <div
-        className={cn(
-          "rounded-[24px] border border-line-strong bg-raised shadow-[0_8px_30px_-12px_rgb(0_0_0/0.18)] transition-[border,box-shadow] focus-within:border-brand/40 focus-within:shadow-[0_8px_30px_-10px_rgb(0_0_0/0.22),0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)] dark:shadow-none",
-        )}
-      >
+    <div className="mx-auto w-full max-w-[820px] px-3 pb-[max(10px,env(safe-area-inset-bottom))] sm:px-5 sm:pb-4">
+      <div className="rounded-[22px] border border-line-strong bg-raised transition-[border-color,box-shadow] focus-within:border-[color-mix(in_srgb,var(--brand)_45%,transparent)] focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--brand)_14%,transparent)]">
         {files.length > 0 && (
           <div className="flex gap-2 overflow-x-auto px-3 pt-3">
             {files.map((f, i) => (
@@ -136,18 +131,7 @@ export const Composer = forwardRef<
             ))}
           </div>
         )}
-        <textarea
-          ref={input}
-          rows={1}
-          value={text}
-          autoFocus={!matchMedia("(pointer: coarse)").matches}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          onPaste={onPaste}
-          placeholder={paused ? `${name} is paused — messages wait in the queue` : running ? "Add to the queue…" : `Message ${name}`}
-          className="block max-h-[280px] w-full resize-none bg-transparent focus-visible:outline-none px-4 pt-3.5 pb-1 text-[15px] leading-relaxed outline-none placeholder:text-faint"
-        />
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className="flex items-end gap-1 p-1.5">
           <input
             ref={picker}
             type="file"
@@ -160,47 +144,50 @@ export const Composer = forwardRef<
           />
           <button
             type="button"
+            aria-label="Attach files"
             title="Attach files"
             disabled={sending}
             onClick={() => picker.current?.click()}
-            className="flex size-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-hover hover:text-fg"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-hover hover:text-fg"
           >
-            <Paperclip className="size-[18px]" />
+            <Plus className="size-[18px]" />
           </button>
-          <button
-            type="button"
-            onClick={onModel}
-            className="flex h-8 max-w-[50%] items-center gap-1.5 truncate rounded-full px-2.5 text-[12.5px] font-medium text-muted transition-colors hover:bg-hover hover:text-fg"
-          >
-            <span className={cn("size-1.5 shrink-0 rounded-full", model ? "bg-ok" : "bg-warn")} />
-            <span className="truncate">{model ?? "Choose a model"}</span>
-          </button>
-          <span className="flex-1" />
+          <textarea
+            ref={input}
+            rows={1}
+            value={text}
+            aria-label={`Message ${name}`}
+            autoFocus={!matchMedia("(pointer: coarse)").matches}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKey}
+            onPaste={onPaste}
+            placeholder={paused ? `${name} is paused, messages will wait` : running ? "Queue a follow-up…" : `Message ${name}`}
+            className="block max-h-[280px] min-h-8 flex-1 resize-none bg-transparent px-1.5 py-[5px] text-[14.5px] leading-[22px] outline-none placeholder:text-faint focus-visible:outline-none"
+          />
           {running && empty ? (
             <button
               type="button"
+              aria-label="Stop"
               title="Stop (Esc)"
-              onClick={() => void attempt(() => session.client.stop().then(session.refresh))}
-              className="flex size-9 items-center justify-center rounded-full bg-accent text-accent-fg transition-transform active:scale-90"
+              onClick={stop}
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-transform active:scale-90"
             >
-              <Square className="size-3.5 fill-current" />
+              <Square className="size-3 fill-current" />
             </button>
           ) : (
             <button
               type="button"
+              aria-label={running ? "Queue" : "Send"}
               title={running ? "Queue" : "Send"}
               disabled={empty || sending}
               onClick={() => void submit()}
-              className="flex size-9 items-center justify-center rounded-full bg-accent text-accent-fg transition-[transform,opacity] active:scale-90 disabled:opacity-25"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-[transform,opacity] active:scale-90 disabled:opacity-20"
             >
-              {sending ? <Spinner /> : <ArrowUp className="size-[18px]" strokeWidth={2.4} />}
+              {sending ? <Spinner /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
             </button>
           )}
         </div>
       </div>
-      <p className="mt-2 hidden text-center text-[11.5px] text-faint sm:block">
-        Enter to send · Shift+Enter for a new line{running ? " · Esc to stop" : ""}
-      </p>
     </div>
   );
 });

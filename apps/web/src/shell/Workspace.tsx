@@ -1,7 +1,6 @@
 import type { AgentSummary } from "@neo/client";
 import { useCallback, useEffect, useState } from "react";
 import { Logo } from "../App";
-import { cn } from "../lib/format";
 import { Instance } from "../state/instance";
 import { closeSidebarOnMobile, toggleSidebar, ui } from "../state/ui";
 import { Spinner } from "../ui/Avatar";
@@ -60,9 +59,9 @@ export function Workspace({ url, token, onForget }: { url: string; token: string
     );
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full bg-bg">
       <Sidebar instance={instance} agents={agents} current={current?.id} onChoose={choose} />
-      <main className={cn("relative flex min-w-0 flex-1 flex-col bg-bg")}>
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-panel min-[900px]:my-1.5 min-[900px]:mr-1.5 min-[900px]:rounded-[14px] min-[900px]:border min-[900px]:border-line">
         {current ? (
           <AgentView key={current.id} instance={instance} agent={current} onDeleted={() => choose(agents.find((a) => a.primary)?.id ?? "")} />
         ) : (

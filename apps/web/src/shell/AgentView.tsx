@@ -40,7 +40,6 @@ export function AgentView({
   const state = session.state.use();
   const error = session.error.use();
   const status = instance.status.use();
-  const sidebar = ui.sidebar.use();
   const details = ui.details.use();
   const composer = useRef<ComposerHandle>(null);
   const [dragging, setDragging] = useState(false);
@@ -80,28 +79,28 @@ export function AgentView({
   return (
     <div className="flex min-h-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col" {...drag}>
-        <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
-          {!sidebar && (
-            <IconButton label={`Open sidebar (${modKey}B)`} onClick={() => toggleSidebar(true)}>
-              <PanelLeft className="size-[18px]" />
-            </IconButton>
-          )}
+        <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line px-2.5 sm:px-3">
+          <IconButton label="Agents" className="min-[900px]:hidden" onClick={() => toggleSidebar(true)}>
+            <PanelLeft className="size-[18px]" />
+          </IconButton>
           <button
             type="button"
             onClick={() => ui.details.set(details ? null : "profile")}
-            className="flex min-w-0 items-center gap-2.5 rounded-xl py-1 pr-2.5 pl-1 transition-colors hover:bg-hover"
+            className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-2 pl-1 transition-colors hover:bg-hover"
           >
-            <Avatar id={agent.id} name={agent.name} size={28} activity={activity} />
-            <span className="min-w-0 text-left">
-              <span className="block truncate text-[14px] leading-tight font-semibold">{agent.name}</span>
-              <span className={cn("block truncate text-[11.5px] leading-tight", activity === "working" ? "text-ok" : activity === "paused" ? "text-warn" : "text-muted")}>
-                {activity === "working" ? "Working…" : activity === "paused" ? "Paused" : (agent.title ?? "Online")}
-              </span>
-            </span>
+            <Avatar id={agent.id} size={22} activity={activity === "working" ? undefined : activity} />
+            <span className="truncate text-[14px] font-semibold">{agent.name}</span>
+            {activity === "working" ? (
+              <span className="shimmer-text text-[12.5px] font-medium">Working</span>
+            ) : activity === "paused" ? (
+              <span className="text-[12.5px] text-warn">Paused</span>
+            ) : (
+              agent.title && <span className="hidden truncate text-[12.5px] text-muted sm:inline">{agent.title}</span>
+            )}
           </button>
           <span className="flex-1" />
           {running && (
-            <Button size="sm" icon={<Square className="size-3 fill-current" />} onClick={() => void attempt(() => session.client.stop().then(session.refresh))}>
+            <Button size="sm" variant="ghost" icon={<Square className="size-3 fill-current" />} onClick={() => void attempt(() => session.client.stop().then(session.refresh))}>
               Stop
             </Button>
           )}
@@ -110,6 +109,14 @@ export function AgentView({
               Resume
             </Button>
           )}
+          <button
+            type="button"
+            onClick={() => ui.settings.set(status?.model ? "general" : "providers")}
+            className="flex h-7 max-w-[140px] items-center sm:max-w-[240px] gap-1.5 rounded-lg px-2 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg sm:flex"
+          >
+            <span className={cn("size-1.5 shrink-0 rounded-full", model ? "bg-ok" : "bg-warn")} />
+            <span className="truncate">{model ?? "Choose a model"}</span>
+          </button>
           <HeaderMenu
             paused={paused}
             onPause={() => void attempt(() => (paused ? session.client.resume() : session.client.pause()).then(session.refresh), paused ? "Resumed" : "Paused")}
@@ -138,9 +145,7 @@ export function AgentView({
           ref={composer}
           session={session}
           name={agent.name}
-          model={model}
           onNeedsSetup={() => ui.settings.set("providers")}
-          onModel={() => ui.settings.set(status?.model ? "general" : "providers")}
         />
         <DropOverlay visible={dragging} />
       </div>
@@ -203,8 +208,8 @@ function Empty({ name, id, description, onPick }: { name: string; id: string; de
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
       <div className="animate-up flex w-full max-w-[640px] flex-col items-center">
-        <Avatar id={id} name={name} size={56} />
-        <h1 className="mt-5 text-center text-[26px] font-semibold tracking-tight">{greeting}</h1>
+        <Avatar id={id} size={64} />
+        <h1 className="mt-5 text-center text-[24px] font-semibold tracking-tight">{greeting}</h1>
         <p className="mt-1.5 max-w-md text-center text-[14.5px] text-muted">
           {description ?? `${name} is always on. Ask anything, hand off work, or set up routines that run on their own.`}
         </p>
@@ -215,9 +220,9 @@ function Empty({ name, id, description, onPick }: { name: string; id: string; de
               type="button"
               onClick={() => onPick(s.text)}
               style={{ animationDelay: `${60 + i * 40}ms` }}
-              className="animate-up group flex items-start gap-3 rounded-2xl border border-line bg-raised p-3.5 text-left transition-all [animation-fill-mode:backwards] hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md"
+              className="animate-up group flex items-start gap-3 rounded-[14px] border border-line-strong p-3.5 text-left transition-colors [animation-fill-mode:backwards] hover:bg-hover"
             >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-sunken text-muted transition-colors group-hover:bg-brand/10 group-hover:text-brand">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-sunken text-muted transition-colors group-hover:text-fg">
                 <s.icon className="size-4" />
               </span>
               <span className="min-w-0">

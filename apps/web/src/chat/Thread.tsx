@@ -21,15 +21,15 @@ import {
 } from "react";
 import type { AgentSession } from "../state/agent";
 import { clock, cn, dayLabel } from "../lib/format";
-import { Spinner } from "../ui/Avatar";
+import { agentColor, Face, Spinner } from "../ui/Avatar";
 import { IconButton } from "../ui/Button";
 import { type Block, type Segment, toBlocks } from "./blocks";
 import { FileCard } from "./Files";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./Question";
-import { ToolGroup, ToolRow } from "./Tools";
+import { ToolCard, ToolRow } from "./Tools";
 
-const COLUMN = "mx-auto w-full max-w-[760px] px-4 sm:px-6";
+const COLUMN = "mx-auto w-full max-w-[820px] px-3 sm:px-5";
 
 export function Thread({
   session,
@@ -184,11 +184,7 @@ const BlockView = memo(function BlockView({
   switch (block.kind) {
     case "day":
       return (
-        <div className="flex justify-center py-3">
-          <span className="rounded-full border border-line bg-bg/90 px-2.5 py-0.5 text-[11.5px] font-medium text-muted backdrop-blur">
-            {dayLabel(block.at)}
-          </span>
-        </div>
+        <div className="flex justify-center pt-5 pb-2 text-[12px] font-medium text-muted">{dayLabel(block.at)}</div>
       );
     case "note":
       return (
@@ -219,22 +215,9 @@ function InputView({
   turn?: Turn;
 }) {
   const failed = turn && (turn.status === "failed" || turn.status === "interrupted");
-  if (m.source !== "user")
-    return (
-      <div className="turn my-3 flex flex-col gap-1">
-        <SourceTag message={m} />
-        {m.text && (
-          <details className="group ml-6 text-[13px] text-muted">
-            <summary className="cursor-pointer list-none truncate hover:text-fg [&::-webkit-details-marker]:hidden">
-              {m.text.split("\n")[0]}
-            </summary>
-            <div className="mt-1 whitespace-pre-wrap">{m.text}</div>
-          </details>
-        )}
-      </div>
-    );
+  if (m.source !== "user") return <Marker message={m} />;
   return (
-    <div className="turn group mt-4 flex flex-col items-end gap-1">
+    <div className="turn group mt-2 flex flex-col items-end gap-0.5">
       {m.attachments.length > 0 && (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
           {m.attachments.map((f) => (
@@ -243,21 +226,23 @@ function InputView({
         </div>
       )}
       {m.answer ? (
-        <div className="flex max-w-[85%] items-center gap-2 rounded-2xl rounded-br-md bg-sunken px-3.5 py-2 text-[14px]">
+        <div className="flex max-w-[80%] items-center gap-2 rounded-[20px] bg-bubble-me px-3.5 py-2 text-[14.5px]">
           <CornerDownRight className="size-3.5 text-faint" />
           {Object.values(m.answer.answers).join(" · ")}
         </div>
       ) : (
         m.text && (
-          <div className="max-w-[85%] rounded-[20px] rounded-br-md bg-raised px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap shadow-[0_0_0_1px_var(--line)] [overflow-wrap:anywhere] dark:bg-[#1f1f23]">
+          <div className="max-w-[80%] rounded-[20px] bg-bubble-me px-3.5 py-2 text-[14.5px] leading-[22px] whitespace-pre-wrap [overflow-wrap:anywhere]">
             {m.text}
           </div>
         )
       )}
-      <div className="flex h-6 items-center gap-1 text-[11.5px] text-faint">
-        {steered && <span>joined the running turn ·</span>}
-        <span className="opacity-0 transition-opacity group-hover:opacity-100">{clock(m.at)}</span>
-        {m.text && <CopyButton text={m.text} subtle />}
+      <div className="flex h-5 items-center gap-1 text-[11.5px] text-faint">
+        {steered && <span>Joined the running turn ·</span>}
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 max-sm:hidden">
+          {m.text && <CopyButton text={m.text} />}
+          {clock(m.at)}
+        </span>
       </div>
       {failed && (
         <div className="flex items-center gap-1.5 self-start text-[12.5px] text-danger">
@@ -269,16 +254,24 @@ function InputView({
   );
 }
 
-function SourceTag({ message: m }: { message: InputMessage }) {
+function Marker({ message: m }: { message: InputMessage }) {
+  const [open, setOpen] = useState(false);
   const Icon = m.source === "schedule" ? AlarmClock : m.source === "agent" ? Bot : Info;
-  const label = m.source === "schedule" ? "Routine" : m.source === "agent" ? "From another agent" : "System";
+  const label = m.source === "schedule" ? "Routine ran" : m.source === "agent" ? "Message from an agent" : "System note";
   return (
-    <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
-      <span className="flex size-4 items-center justify-center">
+    <div className="turn my-3 flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={() => m.text && setOpen(!open)}
+        className="flex h-6 items-center gap-1.5 rounded-full px-2 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+      >
         <Icon className="size-3.5" />
-      </span>
-      {label}
-      <span className="font-normal text-faint">· {clock(m.at)}</span>
+        <span className="font-medium">{label}</span>
+        <span className="text-faint">{clock(m.at)}</span>
+      </button>
+      {open && m.text && (
+        <div className="animate-in max-w-[80%] rounded-[16px] border border-line px-3.5 py-2 text-[13px] whitespace-pre-wrap text-muted">{m.text}</div>
+      )}
     </div>
   );
 }
@@ -297,14 +290,14 @@ function ReplyView({
     .map((s) => s.text)
     .join("\n\n");
   return (
-    <div className="turn group flex flex-col gap-2 py-1">
+    <div className="turn group mt-2 flex flex-col items-start gap-1.5">
       {segments.map((s) => (
         <SegmentView key={s.key} client={client} segment={s} />
       ))}
       {text && (
-        <div className="-ml-1.5 flex h-7 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 max-sm:opacity-100">
+        <div className="-mt-1 flex h-5 items-center gap-1 pl-1 text-[11.5px] text-faint opacity-0 transition-opacity group-hover:opacity-100 max-sm:hidden">
           <CopyButton text={text} />
-          <span className="ml-1 text-[11.5px] text-faint">{name}</span>
+          {name}
         </div>
       )}
     </div>
@@ -315,17 +308,17 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
   switch (s.kind) {
     case "text":
       return (
-        <div className="text-[15px]">
+        <Bubble>
           <Markdown text={s.text} />
-        </div>
+        </Bubble>
       );
     case "tools":
       return (
-        <ToolGroup count={s.steps.length} running={s.steps.some((t) => t.state === "running")}>
+        <ToolCard count={s.steps.length} running={s.steps.some((t) => t.state === "running")} failed={s.steps.some((t) => t.state === "error")}>
           {s.steps.map((t) => (
             <ToolRow key={t.id} name={t.name} args={t.args} output={t.output} state={t.state} />
           ))}
-        </ToolGroup>
+        </ToolCard>
       );
     case "ask":
       return <QuestionCard client={client} ask={s.ask} />;
@@ -333,7 +326,7 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
       return <FileCard client={client} file={s.file} caption={s.file.caption} />;
     case "error":
       return (
-        <div className="flex items-start gap-2 rounded-xl border border-danger/20 bg-danger/8 px-3 py-2 text-[13px] text-danger">
+        <div className="flex max-w-[88%] items-start gap-2 rounded-[16px] bg-danger/10 px-3.5 py-2 text-[13px] text-danger">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
           {s.text}
         </div>
@@ -341,31 +334,31 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
   }
 }
 
+function Bubble({ children }: { children: ReactNode }) {
+  return <div className="max-w-[88%] min-w-0 rounded-[20px] bg-bubble px-3.5 py-2 text-[14.5px]">{children}</div>;
+}
+
 function Live({ session }: { session: AgentSession }) {
   const live = session.live.use();
   if (!live.active) return null;
   return (
-    <div className="flex flex-col gap-2 py-1">
-      {live.tools.map((t) => (
-        <ToolRow key={t.id} name={t.name} output={t.output} state="running" />
-      ))}
+    <div className="mt-3 flex flex-col items-start gap-1.5">
+      {live.tools.length > 0 && (
+        <ToolCard running count={live.tools.length}>
+          {live.tools.map((t) => (
+            <ToolRow key={t.id} name={t.name} output={t.output} state="running" />
+          ))}
+        </ToolCard>
+      )}
       {live.text ? (
-        <div className="text-[15px]">
+        <Bubble>
           <Markdown text={live.text} streaming />
-        </div>
+        </Bubble>
       ) : (
         live.tools.length === 0 && (
-          <div className="flex items-center gap-2 py-1 text-[13.5px]">
-            <span className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <span
-                  key={i}
-                  className="size-1.5 animate-bounce rounded-full bg-faint"
-                  style={{ animationDelay: `${i * 120}ms` }}
-                />
-              ))}
-            </span>
-            <span className="shimmer-text font-medium">Thinking</span>
+          <div className="flex h-9 items-center gap-2 rounded-[20px] bg-bubble pr-3.5 pl-2">
+            <Face color={agentColor(session.id)} size={20} activity="working" />
+            <span className="shimmer-text text-[13.5px] font-medium">Thinking</span>
           </div>
         )
       )}
@@ -373,13 +366,13 @@ function Live({ session }: { session: AgentSession }) {
   );
 }
 
-function CopyButton({ text, subtle }: { text: string; subtle?: boolean }) {
+function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <IconButton
       label={done ? "Copied" : "Copy"}
       size="sm"
-      className={cn(subtle && "size-6 opacity-0 group-hover:opacity-100")}
+      className="size-6"
       onClick={() =>
         void navigator.clipboard.writeText(text).then(() => {
           setDone(true);

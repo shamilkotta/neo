@@ -114,24 +114,43 @@ export const ToolRow = memo(function ToolRow({
   );
 });
 
-export function ToolGroup({ children, count, running }: { children: ReactNode[]; count: number; running: boolean }) {
+export function ToolCard({
+  children,
+  count,
+  running,
+  failed,
+}: {
+  children: ReactNode[];
+  count: number;
+  running: boolean;
+  failed?: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  if (count <= 3 || open || running)
-    return <div className="flex flex-col">{children}</div>;
+  const shown = open || running;
   return (
-    <div className="flex flex-col">
+    <div className="w-full max-w-[460px] overflow-hidden rounded-[14px] border border-line-strong">
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 rounded-lg py-1 pl-1 text-left text-[13px] text-muted hover:text-fg"
+        onClick={() => setOpen(!open)}
+        aria-expanded={shown}
+        className="flex h-10 w-full items-center gap-2.5 px-3 text-left text-[13px] transition-colors hover:bg-hover"
       >
-        <span className="flex size-5 items-center justify-center">
-          <Check className="size-3.5 text-ok" />
+        {running ? (
+          <Spinner className="size-3.5 text-brand" />
+        ) : failed ? (
+          <TriangleAlert className="size-4 text-danger" />
+        ) : (
+          <span className="flex size-4 items-center justify-center rounded-full bg-muted/25">
+            <Check className="size-2.5 text-fg" strokeWidth={3} />
+          </span>
+        )}
+        <span className={cn("flex-1 font-medium", running && "shimmer-text")}>
+          {running ? "Working" : count === 1 ? "Used a tool" : `Used ${count} tools`}
         </span>
-        <span className="font-medium">Used {count} tools</span>
-        <ChevronRight className="size-3.5 text-faint" />
+        <span className="text-[12px] text-faint tabular-nums">{count}</span>
+        <ChevronRight className={cn("size-3.5 text-faint transition-transform", shown && "rotate-90")} />
       </button>
-      {children.at(-1)}
+      {shown && <div className="animate-in border-t border-line px-1.5 py-1">{children}</div>}
     </div>
   );
 }
