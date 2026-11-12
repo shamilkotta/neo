@@ -1,45 +1,66 @@
-import { cn, hue, initials } from "../lib/format";
+import { cn, hue } from "../lib/format";
 
 export type Activity = "working" | "paused" | "idle";
 
+export function Face({
+  color,
+  size,
+  activity,
+  className,
+}: {
+  color: string;
+  size: number;
+  activity?: Activity;
+  className?: string;
+}) {
+  const working = activity === "working";
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      width={size}
+      height={size}
+      aria-hidden
+      className={cn("shrink-0", activity === "paused" && "opacity-55 grayscale", className)}
+    >
+      <rect width="40" height="40" rx="12" fill={color} />
+      <g className={working ? "animate-look" : undefined} style={{ transformOrigin: "20px 20px" }}>
+        {[14, 26].map((x) => (
+          <ellipse
+            key={x}
+            cx={x}
+            cy="19"
+            rx="3.1"
+            ry="4.4"
+            fill="#0a0a0c"
+            className="animate-blink"
+            style={{ transformOrigin: `${x}px 19px`, transformBox: "view-box" }}
+          />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+export const agentColor = (id: string) => `oklch(0.78 0.11 ${hue(id)})`;
+
 export function Avatar({
   id,
-  name,
   size = 28,
   activity,
   className,
 }: {
   id: string;
-  name: string;
+  name?: string;
   size?: number;
   activity?: Activity;
   className?: string;
 }) {
-  const h = hue(id);
   return (
-    <span
-      className={cn("relative inline-flex shrink-0", className)}
-      style={{ width: size, height: size }}
-    >
-      <span
-        className="flex size-full items-center justify-center rounded-[30%] font-semibold text-white"
-        style={{
-          fontSize: size * 0.38,
-          background: `linear-gradient(135deg, oklch(0.68 0.15 ${h}), oklch(0.52 0.17 ${h + 30}))`,
-        }}
-      >
-        {initials(name)}
-      </span>
-      {activity && activity !== "idle" && (
-        <span
-          className={cn(
-            "absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full ring-2 ring-panel",
-            activity === "working" ? "bg-ok" : "bg-warn",
-          )}
-        >
-          {activity === "working" && (
-            <span className="absolute inset-0 animate-ping rounded-full bg-ok opacity-60" />
-          )}
+    <span className={cn("relative inline-flex shrink-0", className)} style={{ width: size, height: size }}>
+      <Face color={agentColor(id)} size={size} activity={activity} />
+      {activity === "working" && (
+        <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-ok ring-2 ring-panel">
+          <span className="absolute inset-0 animate-ping rounded-full bg-ok opacity-60" />
         </span>
       )}
     </span>

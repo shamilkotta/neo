@@ -5,7 +5,7 @@ import { cn, modKey } from "../lib/format";
 import { cycleTheme, theme } from "../lib/theme";
 import type { Instance } from "../state/instance";
 import { toggleSidebar, ui } from "../state/ui";
-import { Avatar, Kbd } from "../ui/Avatar";
+import { Avatar } from "../ui/Avatar";
 import { IconButton } from "../ui/Button";
 import { activityOf } from "./activity";
 
@@ -21,108 +21,137 @@ export function Sidebar({
   onChoose: (id: string) => void;
 }) {
   const open = ui.sidebar.use();
-  const t = theme.use();
-  const status = instance.status.use();
-  const ThemeIcon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
   return (
     <>
       <div
         onClick={() => toggleSidebar(false)}
         className={cn(
-          "fixed inset-0 z-30 bg-black/40 transition-opacity duration-200 min-[900px]:hidden",
+          "fixed inset-0 z-30 bg-black/50 transition-opacity duration-200 min-[900px]:hidden",
           open ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       />
-      <aside
+      <div
         className={cn(
-          "z-40 flex h-full shrink-0 flex-col overflow-hidden border-line bg-panel transition-[width,transform] duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)]",
-          "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:w-[288px] max-[899px]:border-r max-[899px]:shadow-2xl",
-          open ? "min-[900px]:w-[264px] min-[900px]:border-r" : "max-[899px]:-translate-x-full min-[900px]:w-0",
+          "z-40 flex h-full shrink-0 bg-bg transition-[width,transform] duration-250 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:w-[328px] max-[899px]:shadow-2xl",
+          open ? "min-[900px]:w-[332px]" : "max-[899px]:-translate-x-full min-[900px]:w-[52px]",
         )}
       >
-        <div className="flex w-[264px] flex-1 flex-col max-[899px]:w-[288px]">
-          <div className="flex h-14 items-center gap-2.5 px-3.5">
-            <Logo className="size-7" />
-            <span className="text-[15px] font-semibold tracking-tight">Neo</span>
+        <Rail instance={instance} />
+        <aside
+          className={cn(
+            "flex w-[280px] min-w-0 flex-col overflow-hidden transition-opacity duration-200 max-[899px]:w-[276px]",
+            !open && "min-[900px]:pointer-events-none min-[900px]:opacity-0",
+          )}
+        >
+          <div className="flex h-11 shrink-0 items-center gap-2 pr-2 pl-3">
+            <span className="text-[14px] font-semibold tracking-tight">Agents</span>
+            <span className="text-[12px] text-faint tabular-nums">{agents.length}</span>
             <span className="flex-1" />
-            <IconButton label={`Search (${modKey}K)`} size="sm" onClick={() => ui.palette.set(true)}>
-              <Search className="size-4" />
+            <IconButton label={`New agent (${modKey}⇧O)`} size="sm" onClick={() => ui.newAgent.set(true)}>
+              <Plus className="size-4" />
             </IconButton>
-            <IconButton label={`Close sidebar (${modKey}B)`} size="sm" onClick={() => toggleSidebar(false)}>
+            <IconButton label={`Collapse (${modKey}B)`} size="sm" onClick={() => toggleSidebar(false)}>
               <PanelLeftClose className="size-4" />
             </IconButton>
           </div>
-          <div className="px-2.5 pb-2">
+          <div className="px-3 pb-2">
             <button
               type="button"
-              onClick={() => ui.newAgent.set(true)}
-              className="group flex h-9 w-full items-center gap-2.5 rounded-xl border border-line bg-raised px-3 text-[13px] font-medium shadow-[0_1px_0_var(--line)] transition-colors hover:border-line-strong"
+              onClick={() => ui.palette.set(true)}
+              className="flex h-8 w-full items-center gap-2 rounded-lg bg-sunken px-2.5 text-[13px] text-muted transition-colors hover:text-fg"
             >
-              <Plus className="size-4 text-muted" />
-              New agent
-              <span className="ml-auto hidden gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 sm:flex">
-                <Kbd>{modKey}</Kbd>
-                <Kbd>⇧</Kbd>
-                <Kbd>O</Kbd>
-              </span>
+              <Search className="size-3.5" />
+              Search
+              <span className="ml-auto text-[11.5px] text-faint">{modKey}K</span>
             </button>
           </div>
-          <div className="px-4 pt-3 pb-1.5 text-[11.5px] font-medium tracking-wide text-faint">Agents</div>
-          <nav className="flex-1 overflow-y-auto px-2 pb-2">
-            {agents.map((a, i) => {
-              const activity = activityOf(a);
-              const on = a.id === current;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => onChoose(a.id)}
-                  className={cn(
-                    "group mb-0.5 flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors",
-                    on ? "bg-raised shadow-[0_0_0_1px_var(--line),0_1px_2px_rgb(0_0_0/0.04)]" : "hover:bg-hover",
-                  )}
-                >
-                  <Avatar id={a.id} name={a.name} size={30} activity={activity} />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-[13.5px] font-medium">{a.name}</span>
-                    </span>
-                    <span className={cn("block truncate text-[12px]", activity === "working" ? "text-ok" : "text-muted")}>
-                      {activity === "working"
-                        ? "Working…"
-                        : activity === "paused"
-                          ? "Paused"
-                          : (a.title ?? (a.primary ? "Primary agent" : "Idle"))}
-                    </span>
-                  </span>
-                  {a.status?.queued ? (
-                    <span className="rounded-full bg-brand/12 px-1.5 text-[11px] font-semibold text-brand">{a.status.queued}</span>
-                  ) : i < 9 ? (
-                    <span className="hidden text-[11px] text-faint opacity-0 group-hover:opacity-100 sm:block">
-                      {modKey}
-                      {i + 1}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
+          <nav className="flex-1 overflow-y-auto px-2 pb-3">
+            {agents.map((a) => (
+              <AgentRow key={a.id} agent={a} on={a.id === current} onChoose={onChoose} />
+            ))}
           </nav>
-          <div className="flex items-center gap-1 border-t border-line p-2">
-            <button
-              type="button"
-              onClick={() => ui.settings.set("general")}
-              className="flex h-9 flex-1 items-center gap-2.5 rounded-xl px-2.5 text-[13px] font-medium text-muted transition-colors hover:bg-hover hover:text-fg"
-            >
-              <Settings className="size-4" />
-              Settings
-              {status?.model === null && <span className="size-1.5 rounded-full bg-warn" />}
-            </button>
-            <IconButton label={`Theme: ${t}`} onClick={cycleTheme}>
-              <ThemeIcon className="size-4" />
-            </IconButton>
-          </div>
-        </div>
-      </aside>
+        </aside>
+      </div>
     </>
+  );
+}
+
+function Rail({ instance }: { instance: Instance }) {
+  const t = theme.use();
+  const status = instance.status.use();
+  const open = ui.sidebar.use();
+  const ThemeIcon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
+  return (
+    <nav aria-label="Pages" className="flex w-[52px] shrink-0 flex-col items-center gap-1.5 py-2">
+      <button type="button" aria-label="Toggle agents" onClick={() => toggleSidebar(!open)} className="mb-2 rounded-[9px] transition-transform active:scale-95">
+        <Logo className="size-8" />
+      </button>
+      <RailButton label={`Search (${modKey}K)`} onClick={() => ui.palette.set(true)}>
+        <Search className="size-[18px]" />
+      </RailButton>
+      <RailButton label="New agent" onClick={() => ui.newAgent.set(true)}>
+        <Plus className="size-[18px]" />
+      </RailButton>
+      <span className="flex-1" />
+      <RailButton label={`Theme: ${t}`} onClick={cycleTheme}>
+        <ThemeIcon className="size-[18px]" />
+      </RailButton>
+      <RailButton label={`Settings (${modKey},)`} onClick={() => ui.settings.set("general")}>
+        <Settings className="size-[18px]" />
+        {status?.model === null && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warn" />}
+      </RailButton>
+    </nav>
+  );
+}
+
+function RailButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="relative flex size-9 items-center justify-center rounded-[10px] text-muted transition-colors hover:bg-hover hover:text-fg"
+    >
+      {children}
+    </button>
+  );
+}
+
+function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean; onChoose: (id: string) => void }) {
+  const activity = activityOf(a);
+  const line =
+    activity === "working"
+      ? "Working…"
+      : activity === "paused"
+        ? "Paused"
+        : (a.description ?? (a.primary ? "Your main agent" : "Ready when you are"));
+  return (
+    <button
+      type="button"
+      onClick={() => onChoose(a.id)}
+      aria-current={on || undefined}
+      className={cn(
+        "mb-0.5 flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors",
+        on ? "bg-raised" : "hover:bg-hover",
+      )}
+    >
+      <Avatar id={a.id} size={36} activity={activity} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[14px] font-semibold">{a.name}</span>
+          {a.title && (
+            <span className="truncate rounded-md bg-sunken px-1.5 py-px text-[11.5px] text-muted">{a.title}</span>
+          )}
+          {a.status?.queued ? (
+            <span className="ml-auto rounded-full bg-brand px-1.5 text-[11px] leading-4 font-semibold text-white tabular-nums">
+              {a.status.queued}
+            </span>
+          ) : null}
+        </span>
+        <span className={cn("mt-px block truncate text-[13px]", activity === "working" ? "text-ok" : "text-muted")}>{line}</span>
+      </span>
+    </button>
   );
 }

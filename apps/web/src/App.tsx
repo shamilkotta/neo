@@ -40,8 +40,8 @@ export function App() {
 
 export function Logo({ className }: { className?: string }) {
   return (
-    <span className={cn("flex items-center justify-center rounded-[30%] bg-accent text-accent-fg", className)}>
-      <svg viewBox="0 0 32 32" className="size-[60%]" fill="none" stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round">
+    <span className={cn("flex items-center justify-center rounded-[30%] bg-ident text-[#0a0a0c]", className)}>
+      <svg viewBox="0 0 32 32" className="size-[58%]" fill="none" stroke="currentColor" strokeWidth={3.6} strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 23V9l14 14V9" />
       </svg>
     </span>
