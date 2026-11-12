@@ -44,6 +44,7 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor) => {
     text TEXT NOT NULL,
     attachments TEXT NOT NULL DEFAULT '[]',
     meta TEXT NOT NULL DEFAULT '{}',
+    answer_to TEXT,
     client_id TEXT UNIQUE,
     status TEXT NOT NULL CHECK (status IN ('queued', 'starting', 'running', 'completed', 'failed', 'interrupted', 'cancelled')),
     position REAL NOT NULL,
@@ -59,6 +60,9 @@ export const MAILBOX_SCHEMA = async (tx: SqliteExecutor) => {
     `CREATE INDEX neo_mailbox_queue ON neo_mailbox (status, position)`,
   );
   await tx.exec(`CREATE INDEX neo_mailbox_by_turn ON neo_mailbox (turn_id)`);
+  await tx.exec(
+    `CREATE UNIQUE INDEX neo_mailbox_answers ON neo_mailbox (answer_to) WHERE answer_to IS NOT NULL AND status != 'cancelled'`,
+  );
   await tx.exec(`CREATE TABLE neo_turns (
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'interrupted')),
@@ -123,6 +127,7 @@ interface MessageRow {
   text: string;
   attachments: string;
   meta: string;
+  answer_to: string | null;
   client_id: string | null;
   status: MessageStatus;
   position: number;
@@ -224,6 +229,15 @@ export class Mailbox {
     return new Map(rows.map((r) => [r.id, toTurn(r)]));
   }
 
+  async answers(questionIds: string[]) {
+    if (questionIds.length === 0) return new Map<string, MailboxMessage>();
+    const rows = await this.db.all<MessageRow>(
+      `SELECT * FROM neo_mailbox WHERE status != 'cancelled' AND answer_to IN (${questionIds.map(() => "?").join(",")})`,
+      ...questionIds,
+    );
+    return new Map(rows.map((r) => [r.answer_to ?? "", toMessage(r)]));
+  }
+
   async byClientId(clientId: string) {
     const row = await this.db.get<MessageRow>(
       `SELECT * FROM neo_mailbox WHERE client_id = ?`,
@@ -256,15 +270,19 @@ export class Mailbox {
         );
         if (existing) return { message: toMessage(existing), fresh: false };
       }
+      const answerTo = answerOf(input)?.questionId ?? null;
+      if (answerTo && (await this.answers([answerTo])).size)
+        throw new MailboxError("This question is already answered");
       const time = this.now();
       const row = await this.db.get<MessageRow>(
-        `INSERT INTO neo_mailbox (id, source, text, attachments, meta, client_id, status, position, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
+        `INSERT INTO neo_mailbox (id, source, text, attachments, meta, answer_to, client_id, status, position, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING *`,
         ulid(time),
         input.source,
         text,
         JSON.stringify(attachments),
-        JSON.stringify("meta" in input ? input.meta : {}),
+        JSON.stringify("meta" in input ? (input.meta ?? {}) : {}),
+        answerTo,
         input.clientId ?? null,
         await this.nextPosition(),
         time,
@@ -415,12 +433,15 @@ export class Mailbox {
       );
     const row = await this.lane(() =>
       this.db.get<MessageRow>(
-        `UPDATE neo_mailbox SET text = ? WHERE id = ? AND status = 'queued' RETURNING *`,
+        `UPDATE neo_mailbox SET text = ? WHERE id = ? AND status = 'queued' AND answer_to IS NULL RETURNING *`,
         trimmed,
         messageId,
       ),
     );
-    if (!row) throw new MailboxError("Only a queued message can be edited");
+    if (!row)
+      throw new MailboxError(
+        "Only a queued message that is not an answer can be edited",
+      );
     const message = toMessage(row);
     await this.events.emit({ type: "message.edited", data: { message } });
     return message;
@@ -748,13 +769,18 @@ function inputMessage(m: MailboxMessage) {
     source: m.source,
     text: m.text,
     attachments: m.attachments,
+    ...(answerOf(m) ? { answer: answerOf(m) } : {}),
     at: m.createdAt,
   };
 }
 
+function answerOf(origin: MessageOrigin) {
+  return origin.source === "user" ? origin.meta?.answer : undefined;
+}
+
 function origin(row: MessageRow) {
-  if (row.source === "user" || row.source === "system")
-    return { source: row.source };
+  if (row.source === "system") return { source: row.source };
+  if (row.source === "user" && row.meta === "{}") return { source: row.source };
   return parse(MessageOrigin, {
     source: row.source,
     meta: parseJson(JsonObject, row.meta),

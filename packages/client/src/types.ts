@@ -199,8 +199,30 @@ export const ScheduleMeta = Type.Object({
 });
 export type ScheduleMeta = Static<typeof ScheduleMeta>;
 
+export const QuestionOption = Type.Object({
+  label: Type.String(),
+  description: Type.Optional(Type.String()),
+});
+export type QuestionOption = Static<typeof QuestionOption>;
+
+export const Question = Type.Object({
+  id: Type.String(),
+  question: Type.String(),
+  options: Type.Optional(Type.Array(QuestionOption)),
+});
+export type Question = Static<typeof Question>;
+
+export const QuestionAnswer = Type.Object({
+  questionId: Type.String(),
+  answers: Type.Record(Type.String(), Type.String()),
+});
+export type QuestionAnswer = Static<typeof QuestionAnswer>;
+
+export const UserMeta = Type.Object({ answer: QuestionAnswer });
+export type UserMeta = Static<typeof UserMeta>;
+
 export const MessageOrigin = Type.Union([
-  Type.Object({ source: Type.Literal("user") }),
+  Type.Object({ source: Type.Literal("user"), meta: Type.Optional(UserMeta) }),
   Type.Object({ source: Type.Literal("system") }),
   Type.Object({ source: Type.Literal("schedule"), meta: ScheduleMeta }),
   Type.Object({ source: Type.Literal("agent"), meta: AgentMeta }),
@@ -242,6 +264,7 @@ export const InputMessage = Type.Object({
   source: MessageSource,
   text: Type.String(),
   attachments: Type.Array(Attachment),
+  answer: Type.Optional(QuestionAnswer),
   at: Type.Number(),
 });
 export type InputMessage = Static<typeof InputMessage>;
@@ -284,6 +307,19 @@ export const TranscriptItem = Type.Union([
         Attachment,
         Type.Object({ caption: Nullable(Type.String()) }),
       ]),
+    ),
+    ask: Type.Optional(
+      Type.Object({
+        questionId: Type.String(),
+        questions: Type.Array(Question),
+        answer: Nullable(
+          Type.Object({
+            messageId: Type.String(),
+            answers: Type.Record(Type.String(), Type.String()),
+            at: Type.Number(),
+          }),
+        ),
+      }),
     ),
   }),
   Type.Object({

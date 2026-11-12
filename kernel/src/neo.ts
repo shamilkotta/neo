@@ -25,6 +25,7 @@ import {
   type AgentProfile,
   type EventType,
   isAgentId,
+  type QuestionAnswer,
 } from "@neo/client";
 import { AgentSelf } from "./agent/agents";
 import {
@@ -35,8 +36,15 @@ import {
   stageUpload,
   sweepStaging,
 } from "./agent/attachments";
+import { askTools } from "./agent/tools/ask";
 import { fileTools } from "./agent/tools/files";
-import { Mailbox, type MailboxMessage, type Turn } from "./agent/mailbox";
+import { findQuestion } from "./agent/transcript";
+import {
+  Mailbox,
+  MailboxError,
+  type MailboxMessage,
+  type Turn,
+} from "./agent/mailbox";
 import { Messaging } from "./agent/messaging";
 import { teamTools } from "./agent/tools/team";
 import { promptSections } from "./agent/prompt";
@@ -535,6 +543,37 @@ export class NeoAgent {
     return live.mailbox.send(rest);
   }
 
+  async answer(answer: QuestionAnswer, clientId?: string) {
+    const ask = await findQuestion(
+      await this.conversation(),
+      answer.questionId,
+    );
+    if (!ask) throw new MailboxError(`No question ${answer.questionId}`);
+    const known = new Set(ask.questions.map((q) => q.id));
+    const unknown = Object.keys(answer.answers).find((id) => !known.has(id));
+    if (unknown)
+      throw new MailboxError(`The question has no item "${unknown}"`);
+    const answers = Object.fromEntries(
+      Object.entries(answer.answers)
+        .map(([id, value]) => [id, value.trim()] as const)
+        .filter(([, value]) => value),
+    );
+    if (Object.keys(answers).length === 0)
+      throw new MailboxError("The answer is empty");
+    const lines = ask.questions.flatMap((q) =>
+      answers[q.id] ? [`Q: ${q.question}`, `A: ${answers[q.id]}`] : [],
+    );
+    return this.send({
+      source: "user",
+      meta: { answer: { questionId: answer.questionId, answers } },
+      text: [`Answer to your question ${answer.questionId}:`, ...lines].join(
+        "\n",
+      ),
+      ...(clientId ? { clientId } : {}),
+      steer: true,
+    });
+  }
+
   upload(name: string, body: ReadableStream<Uint8Array>) {
     return stageUpload(this.services().vfs, name, body);
   }
@@ -718,6 +757,7 @@ export class NeoAgent {
           ...historyTools(tools),
           ...scheduleTools(tools),
           ...fileTools(tools),
+          ...askTools(tools),
           ...teamTools({
             me,
             agents: () => this.link().agents(),

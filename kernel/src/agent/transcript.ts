@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, EntryRecord } from "@earendil-works/pi-durable";
+import { ASK_TOOL, askDetails } from "./tools/ask";
 import { INPUT_ENTRY, InputEntryData, type Mailbox } from "./mailbox";
 import { Attachment, parse, type TranscriptItem } from "@neo/client";
 import { Type } from "typebox";
@@ -87,6 +88,10 @@ export async function readTranscript(
         message.toolName === "send_file" && !message.isError
           ? sentFile(message.details)
           : undefined;
+      const ask =
+        message.toolName === ASK_TOOL && !message.isError
+          ? askDetails(message.details)
+          : undefined;
       items.push({
         type: "tool",
         entryId,
@@ -99,8 +104,24 @@ export async function readTranscript(
             : output,
         isError: message.isError,
         ...(file ? { file } : {}),
+        ...(ask ? { ask: { ...ask, answer: null } } : {}),
       });
     }
+  }
+  const answers = await mailbox.answers(
+    items.flatMap((i) =>
+      i.type === "tool" && i.ask ? [i.ask.questionId] : [],
+    ),
+  );
+  for (const item of items) {
+    if (item.type !== "tool" || !item.ask) continue;
+    const answer = answers.get(item.ask.questionId);
+    if (answer?.source === "user" && answer.meta)
+      item.ask.answer = {
+        messageId: answer.id,
+        answers: answer.meta.answer.answers,
+        at: answer.createdAt,
+      };
   }
   const ids = [
     ...new Set(items.map((i) => i.turnId).filter((t): t is string => !!t)),
@@ -125,4 +146,28 @@ const SentFile = Type.Object({
 
 function sentFile(details: unknown) {
   return Value.Check(SentFile, details) ? details.file : undefined;
+}
+
+export async function findQuestion(
+  conversation: Conversation,
+  questionId: string,
+) {
+  let cursor: Parameters<Conversation["entries"]>[2];
+  for (;;) {
+    const page = await conversation.entries(
+      { order: "descending" },
+      200,
+      cursor,
+      context,
+    );
+    for (const entry of page.items) {
+      const message = entry.model?.[0];
+      if (message?.role !== "toolResult" || message.toolName !== ASK_TOOL)
+        continue;
+      const ask = askDetails(message.details);
+      if (ask?.questionId === questionId) return ask;
+    }
+    if (!page.next || page.items.length === 0) return undefined;
+    cursor = page.next;
+  }
 }
