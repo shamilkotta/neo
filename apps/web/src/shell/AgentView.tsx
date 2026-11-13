@@ -1,28 +1,14 @@
 import type { AgentSummary } from "@neo/client";
-import {
-  AlarmClock,
-  Brain,
-  FolderOpen,
-  Lightbulb,
-  ListChecks,
-  MoreHorizontal,
-  PanelLeft,
-  PanelRight,
-  Pause,
-  Play,
-  Square,
-} from "lucide-react";
-import { type DragEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { AlarmClock, Brain, Lightbulb, ListChecks, PanelLeft } from "lucide-react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
 import { Composer, type ComposerHandle, DropOverlay } from "../chat/Composer";
 import { Queue } from "../chat/Queue";
 import { Thread } from "../chat/Thread";
-import { cn, modKey } from "../lib/format";
-import { attempt } from "../lib/toast";
 import { session as sessionFor } from "../state/agent";
 import type { Instance } from "../state/instance";
 import { toggleSidebar, ui } from "../state/ui";
 import { Avatar } from "../ui/Avatar";
-import { Button, IconButton } from "../ui/Button";
+import { IconButton } from "../ui/Button";
 import { activityOf } from "./activity";
 import { DetailsDrawer } from "./DetailsDrawer";
 
@@ -50,7 +36,6 @@ export function AgentView({
   const running = !!state?.turn;
   const paused = state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
   const activity = state ? (paused ? "paused" : running ? "working" : "idle") : activityOf(agent);
-  const model = status?.model ? status.model.modelId : undefined;
 
   useEffect(() => {
     const title = agent.name === "Neo" ? "Neo" : `${agent.name} · Neo`;
@@ -100,32 +85,6 @@ export function AgentView({
               agent.title && <span className="hidden truncate text-[12.5px] text-muted sm:inline">{agent.title}</span>
             )}
           </button>
-          <span className="flex-1" />
-          {running && (
-            <Button size="sm" variant="ghost" icon={<Square className="size-3 fill-current" />} onClick={() => void attempt(() => session.client.stop().then(session.refresh))}>
-              Stop
-            </Button>
-          )}
-          {paused && (
-            <Button size="sm" variant="primary" icon={<Play className="size-3.5 fill-current" />} onClick={() => void attempt(() => session.client.resume().then(session.refresh))}>
-              Resume
-            </Button>
-          )}
-          <button
-            type="button"
-            onClick={() => ui.settings.set(status?.model ? "general" : "providers")}
-            className="flex h-7 max-w-[140px] items-center sm:max-w-[240px] gap-1.5 rounded-lg px-2 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg sm:flex"
-          >
-            <span className={cn("size-1.5 shrink-0 rounded-full", model ? "bg-ok" : "bg-warn")} />
-            <span className="truncate">{model ?? "Choose a model"}</span>
-          </button>
-          <HeaderMenu
-            paused={paused}
-            onPause={() => void attempt(() => (paused ? session.client.resume() : session.client.pause()).then(session.refresh), paused ? "Resumed" : "Paused")}
-          />
-          <IconButton label={`Details (${modKey}.)`} active={!!details} onClick={() => ui.details.set(details ? null : "profile")}>
-            <PanelRight className="size-[18px]" />
-          </IconButton>
         </header>
         {error && (
           <div className="mx-auto mb-2 w-full max-w-[760px] px-4">
@@ -153,47 +112,6 @@ export function AgentView({
         <DropOverlay visible={dragging} />
       </div>
       <DetailsDrawer instance={instance} session={session} agent={agent} onDeleted={onDeleted} />
-    </div>
-  );
-}
-
-function HeaderMenu({ paused, onPause }: { paused: boolean; onPause: () => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-  const item = (label: string, icon: ReactNode, run: () => void) => (
-    <button
-      type="button"
-      onClick={() => {
-        setOpen(false);
-        run();
-      }}
-      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] hover:bg-hover"
-    >
-      <span className="text-muted">{icon}</span>
-      {label}
-    </button>
-  );
-  return (
-    <div ref={ref} className="relative">
-      <IconButton label="More" active={open} onClick={() => setOpen(!open)}>
-        <MoreHorizontal className="size-[18px]" />
-      </IconButton>
-      {open && (
-        <div className="animate-pop absolute top-10 right-0 z-30 w-52 rounded-xl border border-line bg-raised p-1 shadow-xl">
-          {item(paused ? "Resume agent" : "Pause agent", paused ? <Play className="size-4" /> : <Pause className="size-4" />, onPause)}
-          {item("Routines", <AlarmClock className="size-4" />, () => ui.details.set("routines"))}
-          {item("Files", <FolderOpen className="size-4" />, () => ui.details.set("files"))}
-          {item("Edit profile", <Brain className="size-4" />, () => ui.details.set("profile"))}
-        </div>
-      )}
     </div>
   );
 }
