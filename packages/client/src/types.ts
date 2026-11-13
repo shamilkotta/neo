@@ -265,6 +265,8 @@ export const InputMessage = Type.Object({
   text: Type.String(),
   attachments: Type.Array(Attachment),
   answer: Type.Optional(QuestionAnswer),
+  from: Type.Optional(AgentRef),
+  routine: Type.Optional(Type.String()),
   at: Type.Number(),
 });
 export type InputMessage = Static<typeof InputMessage>;

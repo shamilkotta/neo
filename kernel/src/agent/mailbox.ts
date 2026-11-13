@@ -770,6 +770,8 @@ function inputMessage(m: MailboxMessage) {
     text: m.text,
     attachments: m.attachments,
     ...(answerOf(m) ? { answer: answerOf(m) } : {}),
+    ...(m.source === "agent" ? { from: m.meta.from } : {}),
+    ...(m.source === "schedule" ? { routine: m.meta.name } : {}),
     at: m.createdAt,
   };
 }

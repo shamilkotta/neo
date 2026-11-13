@@ -1,19 +1,12 @@
 import type { Attachment, InputMessage, TranscriptItem, Turn } from "@neo/client";
+import { type Action, actionOf } from "./actions";
 import type { Ask } from "./Question";
 
 type ToolItem = TranscriptItem & { type: "tool" };
 
-export interface ToolStep {
-  id: string;
-  name: string;
-  args: unknown;
-  output?: string;
-  state: "running" | "done" | "error";
-}
-
 export type Segment =
   | { kind: "text"; key: string; text: string }
-  | { kind: "tools"; key: string; steps: ToolStep[] }
+  | { kind: "action"; key: string; action: Action }
   | { kind: "ask"; key: string; ask: Ask }
   | { kind: "file"; key: string; file: Attachment & { caption: string | null } }
   | { kind: "error"; key: string; text: string };
@@ -27,7 +20,7 @@ export type Block =
 export function toBlocks(
   items: TranscriptItem[],
   turns: Record<string, Turn>,
-  activeTurnId: string | null,
+  names: (id: string) => string,
 ): Block[] {
   const results = new Map<string, ToolItem>();
   for (const i of items) if (i.type === "tool") results.set(i.toolCallId, i);
@@ -35,12 +28,7 @@ export function toBlocks(
   let reply: (Block & { kind: "reply" }) | null = null;
   let lastDay = "";
 
-  const push = (s: Segment) => {
-    if (!reply) return;
-    const last = reply.segments.at(-1);
-    if (s.kind === "tools" && last?.kind === "tools") last.steps.push(...s.steps);
-    else reply.segments.push(s);
-  };
+  const push = (s: Segment) => reply?.segments.push(s);
 
   for (const item of items) {
     if (item.type === "input") {
@@ -67,26 +55,10 @@ export function toBlocks(
         const result = results.get(call.id);
         if (result?.ask) push({ kind: "ask", key: call.id, ask: result.ask });
         else if (result?.file) push({ kind: "file", key: call.id, file: result.file });
-        else
-          push({
-            kind: "tools",
-            key: `tools-${call.id}`,
-            steps: [
-              {
-                id: call.id,
-                name: call.name,
-                args: call.args,
-                output: result?.output,
-                state: !result
-                  ? item.turnId && item.turnId === activeTurnId
-                    ? "running"
-                    : "done"
-                  : result.isError
-                    ? "error"
-                    : "done",
-              },
-            ],
-          });
+        else if (result && !result.isError) {
+          const action = actionOf(call.name, call.args, result.output, names);
+          if (action) push({ kind: "action", key: call.id, action });
+        }
       }
       if (item.error && item.stopReason !== "aborted")
         push({ kind: "error", key: `e-${item.entryId}`, text: item.error });
