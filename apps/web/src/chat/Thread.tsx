@@ -138,6 +138,7 @@ export function Thread({
               {blocks.map((b) => (
                 <BlockView key={b.key} block={b} client={session.client} name={name} />
               ))}
+              <PendingView session={session} />
               <Live session={session} />
             </div>
           )}
@@ -160,9 +161,11 @@ export function Thread({
 
 function LiveOrEmpty({ session, empty }: { session: AgentSession; empty: ReactNode }) {
   const live = session.live.use();
-  if (!live.active) return <>{empty}</>;
+  const pending = session.pending.use();
+  if (!live.active && pending.length === 0) return <>{empty}</>;
   return (
     <div className={cn(COLUMN, "pt-6")}>
+      <PendingView session={session} />
       <Live session={session} />
     </div>
   );
@@ -371,9 +374,32 @@ const humanize = (name: string) => {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 };
 
+function PendingView({ session }: { session: AgentSession }) {
+  const pending = session.pending.use();
+  return pending.map((p) => (
+    <div key={p.key} className="turn mt-2 flex flex-col items-end gap-0.5 pb-5">
+      {p.files.length > 0 && (
+        <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+          {p.files.map((f, i) => (
+            <span key={`${f}-${i}`} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-muted">
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
+      {p.text && (
+        <div className="max-w-[80%] rounded-[20px] bg-bubble-me px-3.5 py-2 text-[14.5px] leading-[22px] whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {p.text}
+        </div>
+      )}
+    </div>
+  ));
+}
+
 function Live({ session }: { session: AgentSession }) {
   const live = session.live.use();
-  if (!live.active) return null;
+  const pending = session.pending.use();
+  if (!live.active && pending.length === 0) return null;
   const step = live.tools.at(-1);
   const label = step ? "Working" : "Thinking";
   return (
