@@ -1,13 +1,19 @@
-import type { AgentClient, InputMessage, Turn } from "@neo/client";
+import type { AgentClient, AgentSummary, InputMessage, Turn } from "@neo/client";
 import {
   AlarmClock,
   ArrowDown,
   Bot,
+  Brain,
   Check,
   Copy,
   CornerDownRight,
   Info,
+  type LucideIcon,
+  Send,
+  Square,
   TriangleAlert,
+  UserPen,
+  UserPlus,
 } from "lucide-react";
 import {
   memo,
@@ -23,6 +29,7 @@ import type { AgentSession } from "../state/agent";
 import { clock, cn, dayLabel } from "../lib/format";
 import { agentColor, Face, Spinner } from "../ui/Avatar";
 import { IconButton } from "../ui/Button";
+import type { ActionKind } from "./actions";
 import { type Block, type Segment, toBlocks } from "./blocks";
 import { FileCard } from "./Files";
 import { Markdown } from "./Markdown";
@@ -33,18 +40,22 @@ const COLUMN = "mx-auto w-full max-w-[820px] px-3 sm:px-5";
 export function Thread({
   session,
   name,
+  agents,
   empty,
 }: {
   session: AgentSession;
   name: string;
+  agents: AgentSummary[];
   empty: ReactNode;
 }) {
   const thread = session.thread.use();
-  const state = session.state.use();
-  const activeTurn = state?.turn?.id ?? null;
+  const names = useMemo(() => {
+    const byId = new Map<string, string>(agents.map((a) => [a.id, a.name]));
+    return (id: string) => byId.get(id) ?? "an agent";
+  }, [agents]);
   const blocks = useMemo(
-    () => toBlocks(thread.items, thread.turns, activeTurn),
-    [thread.items, thread.turns, activeTurn],
+    () => toBlocks(thread.items, thread.turns, names),
+    [thread.items, thread.turns, names],
   );
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -256,7 +267,12 @@ function InputView({
 function Marker({ message: m }: { message: InputMessage }) {
   const [open, setOpen] = useState(false);
   const Icon = m.source === "schedule" ? AlarmClock : m.source === "agent" ? Bot : Info;
-  const label = m.source === "schedule" ? "Routine ran" : m.source === "agent" ? "Message from an agent" : "System note";
+  const label =
+    m.source === "schedule"
+      ? `Routine · ${m.routine ?? "ran"}`
+      : m.source === "agent"
+        ? `Message from ${m.from?.name ?? "an agent"}`
+        : "System note";
   return (
     <div className="turn my-3 flex flex-col items-center gap-2">
       <button
@@ -311,8 +327,8 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
           <Markdown text={s.text} />
         </Bubble>
       );
-    case "tools":
-      return null;
+    case "action":
+      return <ActionChip kind={s.action.kind} text={s.action.text} />;
     case "ask":
       return <QuestionCard client={client} ask={s.ask} />;
     case "file":
@@ -325,6 +341,25 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
         </div>
       );
   }
+}
+
+const ACTION_ICONS: Record<ActionKind, LucideIcon> = {
+  agent: UserPlus,
+  message: Send,
+  stop: Square,
+  routine: AlarmClock,
+  memory: Brain,
+  profile: UserPen,
+};
+
+function ActionChip({ kind, text }: { kind: ActionKind; text: string }) {
+  const Icon = ACTION_ICONS[kind];
+  return (
+    <div className="flex h-7 max-w-[88%] items-center gap-1.5 rounded-full border border-line px-2.5 text-[12.5px] text-muted">
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate">{text}</span>
+    </div>
+  );
 }
 
 function Bubble({ children }: { children: ReactNode }) {

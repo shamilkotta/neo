@@ -26,6 +26,8 @@ import { Button, IconButton } from "../ui/Button";
 import { activityOf } from "./activity";
 import { DetailsDrawer } from "./DetailsDrawer";
 
+const NO_AGENTS: AgentSummary[] = [];
+
 export function AgentView({
   instance,
   agent,
@@ -138,6 +140,7 @@ export function AgentView({
         <Thread
           session={session}
           name={agent.name}
+          agents={status?.agents ?? NO_AGENTS}
           empty={<Empty name={agent.name} id={agent.id} description={agent.description} onPick={(t) => composer.current?.fill(t)} />}
         />
         <Queue session={session} />

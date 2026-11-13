@@ -23,7 +23,7 @@ afterEach(async () => {
 const script = (steps: ScriptStep[]) =>
   neo.act("POST", "/test/script", { steps });
 
-const QUESTIONS = [
+const QUESTIONS: { id: string; question: string; options?: { label: string }[] }[] = [
   {
     id: "env",
     question: "Which environment?",
