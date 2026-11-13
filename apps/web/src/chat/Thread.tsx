@@ -27,7 +27,6 @@ import { type Block, type Segment, toBlocks } from "./blocks";
 import { FileCard } from "./Files";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./Question";
-import { ToolCard, ToolRow } from "./Tools";
 
 const COLUMN = "mx-auto w-full max-w-[820px] px-3 sm:px-5";
 
@@ -313,13 +312,7 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
         </Bubble>
       );
     case "tools":
-      return (
-        <ToolCard count={s.steps.length} running={s.steps.some((t) => t.state === "running")} failed={s.steps.some((t) => t.state === "error")}>
-          {s.steps.map((t) => (
-            <ToolRow key={t.id} name={t.name} args={t.args} output={t.output} state={t.state} />
-          ))}
-        </ToolCard>
-      );
+      return null;
     case "ask":
       return <QuestionCard client={client} ask={s.ask} />;
     case "file":
@@ -338,30 +331,30 @@ function Bubble({ children }: { children: ReactNode }) {
   return <div className="max-w-[88%] min-w-0 rounded-[20px] bg-bubble px-3.5 py-2 text-[14.5px]">{children}</div>;
 }
 
+const humanize = (name: string) => {
+  const s = name.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+};
+
 function Live({ session }: { session: AgentSession }) {
   const live = session.live.use();
   if (!live.active) return null;
+  const step = live.tools.at(-1);
+  const label = step ? "Working" : "Thinking";
   return (
-    <div className="mt-3 flex flex-col items-start gap-1.5">
-      {live.tools.length > 0 && (
-        <ToolCard running count={live.tools.length}>
-          {live.tools.map((t) => (
-            <ToolRow key={t.id} name={t.name} output={t.output} state="running" />
-          ))}
-        </ToolCard>
-      )}
-      {live.text ? (
-        <Bubble>
-          <Markdown text={live.text} streaming />
-        </Bubble>
-      ) : (
-        live.tools.length === 0 && (
-          <div className="flex h-9 items-center gap-2 rounded-[20px] bg-bubble pr-3.5 pl-2">
-            <Face color={agentColor(session.id)} size={20} activity="working" />
-            <span className="shimmer-text text-[13.5px] font-medium">Thinking</span>
-          </div>
-        )
-      )}
+    <div className="mt-3 flex items-start">
+      <div
+        title={step ? humanize(step.name) : undefined}
+        className="group/live flex h-9 items-center gap-2 rounded-[20px] bg-bubble pr-3.5 pl-2"
+      >
+        <Face color={agentColor(session.id)} size={20} activity="working" />
+        <span className="shimmer-text text-[13.5px] font-medium">{label}</span>
+        {step && (
+          <span className="max-w-0 overflow-hidden text-[12.5px] whitespace-nowrap text-faint transition-[max-width] duration-300 group-hover/live:max-w-[240px]">
+            · {humanize(step.name)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
