@@ -45,15 +45,13 @@ function onClick(e: MouseEvent<HTMLDivElement>) {
 
 export const Markdown = memo(function Markdown({
   text,
-  streaming,
 }: {
   text: string;
-  streaming?: boolean;
 }) {
   const html = useMemo(() => render(text), [text]);
   return (
     <div
-      className={streaming ? "prose streaming" : "prose"}
+      className="prose"
       onClick={onClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
