@@ -34,7 +34,7 @@ export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask })
   return (
     <div
       className={cn(
-        "animate-up my-1 overflow-hidden rounded-2xl border bg-raised shadow-sm",
+        "animate-up my-1 w-full max-w-[600px] overflow-hidden rounded-2xl border bg-raised shadow-sm",
         answered ? "border-line" : "border-brand/30 ring-4 ring-brand/5",
       )}
     >
