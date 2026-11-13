@@ -85,23 +85,20 @@ export const Composer = forwardRef<
   const submit = async () => {
     const value = text.trim();
     if (empty || sending) return;
+    const sent = files;
     setSending(true);
+    setText("");
+    setFiles([]);
     try {
-      const attachments = [];
-      for (const file of files) attachments.push(await session.client.upload(file, file.name || "file"));
-      await session.client.send(value, {
-        clientId: `web-${crypto.randomUUID()}`,
-        ...(attachments.length ? { attachments } : {}),
-      });
-      setText("");
-      setFiles([]);
-      if (running) toast("Queued — Neo will get to it after this turn");
+      const { queued } = await session.send(value, sent);
+      if (queued) toast("Queued — Neo will get to it after this turn");
     } catch (err) {
+      setText(value);
+      setFiles(sent);
       if (err instanceof NeoApiError && err.body.setup === true) onNeedsSetup();
       toast(errorText(err), "error");
     } finally {
       setSending(false);
-      session.soon();
     }
   };
 

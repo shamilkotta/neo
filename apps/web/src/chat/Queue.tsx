@@ -7,7 +7,9 @@ import { attempt } from "../lib/toast";
 import { IconButton } from "../ui/Button";
 
 export function Queue({ session }: { session: AgentSession }) {
-  const queue = session.queue.use();
+  const all = session.queue.use();
+  const pending = session.pending.use();
+  const queue = all.filter((m) => !pending.some((p) => p.id === m.id));
   const state = session.state.use();
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState<string | null>(null);

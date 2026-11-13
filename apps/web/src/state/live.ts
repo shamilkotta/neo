@@ -71,7 +71,7 @@ export function applyLive(
       };
     case "run_end":
       settle();
-      return IDLE;
+      return current;
     default: {
       const unhandled: never = e;
       return unhandled;

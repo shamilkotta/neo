@@ -19,6 +19,14 @@ export interface Thread {
   loaded: boolean;
 }
 
+export interface Pending {
+  key: string;
+  text: string;
+  files: string[];
+  at: number;
+  id?: string;
+}
+
 const EMPTY: Thread = { items: [], turns: {}, older: null, loaded: false };
 
 export class AgentSession {
@@ -27,6 +35,7 @@ export class AgentSession {
   readonly thread = createStore<Thread>(EMPTY);
   readonly queue = createStore<MailboxMessage[]>([]);
   readonly live = createStore<LiveTurn>(IDLE);
+  readonly pending = createStore<Pending[]>([]);
   readonly error = createStore<string | undefined>(undefined);
   readonly changed = createStore(0);
   private stop: (() => void) | null = null;
@@ -83,10 +92,11 @@ export class AgentSession {
         this.client.status(),
         this.client.queue(),
       ]);
+      await this.load();
       this.state.set(state);
       this.queue.set(queue);
       if (!state.turn) this.live.set(IDLE);
-      await this.load();
+      this.settlePending(state, queue);
       this.error.set(undefined);
     } catch (e) {
       this.error.set(errorText(e));
@@ -114,6 +124,50 @@ export class AgentSession {
             : current.older,
         loaded: true,
       };
+    });
+  }
+
+  send = async (text: string, files: File[]) => {
+    const key = `web-${crypto.randomUUID()}`;
+    const running = !!this.state.get()?.turn;
+    if (!running)
+      this.pending.set((all) => [
+        ...all,
+        { key, text, files: files.map((f) => f.name || "file"), at: Date.now() },
+      ]);
+    try {
+      const attachments = [];
+      for (const file of files)
+        attachments.push(await this.client.upload(file, file.name || "file"));
+      const message = await this.client.send(text, {
+        clientId: key,
+        ...(attachments.length ? { attachments } : {}),
+      });
+      this.pending.set((all) =>
+        all.map((p) => (p.key === key ? { ...p, id: message.id } : p)),
+      );
+      return { queued: running };
+    } catch (e) {
+      this.pending.set((all) => all.filter((p) => p.key !== key));
+      throw e;
+    } finally {
+      this.soon();
+    }
+  };
+
+  private settlePending(state: AgentState, queue: MailboxMessage[]) {
+    const shown = new Set(
+      this.thread
+        .get()
+        .items.flatMap((i) => (i.type === "input" ? i.messages.map((m) => m.id) : [])),
+    );
+    const paused = state.state === "active" && state.agent.paused;
+    const waiting = new Set(paused ? [] : queue.map((m) => m.id));
+    this.pending.set((all) => {
+      const left = all.filter(
+        (p) => !p.id || (!shown.has(p.id) && (waiting.has(p.id) || !!state.turn)),
+      );
+      return left.length === all.length ? all : left;
     });
   }
 
