@@ -6,6 +6,8 @@ import {
   File,
   Folder,
   HardDrive,
+  Pause,
+  Play,
   Trash2,
   X,
 } from "lucide-react";
@@ -67,7 +69,7 @@ export function DetailsDrawer({
           </IconButton>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-          {tab === "profile" && <Profile instance={instance} agent={agent} onDeleted={onDeleted} />}
+          {tab === "profile" && <Profile instance={instance} session={session} agent={agent} onDeleted={onDeleted} />}
           {tab === "routines" && <Routines session={session} />}
           {tab === "files" && <Files session={session} />}
         </div>
@@ -76,7 +78,19 @@ export function DetailsDrawer({
   );
 }
 
-function Profile({ instance, agent, onDeleted }: { instance: Instance; agent: AgentSummary; onDeleted: () => void }) {
+function Profile({
+  instance,
+  session,
+  agent,
+  onDeleted,
+}: {
+  instance: Instance;
+  session: AgentSession;
+  agent: AgentSummary;
+  onDeleted: () => void;
+}) {
+  const state = session.state.use();
+  const paused = state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
   const [draft, setDraft] = useState({
     name: agent.name,
     title: agent.title ?? "",
@@ -148,6 +162,28 @@ function Profile({ instance, agent, onDeleted }: { instance: Instance; agent: Ag
             Discard
           </Button>
         )}
+      </div>
+      <div className="mt-2 rounded-2xl border border-line p-3.5">
+        <div className="text-[13px] font-medium">{paused ? "Paused" : "Pause agent"}</div>
+        <p className="mt-0.5 text-[12.5px] text-muted">
+          {paused
+            ? "New messages and routines wait until you resume."
+            : "Stops picking up new messages and routines until you resume."}
+        </p>
+        <Button
+          className="mt-3"
+          size="sm"
+          variant={paused ? "primary" : "secondary"}
+          icon={paused ? <Play className="size-3.5 fill-current" /> : <Pause className="size-3.5" />}
+          onClick={() =>
+            void attempt(
+              () => (paused ? session.client.resume() : session.client.pause()).then(session.refresh),
+              paused ? "Resumed" : "Paused",
+            )
+          }
+        >
+          {paused ? "Resume" : "Pause"}
+        </Button>
       </div>
       {!agent.primary && (
         <div className="mt-2 rounded-2xl border border-danger/20 p-3.5">
