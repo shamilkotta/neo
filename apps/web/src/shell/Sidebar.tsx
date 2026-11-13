@@ -1,5 +1,5 @@
 import type { AgentSummary } from "@neo/client";
-import { Monitor, Moon, PanelLeft, Plus, Search, Settings, Sun } from "lucide-react";
+import { Monitor, Moon, Star, PanelLeft, Plus, Search, Settings, Sun } from "lucide-react";
 import { cn, modKey } from "../lib/format";
 import { cycleTheme, theme } from "../lib/theme";
 import type { Instance } from "../state/instance";
@@ -60,24 +60,11 @@ export function Sidebar({
         <nav className={cn("flex-1 overflow-y-auto pb-3", open ? "px-2" : "px-2.5")}>
           {primary &&
             (open ? (
-              <button
-                type="button"
-                onClick={() => onChoose(primary.id)}
-                aria-current={primary.id === current || undefined}
-                className={cn(
-                  "mb-2 flex w-full flex-col items-center gap-2 rounded-2xl py-4 transition-colors",
-                  primary.id === current ? "bg-raised" : "hover:bg-hover",
-                )}
-              >
-                <Avatar id={primary.id} size={72} activity={activityOf(primary)} />
-                <span className="text-[14px] font-semibold">{primary.name}</span>
-              </button>
+              <AgentRow agent={primary} on={primary.id === current} onChoose={onChoose} />
             ) : (
-              <>
-                <Mini agent={primary} on={primary.id === current} onChoose={onChoose} size={44} />
-                {rest.length > 0 && <div className="mx-auto my-2 h-px w-8 bg-line" />}
-              </>
+              <Mini agent={primary} on={primary.id === current} onChoose={onChoose} size={40} />
             ))}
+          {primary && rest.length > 0 && <div className={cn("my-2 h-px bg-line", open ? "mx-3" : "mx-auto w-8")} />}
           {rest.map((a) =>
             open ? (
               <AgentRow key={a.id} agent={a} on={a.id === current} onChoose={onChoose} />
@@ -151,7 +138,9 @@ function Mini({
         on ? "bg-raised" : "hover:bg-hover",
       )}
     >
-      <Avatar id={a.id} size={size} activity={activityOf(a)} />
+      <Badged agent={a}>
+        <Avatar id={a.id} size={size} activity={activityOf(a)} />
+      </Badged>
     </button>
   );
 }
@@ -159,7 +148,7 @@ function Mini({
 function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean; onChoose: (id: string) => void }) {
   const activity = activityOf(a);
   const line =
-    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : (a.description ?? "Ready when you are");
+    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : (a.description ?? (a.primary ? "Your main agent" : "Ready when you are"));
   return (
     <button
       type="button"
@@ -170,7 +159,9 @@ function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean
         on ? "bg-raised" : "hover:bg-hover",
       )}
     >
-      <Avatar id={a.id} size={40} activity={activity} />
+      <Badged agent={a}>
+        <Avatar id={a.id} size={40} activity={activity} />
+      </Badged>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[14.5px] font-semibold">{a.name}</span>
@@ -184,5 +175,18 @@ function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean
         <span className={cn("mt-px block truncate text-[13px]", activity === "working" ? "text-ok" : "text-muted")}>{line}</span>
       </span>
     </button>
+  );
+}
+
+function Badged({ agent, children }: { agent: AgentSummary; children: React.ReactNode }) {
+  return (
+    <span className="relative shrink-0">
+      {children}
+      {agent.primary && (
+        <span className="absolute -right-0.5 -bottom-0.5 flex size-[17px] items-center justify-center rounded-full bg-warn ring-2 ring-bg">
+          <Star className="size-2.5 fill-white text-white" />
+        </span>
+      )}
+    </span>
   );
 }
