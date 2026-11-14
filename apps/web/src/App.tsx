@@ -69,8 +69,9 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
           void submit();
         }}
       >
-        <Logo className="text-[56px]" />
-        <h1 className="mt-6 text-[26px] font-semibold tracking-tight">Welcome to Neo</h1>
+        <h1 className="flex items-baseline gap-1.5 text-[26px] font-semibold tracking-tight">
+          Welcome to <Logo className="text-[38px] font-normal" />
+        </h1>
         <p className="mt-1.5 text-center text-[14px] text-muted">Your always-on agent. Connect to your instance to continue.</p>
         <div className="mt-8 w-full">
           <div
