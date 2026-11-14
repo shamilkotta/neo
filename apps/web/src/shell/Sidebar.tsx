@@ -1,7 +1,6 @@
 import type { AgentSummary } from "@neo/client";
-import { Monitor, Moon, Star, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun } from "lucide-react";
+import { Star, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings } from "lucide-react";
 import { cn, modKey } from "../lib/format";
-import { cycleTheme, theme } from "../lib/theme";
 import type { Instance } from "../state/instance";
 import { toggleSidebar, ui } from "../state/ui";
 import { Avatar } from "../ui/Avatar";
@@ -85,17 +84,12 @@ export function Sidebar({
 }
 
 function Footer({ instance, open }: { instance: Instance; open: boolean }) {
-  const t = theme.use();
   const status = instance.status.use();
-  const ThemeIcon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
   return (
     <div className={cn("flex shrink-0 items-center gap-1.5 p-3", open ? "flex-row" : "flex-col")}>
       <Round label={`Settings (${modKey},)`} onClick={() => ui.settings.set("general")}>
         <Settings className="size-[17px]" />
         {status?.model === null && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warn" />}
-      </Round>
-      <Round label={`Theme: ${t}`} onClick={cycleTheme}>
-        <ThemeIcon className="size-[17px]" />
       </Round>
       {open && <span className="flex-1" />}
       <button
