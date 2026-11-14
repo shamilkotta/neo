@@ -1,12 +1,11 @@
-
-export function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array) {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000)
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(binary);
 }
 
-export function fromBase64(text: string): Uint8Array<ArrayBuffer> {
+export function fromBase64(text: string) {
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -16,42 +15,35 @@ export function fromBase64(text: string): Uint8Array<ArrayBuffer> {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export function randomBytes(length: number): Uint8Array<ArrayBuffer> {
+export function randomBytes(length: number) {
   return crypto.getRandomValues(new Uint8Array(length));
 }
 
-export async function aesKey(raw: Uint8Array): Promise<CryptoKey> {
+export async function aesKey(raw: Uint8Array<ArrayBuffer>) {
   if (raw.length !== 32) throw new Error("An AES key must be 32 bytes");
-  return crypto.subtle.importKey(
-    "raw",
-    raw as Uint8Array<ArrayBuffer>,
-    "AES-GCM",
-    false,
-    ["encrypt", "decrypt"],
-  );
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 export async function seal(
   key: CryptoKey,
-  plaintext: Uint8Array | string,
+  plaintext: Uint8Array<ArrayBuffer> | string,
   aad = "",
-): Promise<string> {
+) {
   const iv = randomBytes(12);
   const data =
     typeof plaintext === "string" ? encoder.encode(plaintext) : plaintext;
   const ct = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv, additionalData: encoder.encode(aad) },
     key,
-    data as Uint8Array<ArrayBuffer>,
+    data,
   );
   return `${toBase64(iv)}.${toBase64(new Uint8Array(ct))}`;
 }
 
-export async function open(
-  key: CryptoKey,
-  sealed: string,
-  aad = "",
-): Promise<Uint8Array> {
+export async function open(key: CryptoKey, sealed: string, aad = "") {
   const [iv, ct] = sealed.split(".");
   if (!iv || !ct) throw new Error("Malformed ciphertext");
   const pt = await crypto.subtle.decrypt(
@@ -66,11 +58,7 @@ export async function open(
   return new Uint8Array(pt);
 }
 
-export async function openText(
-  key: CryptoKey,
-  sealed: string,
-  aad = "",
-): Promise<string> {
+export async function openText(key: CryptoKey, sealed: string, aad = "") {
   return decoder.decode(await open(key, sealed, aad));
 }
 
@@ -78,9 +66,9 @@ export const PASSPHRASE_ITERATIONS = 100_000;
 
 export async function passphraseKey(
   passphrase: string,
-  salt: Uint8Array,
+  salt: Uint8Array<ArrayBuffer>,
   iterations = PASSPHRASE_ITERATIONS,
-): Promise<CryptoKey> {
+) {
   const base = await crypto.subtle.importKey(
     "raw",
     encoder.encode(passphrase),
@@ -92,7 +80,7 @@ export async function passphraseKey(
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt: salt as Uint8Array<ArrayBuffer>,
+      salt,
       iterations,
     },
     base,
@@ -104,8 +92,8 @@ export async function passphraseKey(
 
 export async function hmacSha256Hex(
   secret: string,
-  body: Uint8Array,
-): Promise<string> {
+  body: Uint8Array<ArrayBuffer>,
+) {
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -113,20 +101,18 @@ export async function hmacSha256Hex(
     false,
     ["sign"],
   );
-  const sig = new Uint8Array(
-    await crypto.subtle.sign("HMAC", key, body as Uint8Array<ArrayBuffer>),
-  );
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, body));
   return [...sig].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function timingSafeEqual(a: string, b: string): boolean {
+export function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
 
-export function randomToken(bytes = 24): string {
+export function randomToken(bytes = 24) {
   return toBase64(randomBytes(bytes))
     .replaceAll("+", "-")
     .replaceAll("/", "_")

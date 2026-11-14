@@ -1,13 +1,17 @@
+import { plainBytes } from "../streams";
+import { Type } from "typebox";
+import { parseJson } from "@neo/client";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 import {
+  type BlobKey,
   type BlobStore,
+  newBlobKey,
   bytesStream,
   collect,
   concatStreams,
   measured,
   zeroStream,
 } from "./blobs";
-
 
 export const CHUNK_SIZE = 512 * 1024;
 export const INLINE_MAX = 256 * 1024;
@@ -49,10 +53,10 @@ interface NodeRow {
   size: number;
   mtime: number;
   chunks: string;
-  blob: string | null;
+  blob: BlobKey | null;
 }
 
-export const VFS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
+export const VFS_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE vfs_nodes (
     path TEXT PRIMARY KEY,
     parent TEXT NOT NULL,
@@ -76,7 +80,7 @@ export const VFS_SCHEMA = async (tx: SqliteExecutor): Promise<void> => {
   ) STRICT`);
 };
 
-export function normalizePath(path: string): string {
+export function normalizePath(path: string) {
   if (!path.startsWith("/"))
     throw new VfsError("invalid", path, `Path must be absolute: ${path}`);
   if (path.includes("\0"))
@@ -90,30 +94,30 @@ export function normalizePath(path: string): string {
   return `/${parts.join("/")}`;
 }
 
-export function parentOf(path: string): string {
+export function parentOf(path: string) {
   if (path === "/") return "/";
   const index = path.lastIndexOf("/");
   return index === 0 ? "/" : path.slice(0, index);
 }
 
-export function baseName(path: string): string {
+export function baseName(path: string) {
   return path === "/" ? "/" : path.slice(path.lastIndexOf("/") + 1);
 }
 
-export function joinPath(base: string, path: string): string {
+export function joinPath(base: string, path: string) {
   return normalizePath(path.startsWith("/") ? path : `${base}/${path}`);
 }
 
-async function sha256(data: Uint8Array): Promise<string> {
+async function sha256(data: Uint8Array) {
   const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", data as Uint8Array<ArrayBuffer>),
+    await crypto.subtle.digest("SHA-256", plainBytes(data)),
   );
   let hex = "";
   for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
   return hex;
 }
 
-function toBytes(value: unknown): Uint8Array {
+function toBytes(value: unknown) {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   throw new Error("Chunk data is not binary");
@@ -126,8 +130,7 @@ const TRASH = "host_vfs_trash_blobs";
 const HOST_TABLES = `CREATE TABLE IF NOT EXISTS ${PENDING} (key TEXT PRIMARY KEY) STRICT;
   CREATE TABLE IF NOT EXISTS ${TRASH} (key TEXT PRIMARY KEY) STRICT`;
 
-
-export function readOnly(vfs: Vfs, roots: string[]): Vfs {
+export function readOnly(vfs: Vfs, roots: string[]) {
   const inside = (p: string) =>
     roots.some((r) => p === r || p.startsWith(`${r}/`));
   const holds = (p: string) =>
@@ -136,32 +139,64 @@ export function readOnly(vfs: Vfs, roots: string[]): Vfs {
     const p = normalizePath(path);
     if (test(p)) throw new VfsError("read_only", p, `${p} is read-only`);
   };
-  const checks: Record<string, (args: unknown[]) => void> = {
-    writeFile: ([p]) => guard(p as string, inside),
-    writeStream: ([p]) => guard(p as string, inside),
-    appendFile: ([p]) => guard(p as string, inside),
-    truncate: ([p]) => guard(p as string, inside),
-    mkdir: ([p]) => guard(p as string, inside),
-    copyFile: ([, to]) => guard(to as string, inside),
-    rm: ([p]) => guard(p as string, holds),
-    rename: ([from, to]) => {
-      guard(from as string, holds);
-      guard(to as string, inside);
+  const guarded: Pick<Vfs, Guarded> = {
+    writeFile: async (path, ...rest) => {
+      guard(path, inside);
+      return vfs.writeFile(path, ...rest);
+    },
+    writeStream: async (path, ...rest) => {
+      guard(path, inside);
+      return vfs.writeStream(path, ...rest);
+    },
+    appendFile: async (path, content) => {
+      guard(path, inside);
+      return vfs.appendFile(path, content);
+    },
+    truncate: async (path, size) => {
+      guard(path, inside);
+      return vfs.truncate(path, size);
+    },
+    mkdir: async (path, options) => {
+      guard(path, inside);
+      return vfs.mkdir(path, options);
+    },
+    copyFile: async (from, to, options) => {
+      guard(to, inside);
+      return vfs.copyFile(from, to, options);
+    },
+    rm: async (path, options) => {
+      guard(path, holds);
+      return vfs.rm(path, options);
+    },
+    rename: async (from, to) => {
+      guard(from, holds);
+      guard(to, inside);
+      return vfs.rename(from, to);
     },
   };
   return new Proxy(vfs, {
     get(target, key, receiver) {
+      if (isGuarded(key)) return guarded[key];
       const value = Reflect.get(target, key, receiver);
-      if (typeof value !== "function") return value;
-      const check = typeof key === "string" ? checks[key] : undefined;
-      if (!check) return value.bind(target);
-      return async (...args: unknown[]) => {
-        check(args);
-        return value.apply(target, args);
-      };
+      return typeof value === "function" ? value.bind(target) : value;
     },
   });
 }
+
+const GUARDED = [
+  "writeFile",
+  "writeStream",
+  "appendFile",
+  "truncate",
+  "mkdir",
+  "copyFile",
+  "rm",
+  "rename",
+] as const satisfies readonly (keyof Vfs)[];
+type Guarded = (typeof GUARDED)[number];
+
+const isGuarded = (key: string | symbol): key is Guarded =>
+  GUARDED.some((name) => name === key);
 
 export async function* rechunk(
   stream: ReadableStream<Uint8Array>,
@@ -203,7 +238,7 @@ export type VfsListener = (paths: string[]) => void;
 
 type Content =
   | { inline: Uint8Array }
-  | { blob: { key: string; size: number; hash: string } };
+  | { blob: { key: BlobKey; size: number; hash: string } };
 
 export class Vfs {
   private readonly listeners = new Set<VfsListener>();
@@ -214,17 +249,16 @@ export class Vfs {
     private readonly now: () => number = Date.now,
   ) {}
 
-  subscribe(listener: VfsListener): () => void {
+  subscribe(listener: VfsListener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private emit(paths: string[]): void {
+  private emit(paths: string[]) {
     for (const listener of [...this.listeners]) {
       try {
         listener(paths);
-      } catch {
-      }
+      } catch {}
     }
   }
 
@@ -240,7 +274,7 @@ export class Vfs {
     return toStat(row);
   }
 
-  async exists(path: string): Promise<boolean> {
+  async exists(path: string) {
     return this.stat(path).then(
       () => true,
       (error) => {
@@ -260,11 +294,12 @@ export class Vfs {
         p,
         `${p} is ${(row.size / 1024 / 1024).toFixed(1)} MB; whole-file reads are limited to ${WHOLE_READ_MAX / 1024 / 1024} MB. Read it in parts (the read tool's offset and limit).`,
       );
-    if (row.blob) return collect(await this.blobStream(row), row.size);
+    if (row.blob)
+      return collect(await this.blobStream(row.blob, row.path), row.size);
     return this.assemble(this.db, row);
   }
 
-  async readStream(path: string): Promise<ReadableStream<Uint8Array>> {
+  async readStream(path: string) {
     const p = normalizePath(path);
     return this.contentStream(await this.fileRow(this.db, p));
   }
@@ -281,7 +316,7 @@ export class Vfs {
         chunks: async function* (this: Vfs) {
           const stream = await this.blobs.get(key);
           if (!stream) throw missing();
-          yield* stream as unknown as AsyncIterable<Uint8Array>;
+          yield* stream;
         }.bind(this),
         read: async (offset, length) => {
           const end = Math.min(offset + length, row.size);
@@ -295,8 +330,12 @@ export class Vfs {
         },
       };
     }
-    const hashes = JSON.parse(row.chunks) as string[];
-    const chunk = (i: number) => this.chunk(this.db, hashes[i]!, p);
+    const hashes = chunkList(row.chunks);
+    const chunk = (i: number) => {
+      const hash = hashes[i];
+      if (hash === undefined) throw new Error(`${p} has no chunk ${i}`);
+      return this.chunk(this.db, hash, p);
+    };
     return {
       stat,
       async *chunks() {
@@ -322,7 +361,7 @@ export class Vfs {
     };
   }
 
-  async readText(path: string): Promise<string> {
+  async readText(path: string) {
     return new TextDecoder().decode(await this.readFile(path));
   }
 
@@ -330,7 +369,7 @@ export class Vfs {
     path: string,
     content: string | Uint8Array,
     options: { createParents?: boolean } = {},
-  ): Promise<void> {
+  ) {
     const bytes =
       typeof content === "string" ? encoder.encode(content) : content;
     if (bytes.length > MAX_FILE_SIZE)
@@ -342,7 +381,7 @@ export class Vfs {
     path: string,
     stream: ReadableStream<Uint8Array>,
     options: { createParents?: boolean; maxBytes?: number } = {},
-  ): Promise<VfsStat> {
+  ) {
     const p = normalizePath(path);
     if (options.createParents)
       await this.mkdir(parentOf(p), { recursive: true });
@@ -357,7 +396,7 @@ export class Vfs {
     from: string,
     to: string,
     options: { createParents?: boolean } = {},
-  ): Promise<void> {
+  ) {
     const source = normalizePath(from);
     const target = normalizePath(to);
     if (source === target) return;
@@ -377,7 +416,7 @@ export class Vfs {
           `UPDATE vfs_blobs SET refs = refs + 1 WHERE key = ?`,
           row.blob,
         );
-      for (const hash of JSON.parse(row.chunks) as string[])
+      for (const hash of chunkList(row.chunks))
         await tx.run(
           `UPDATE vfs_chunks SET refs = refs + 1 WHERE hash = ?`,
           hash,
@@ -389,9 +428,9 @@ export class Vfs {
     this.emit([target]);
   }
 
-  async repair(): Promise<void> {
+  async repair() {
     await this.db.exec(HOST_TABLES);
-    const cut = await this.db.all<{ key: string }>(
+    const cut = await this.db.all<{ key: BlobKey }>(
       `SELECT key FROM ${PENDING} WHERE key NOT IN (SELECT key FROM vfs_blobs)`,
     );
     for (const { key } of cut) await this.blobs.delete(key);
@@ -399,7 +438,7 @@ export class Vfs {
     await this.emptyTrash();
   }
 
-  async appendFile(path: string, content: string | Uint8Array): Promise<void> {
+  async appendFile(path: string, content: string | Uint8Array) {
     const p = normalizePath(path);
     const extra =
       typeof content === "string" ? encoder.encode(content) : content;
@@ -422,7 +461,7 @@ export class Vfs {
     await this.commit(p, stored, row);
   }
 
-  async truncate(path: string, size: number): Promise<void> {
+  async truncate(path: string, size: number) {
     if (!Number.isInteger(size) || size < 0)
       throw new VfsError(
         "invalid",
@@ -448,10 +487,7 @@ export class Vfs {
     await this.commit(p, stored, row);
   }
 
-  async mkdir(
-    path: string,
-    options: { recursive?: boolean } = {},
-  ): Promise<void> {
+  async mkdir(path: string, options: { recursive?: boolean } = {}) {
     const p = normalizePath(path);
     if (p === "/") {
       if (options.recursive) return;
@@ -475,6 +511,7 @@ export class Vfs {
         return;
       }
       const missing = [p];
+      let top = p;
       for (
         let cursor = parentOf(p);
         cursor !== "/";
@@ -490,9 +527,10 @@ export class Vfs {
           break;
         }
         missing.push(cursor);
+        top = cursor;
       }
       for (const dir of missing.reverse()) await this.insertDirectory(tx, dir);
-      created.push(missing[0]!);
+      created.push(top);
     });
     if (created.length > 0) this.emit(created);
   }
@@ -500,7 +538,7 @@ export class Vfs {
   async readdir(
     path: string,
     options: { after?: string; limit?: number } = {},
-  ): Promise<VfsStat[]> {
+  ) {
     const p = normalizePath(path);
     await this.requireDirectory(this.db, p);
     const rows = await this.db.all<NodeRow>(
@@ -515,7 +553,7 @@ export class Vfs {
   async rm(
     path: string,
     options: { recursive?: boolean; force?: boolean } = {},
-  ): Promise<void> {
+  ) {
     const p = normalizePath(path);
     if (p === "/") throw new VfsError("invalid", p, "Cannot remove the root");
     let removed = false;
@@ -552,7 +590,7 @@ export class Vfs {
     if (removed) this.emit([p]);
   }
 
-  async rename(from: string, to: string): Promise<void> {
+  async rename(from: string, to: string) {
     const source = normalizePath(from);
     const target = normalizePath(to);
     if (source === target) return;
@@ -609,7 +647,7 @@ export class Vfs {
     this.emit([source, target]);
   }
 
-  async walk(path: string): Promise<VfsStat[]> {
+  async walk(path: string) {
     const p = normalizePath(path);
     await this.requireDirectory(this.db, p);
     const prefix = p === "/" ? "/" : `${p}/`;
@@ -621,12 +659,11 @@ export class Vfs {
     return rows.map(toStat);
   }
 
-
   private async store(
     p: string,
     stream: ReadableStream<Uint8Array>,
     max: number,
-  ): Promise<Content> {
+  ) {
     const reader = stream.getReader();
     const head: Uint8Array[] = [];
     let size = 0;
@@ -672,7 +709,7 @@ export class Vfs {
       max,
       () => new VfsError("too_large", p),
     );
-    const key = crypto.randomUUID();
+    const key = newBlobKey();
     await this.db.exec(HOST_TABLES);
     await this.db.run(`INSERT INTO ${PENDING} (key) VALUES (?)`, key);
     try {
@@ -686,11 +723,7 @@ export class Vfs {
     return { blob: { key, ...body.result() } };
   }
 
-  private async commit(
-    p: string,
-    content: Content,
-    expected?: NodeRow,
-  ): Promise<void> {
+  private async commit(p: string, content: Content, expected?: NodeRow) {
     const pieces =
       "inline" in content ? await this.hashChunks(content.inline) : [];
     try {
@@ -755,8 +788,8 @@ export class Vfs {
     p: string,
     size: number,
     chunks: string,
-    blob: string | null,
-  ): Promise<void> {
+    blob: BlobKey | null,
+  ) {
     await tx.run(
       `INSERT INTO vfs_nodes (path, parent, kind, size, mtime, chunks, blob) VALUES (?, ?, 'file', ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, chunks = excluded.chunks, blob = excluded.blob`,
@@ -769,9 +802,9 @@ export class Vfs {
     );
   }
 
-  private async release(tx: SqliteExecutor, row: NodeRow): Promise<void> {
+  private async release(tx: SqliteExecutor, row: NodeRow) {
     if (row.kind !== "file") return;
-    await this.releaseChunks(tx, JSON.parse(row.chunks) as string[]);
+    await this.releaseChunks(tx, chunkList(row.chunks));
     if (!row.blob) return;
     await tx.run(
       `UPDATE vfs_blobs SET refs = refs - 1 WHERE key = ?`,
@@ -791,9 +824,9 @@ export class Vfs {
     }
   }
 
-  private async emptyTrash(): Promise<void> {
+  private async emptyTrash() {
     await this.db.exec(HOST_TABLES);
-    const trash = await this.db.all<{ key: string }>(
+    const trash = await this.db.all<{ key: BlobKey }>(
       `SELECT key FROM ${TRASH}`,
     );
     for (const { key } of trash) {
@@ -802,11 +835,9 @@ export class Vfs {
     }
   }
 
-  private async contentStream(
-    row: NodeRow,
-  ): Promise<ReadableStream<Uint8Array>> {
-    if (row.blob) return this.blobStream(row);
-    const hashes = JSON.parse(row.chunks) as string[];
+  private async contentStream(row: NodeRow) {
+    if (row.blob) return this.blobStream(row.blob, row.path);
+    const hashes = chunkList(row.chunks);
     let index = 0;
     return new ReadableStream<Uint8Array>(
       {
@@ -820,10 +851,7 @@ export class Vfs {
     );
   }
 
-  private async rangeStream(
-    row: NodeRow,
-    length: number,
-  ): Promise<ReadableStream<Uint8Array>> {
+  private async rangeStream(row: NodeRow, length: number) {
     if (row.blob) {
       const stream = await this.blobs.get(row.blob, { offset: 0, length });
       if (!stream) throw new Error(`The content of ${row.path} is gone`);
@@ -845,13 +873,13 @@ export class Vfs {
     });
   }
 
-  private async blobStream(row: NodeRow): Promise<ReadableStream<Uint8Array>> {
-    const stream = await this.blobs.get(row.blob!);
-    if (!stream) throw new Error(`The content of ${row.path} is gone`);
+  private async blobStream(key: BlobKey, path: string) {
+    const stream = await this.blobs.get(key);
+    if (!stream) throw new Error(`The content of ${path} is gone`);
     return stream;
   }
 
-  private async fileRow(db: SqliteExecutor, p: string): Promise<NodeRow> {
+  private async fileRow(db: SqliteExecutor, p: string) {
     const row = await db.get<NodeRow>(
       `SELECT * FROM vfs_nodes WHERE path = ?`,
       p,
@@ -864,13 +892,10 @@ export class Vfs {
     return row;
   }
 
-  private async assemble(
-    db: SqliteExecutor,
-    row: NodeRow,
-  ): Promise<Uint8Array> {
+  private async assemble(db: SqliteExecutor, row: NodeRow) {
     const out = new Uint8Array(row.size);
     let offset = 0;
-    for (const hash of JSON.parse(row.chunks) as string[]) {
+    for (const hash of chunkList(row.chunks)) {
       const data = await this.chunk(db, hash, row.path);
       out.set(data, offset);
       offset += data.length;
@@ -878,11 +903,7 @@ export class Vfs {
     return out;
   }
 
-  private async chunk(
-    db: SqliteExecutor,
-    hash: string,
-    path: string,
-  ): Promise<Uint8Array> {
+  private async chunk(db: SqliteExecutor, hash: string, path: string) {
     const chunk = await db.get<{ data: unknown }>(
       `SELECT data FROM vfs_chunks WHERE hash = ?`,
       hash,
@@ -891,7 +912,7 @@ export class Vfs {
     return toBytes(chunk.data);
   }
 
-  private async requireDirectory(db: SqliteExecutor, p: string): Promise<void> {
+  private async requireDirectory(db: SqliteExecutor, p: string) {
     if (p === "/") return;
     const row = await db.get<{ kind: string }>(
       `SELECT kind FROM vfs_nodes WHERE path = ?`,
@@ -901,7 +922,7 @@ export class Vfs {
     if (row.kind !== "directory") throw new VfsError("not_directory", p);
   }
 
-  private async insertDirectory(tx: SqliteExecutor, p: string): Promise<void> {
+  private async insertDirectory(tx: SqliteExecutor, p: string) {
     await tx.run(
       `INSERT INTO vfs_nodes (path, parent, kind, size, mtime, chunks) VALUES (?, ?, 'directory', 0, ?, '[]')`,
       p,
@@ -925,7 +946,7 @@ export class Vfs {
     tx: SqliteExecutor,
     hash: string,
     data: Uint8Array,
-  ): Promise<void> {
+  ) {
     await tx.run(
       `INSERT INTO vfs_chunks (hash, data, refs) VALUES (?, ?, 1) ON CONFLICT(hash) DO UPDATE SET refs = refs + 1`,
       hash,
@@ -933,10 +954,7 @@ export class Vfs {
     );
   }
 
-  private async releaseChunks(
-    tx: SqliteExecutor,
-    hashes: string[],
-  ): Promise<void> {
+  private async releaseChunks(tx: SqliteExecutor, hashes: string[]) {
     for (const hash of hashes) {
       await tx.run(
         `UPDATE vfs_chunks SET refs = refs - 1 WHERE hash = ?`,
@@ -956,3 +974,5 @@ function toStat(row: NodeRow): VfsStat {
     mtimeMs: row.mtime,
   };
 }
+
+const chunkList = (text: string) => parseJson(Type.Array(Type.String()), text);

@@ -1,0 +1,159 @@
+import type { AgentSummary } from "@neo/client";
+import { AlarmClock, Brain, Lightbulb, ListChecks, PanelLeft } from "lucide-react";
+import { type DragEvent, useEffect, useRef, useState } from "react";
+import { Composer, type ComposerHandle, DropOverlay } from "../chat/Composer";
+import { Queue } from "../chat/Queue";
+import { Thread } from "../chat/Thread";
+import { session as sessionFor } from "../state/agent";
+import type { Instance } from "../state/instance";
+import { toggleSidebar, ui } from "../state/ui";
+import { Avatar } from "../ui/Avatar";
+import { IconButton } from "../ui/Button";
+import { activityOf } from "./activity";
+import { DetailsDrawer } from "./DetailsDrawer";
+
+const NO_AGENTS: AgentSummary[] = [];
+
+export function AgentView({
+  instance,
+  agent,
+  onDeleted,
+}: {
+  instance: Instance;
+  agent: AgentSummary;
+  onDeleted: () => void;
+}) {
+  const session = sessionFor(instance.root, agent.id);
+  useEffect(() => session.attach(), [session]);
+  const state = session.state.use();
+  const error = session.error.use();
+  const status = instance.status.use();
+  const details = ui.details.use();
+  const composer = useRef<ComposerHandle>(null);
+  const [dragging, setDragging] = useState(false);
+  const depth = useRef(0);
+
+  const running = !!state?.turn;
+  const paused = state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
+  const activity = state ? (paused ? "paused" : running ? "working" : "idle") : activityOf(agent);
+
+  useEffect(() => {
+    const title = agent.name === "Neo" ? "Neo" : `${agent.name} · Neo`;
+    document.title = running ? `● ${title}` : title;
+  }, [agent.name, running]);
+
+  const drag = {
+    onDragEnter: (e: DragEvent) => {
+      if (!e.dataTransfer.types.includes("Files")) return;
+      depth.current++;
+      setDragging(true);
+    },
+    onDragLeave: () => {
+      depth.current = Math.max(0, depth.current - 1);
+      if (depth.current === 0) setDragging(false);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+    },
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      depth.current = 0;
+      setDragging(false);
+      composer.current?.add(e.dataTransfer.files);
+    },
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-w-0 flex-1 flex-col" {...drag}>
+        <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line px-2.5 sm:px-3">
+          <IconButton label="Agents" className="min-[900px]:hidden" onClick={() => toggleSidebar(true)}>
+            <PanelLeft className="size-[18px]" />
+          </IconButton>
+          <button
+            type="button"
+            onClick={() => ui.details.set(details ? null : "profile")}
+            className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-2 pl-1 transition-colors hover:bg-hover"
+          >
+            <Avatar id={agent.id} size={22} activity={activity === "working" ? undefined : activity} />
+            <span className="truncate text-[14px] font-semibold">{agent.name}</span>
+            {activity === "working" ? (
+              <span className="shimmer-text text-[12.5px] font-medium">Working</span>
+            ) : activity === "paused" ? (
+              <span className="text-[12.5px] text-warn">Paused</span>
+            ) : (
+              agent.title && <span className="hidden truncate text-[12.5px] text-muted sm:inline">{agent.title}</span>
+            )}
+          </button>
+        </header>
+        {error && (
+          <div className="mx-auto mb-2 w-full max-w-[760px] px-4">
+            <div className="flex items-center gap-2 rounded-xl border border-danger/20 bg-danger/8 px-3 py-2 text-[12.5px] text-danger">
+              {error}
+              <button className="ml-auto font-medium underline" onClick={() => void session.refresh()}>
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+        <Thread
+          session={session}
+          name={agent.name}
+          agents={status?.agents ?? NO_AGENTS}
+          empty={<Empty name={agent.name} id={agent.id} description={agent.description} onPick={(t) => composer.current?.fill(t)} />}
+        />
+        <Queue session={session} />
+        <Composer
+          ref={composer}
+          session={session}
+          name={agent.name}
+          onNeedsSetup={() => ui.settings.set("providers")}
+        />
+        <DropOverlay visible={dragging} />
+      </div>
+      <DetailsDrawer instance={instance} session={session} agent={agent} onDeleted={onDeleted} />
+    </div>
+  );
+}
+
+const SUGGESTIONS = [
+  { icon: AlarmClock, title: "Set up a routine", text: "Every weekday at 9am, send me a short brief of what's on my plate." },
+  { icon: Brain, title: "Teach it about you", text: "Here's what you should know about me and how I like to work: " },
+  { icon: ListChecks, title: "Plan something", text: "Help me plan my week. Ask me what I need to get done first." },
+  { icon: Lightbulb, title: "Remind me", text: "Remind me in 30 minutes to " },
+];
+
+function Empty({ name, id, description, onPick }: { name: string; id: string; description: string | null; onPick: (t: string) => void }) {
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
+      <div className="animate-up flex w-full max-w-[640px] flex-col items-center">
+        <Avatar id={id} size={64} />
+        <h1 className="mt-5 text-center text-[24px] font-semibold tracking-tight">{greeting}</h1>
+        <p className="mt-1.5 max-w-md text-center text-[14.5px] text-muted">
+          {description ?? `${name} is always on. Ask anything, hand off work, or set up routines that run on their own.`}
+        </p>
+        <div className="mt-8 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+          {SUGGESTIONS.map((s, i) => (
+            <button
+              key={s.title}
+              type="button"
+              onClick={() => onPick(s.text)}
+              style={{ animationDelay: `${60 + i * 40}ms` }}
+              className="animate-up group flex items-start gap-3 rounded-[14px] border border-line-strong p-3.5 text-left transition-colors [animation-fill-mode:backwards] hover:bg-hover"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-sunken text-muted transition-colors group-hover:text-fg">
+                <s.icon className="size-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13.5px] font-medium">{s.title}</span>
+                <span className="mt-0.5 line-clamp-2 block text-[12.5px] text-muted">{s.text}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

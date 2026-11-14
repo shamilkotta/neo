@@ -1,3 +1,6 @@
+import { Type, type Static } from "typebox";
+import Value from "typebox/value";
+import { AgentId } from "@neo/client";
 import {
   fromBase64,
   open,
@@ -7,41 +10,75 @@ import {
   seal,
   toBase64,
 } from "../crypto";
-import type { SnapshotRecord } from "./snapshot";
+import type { SqliteDatabase } from "../sql";
+import { plainBytes, plainChunks } from "../streams";
+import { BlobKey, measured, type BlobStore } from "../vfs/blobs";
+import { rechunk } from "../vfs/vfs";
+import { dumpDatabase, loadDatabase, SnapshotRecord } from "./snapshot";
 
 export const BUNDLE_FORMAT = "neo-bundle";
-export const BUNDLE_VERSION = 1;
+export const BUNDLE_VERSION = 2;
 export const BLOB_PIECE = 512 * 1024;
 
-export interface BundleHeader {
-  t: typeof BUNDLE_FORMAT;
-  version: number;
-  instanceId: string;
-  epoch: number;
-  createdAt: number;
-  source: { host: string };
-  dek?: {
-    kdf: "pbkdf2-sha256";
-    iterations: number;
-    salt: string;
-    sealed: string;
-  };
-}
+const WrappedDek = Type.Object({
+  kdf: Type.Literal("pbkdf2-sha256"),
+  iterations: Type.Number(),
+  salt: Type.String(),
+  sealed: Type.String(),
+});
+export type WrappedDek = Static<typeof WrappedDek>;
 
-export type BundleRecord =
-  | SnapshotRecord
-  | BundleHeader
-  | { t: "blob"; key: string; size: number; hash: string }
-  | { t: "blob-data"; data: string }
-  | { t: "blob-end" }
-  | { t: "end"; records: number };
+export const BundleHeader = Type.Object({
+  t: Type.Literal(BUNDLE_FORMAT),
+  version: Type.Number(),
+  instanceId: Type.String(),
+  epoch: Type.Number(),
+  createdAt: Type.Number(),
+  source: Type.Object({ host: Type.String() }),
+  dek: Type.Optional(WrappedDek),
+});
+export type BundleHeader = Static<typeof BundleHeader>;
+
+export const PartStart = Type.Union([
+  Type.Object({ t: Type.Literal("part"), kind: Type.Literal("coordinator") }),
+  Type.Object({
+    t: Type.Literal("part"),
+    kind: Type.Literal("agent"),
+    id: AgentId,
+  }),
+]);
+export type PartStart = Static<typeof PartStart>;
+
+export const BundleRecord = Type.Union([
+  SnapshotRecord,
+  BundleHeader,
+  PartStart,
+  Type.Object({
+    t: Type.Literal("blob"),
+    key: BlobKey,
+    size: Type.Number(),
+    hash: Type.String(),
+  }),
+  Type.Object({ t: Type.Literal("blob-data"), data: Type.String() }),
+  Type.Object({ t: Type.Literal("blob-end") }),
+  Type.Object({ t: Type.Literal("part-end"), records: Type.Number() }),
+  Type.Object({ t: Type.Literal("end"), parts: Type.Number() }),
+]);
+export type BundleRecord = Static<typeof BundleRecord>;
+
+function parseRecord(line: string) {
+  const value: unknown = JSON.parse(line);
+  if (!Value.Check(BundleRecord, value))
+    throw new BundleError("The bundle is damaged (an unknown record)");
+  return value;
+}
 
 export class BundleError extends Error {}
 
 export async function wrapDek(
-  dek: Uint8Array,
+  dek: Uint8Array<ArrayBuffer>,
   passphrase: string,
-): Promise<NonNullable<BundleHeader["dek"]>> {
+): Promise<WrappedDek> {
   const salt = randomBytes(16);
   const key = await passphraseKey(passphrase, salt, PASSPHRASE_ITERATIONS);
   return {
@@ -52,10 +89,7 @@ export async function wrapDek(
   };
 }
 
-export async function unwrapDek(
-  dek: NonNullable<BundleHeader["dek"]>,
-  passphrase: string,
-): Promise<Uint8Array> {
+export async function unwrapDek(dek: WrappedDek, passphrase: string) {
   const key = await passphraseKey(
     passphrase,
     fromBase64(dek.salt),
@@ -68,72 +102,107 @@ export async function unwrapDek(
   }
 }
 
-export function encodeBundle(
-  records: AsyncIterable<BundleRecord>,
-): ReadableStream<Uint8Array> {
+export function encodeNdjson(records: AsyncIterable<BundleRecord>) {
   const encoder = new TextEncoder();
   const iterator = records[Symbol.asyncIterator]();
-  return new ReadableStream<Uint8Array>({
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
     async pull(controller) {
       const next = await iterator.next();
       if (next.done) controller.close();
       else
-        controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
+        controller.enqueue(
+          plainBytes(encoder.encode(`${JSON.stringify(next.value)}\n`)),
+        );
     },
     async cancel() {
       await iterator.return?.(undefined);
     },
-  }).pipeThrough(
-    new CompressionStream("gzip") as unknown as TransformStream<
-      Uint8Array,
-      Uint8Array
-    >,
-  );
+  });
 }
 
-export async function* decodeBundle(
-  body: ReadableStream<Uint8Array>,
+export async function* decodeNdjson(
+  stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<BundleRecord> {
-  const stream = body.pipeThrough(
-    new DecompressionStream("gzip") as unknown as TransformStream<
-      Uint8Array,
-      Uint8Array
-    >,
-  );
   const decoder = new TextDecoder();
   let buffer = "";
   try {
-    for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+    for await (const chunk of stream) {
       buffer += decoder.decode(chunk, { stream: true });
       let newline: number;
       while ((newline = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        if (line.trim()) yield JSON.parse(line) as BundleRecord;
+        if (line.trim()) yield parseRecord(line);
       }
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) yield parseRecord(buffer);
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof TypeError)
       throw new BundleError(`The bundle is damaged (${error.message})`);
     throw error;
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) yield JSON.parse(buffer) as BundleRecord;
 }
 
-export async function readBundle(records: AsyncIterator<BundleRecord>) {
-  const first = await records.next().catch(() => ({ done: true, value: undefined }));
-  const header = first.value as BundleHeader | undefined;
-  if (first.done || header?.t !== BUNDLE_FORMAT)
-    throw new BundleError("Not a Neo bundle");
-  if (header.version !== BUNDLE_VERSION)
-    throw new BundleError(
-      `Bundle version ${header.version} is not supported (this Neo reads ${BUNDLE_VERSION})`,
-    );
-  let pending: BundleRecord | undefined;
-  let end: { records: number } | undefined;
+export const encodeBundle = (records: AsyncIterable<BundleRecord>) =>
+  encodeNdjson(records).pipeThrough(new CompressionStream("gzip"));
+
+export const decodeBundle = (body: ReadableStream<Uint8Array>) =>
+  decodeNdjson(
+    body
+      .pipeThrough(plainChunks())
+      .pipeThrough(new DecompressionStream("gzip")),
+  );
+
+export async function* writePart(
+  db: SqliteDatabase,
+  blobs: BlobStore,
+  keep?: (table: string, columns: string[], row: unknown[]) => boolean,
+): AsyncGenerator<BundleRecord> {
   let count = 0;
-  const next = async (): Promise<BundleRecord | undefined> => {
+  for await (const record of dumpDatabase(db)) {
+    if (record.t === "rows" && keep)
+      record.rows = record.rows.filter((row) =>
+        keep(record.table, record.columns, row),
+      );
+    count++;
+    yield record;
+  }
+  const hasBlobs = await db.get(
+    `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vfs_blobs'`,
+  );
+  for (let after = ""; hasBlobs;) {
+    const page = await db.all<{ key: BlobKey; size: number; hash: string }>(
+      `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
+      after,
+    );
+    const last = page.at(-1);
+    if (!last) break;
+    for (const blob of page) {
+      const stream = await blobs.get(blob.key);
+      if (!stream) throw new Error(`A file's content is missing (${blob.key})`);
+      count++;
+      yield { t: "blob", ...blob };
+      for await (const piece of rechunk(stream, BLOB_PIECE)) {
+        count++;
+        yield { t: "blob-data", data: toBase64(piece) };
+      }
+      count++;
+      yield { t: "blob-end" };
+    }
+    after = last.key;
+  }
+  yield { t: "part-end", records: count };
+}
+
+export async function readPart(
+  records: AsyncIterator<BundleRecord>,
+  db: SqliteDatabase,
+  blobs: BlobStore,
+) {
+  let pending: BundleRecord | undefined;
+  let count = 0;
+  const next = async () => {
     if (pending) {
       const value = pending;
       pending = undefined;
@@ -142,64 +211,88 @@ export async function readBundle(records: AsyncIterator<BundleRecord>) {
     const step = await records.next();
     return step.done ? undefined : step.value;
   };
-  return {
-    header,
-    async *main(): AsyncGenerator<SnapshotRecord> {
-      for (let record = await next(); record; record = await next()) {
-        if (record.t === "end" || record.t === "blob") {
-          pending = record;
-          return;
-        }
-        if (record.t !== "schema" && record.t !== "rows")
-          throw new BundleError("The bundle is damaged (unexpected record)");
-        count++;
-        yield record;
+  async function* main(): AsyncGenerator<SnapshotRecord> {
+    for (let record = await next(); record; record = await next()) {
+      if (record.t === "part-end" || record.t === "blob") {
+        pending = record;
+        return;
       }
-    },
-    async *blobs(): AsyncGenerator<{
-      key: string;
-      size: number;
-      hash: string;
-      stream: ReadableStream<Uint8Array>;
-    }> {
-      for (let record = await next(); record; record = await next()) {
-        if (record.t !== "blob") {
-          pending = record;
-          return;
-        }
-        count++;
-        let finished = false;
-        const stream = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            const piece = await next();
-            if (piece) count++;
-            if (!piece || piece.t === "blob-end") {
-              finished = true;
-              return piece
-                ? controller.close()
-                : controller.error(
-                    new BundleError("The bundle is truncated (a file is cut off)"),
-                  );
-            }
-            if (piece.t !== "blob-data")
-              return controller.error(
-                new BundleError("The bundle is damaged (a file is cut off)"),
+      if (record.t !== "schema" && record.t !== "rows")
+        throw new BundleError("The bundle is damaged (unexpected record)");
+      count++;
+      yield record;
+    }
+  }
+  await loadDatabase(db, main());
+  for (let record = await next(); record; record = await next()) {
+    if (record.t !== "blob") {
+      pending = record;
+      break;
+    }
+    count++;
+    const blob = record;
+    let finished = false;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const piece = await next();
+        if (piece) count++;
+        if (!piece || piece.t === "blob-end") {
+          finished = true;
+          return piece
+            ? controller.close()
+            : controller.error(
+                new BundleError("The bundle is truncated (a file is cut off)"),
               );
-            controller.enqueue(fromBase64(piece.data));
-          },
-        });
-        yield { key: record.key, size: record.size, hash: record.hash, stream };
-        if (!finished) throw new Error("Each blob must be read to its end");
+        }
+        if (piece.t !== "blob-data")
+          return controller.error(
+            new BundleError("The bundle is damaged (a file is cut off)"),
+          );
+        controller.enqueue(fromBase64(piece.data));
+      },
+    });
+    const body = measured(stream, Number.MAX_SAFE_INTEGER, () => new Error());
+    await blobs.put(blob.key, body.stream);
+    const got = body.result();
+    if (!finished || got.size !== blob.size || got.hash !== blob.hash)
+      throw new BundleError(
+        `The bundle is damaged: a file's content does not match (${blob.key})`,
+      );
+  }
+  const end = await next();
+  if (end?.t !== "part-end")
+    throw new BundleError("The bundle is truncated (a part is cut off)");
+  if (end.records !== count)
+    throw new BundleError(
+      `The bundle is damaged: ${count} records, expected ${end.records}`,
+    );
+}
+
+export function forwardPart(records: AsyncIterator<BundleRecord>) {
+  let done = false;
+  return encodeNdjson({
+    async *[Symbol.asyncIterator]() {
+      while (!done) {
+        const step = await records.next();
+        if (step.done)
+          throw new BundleError("The bundle is truncated (a part is cut off)");
+        if (step.value.t === "part-end") done = true;
+        yield step.value;
       }
     },
-    async end(): Promise<void> {
-      const record = await next();
-      if (record?.t === "end") end = record;
-      if (!end) throw new BundleError("The bundle is truncated (no end record)");
-      if (end.records !== count)
-        throw new BundleError(
-          `The bundle is damaged: ${count} records, expected ${end.records}`,
-        );
-    },
-  };
+  });
+}
+
+export async function readHeader(records: AsyncIterator<BundleRecord>) {
+  const first = await records
+    .next()
+    .catch(() => ({ done: true as const, value: undefined }));
+  if (first.done || first.value.t !== BUNDLE_FORMAT)
+    throw new BundleError("Not a Neo bundle");
+  const header = first.value;
+  if (header.version !== BUNDLE_VERSION)
+    throw new BundleError(
+      `Bundle version ${header.version} is not supported (this Neo reads ${BUNDLE_VERSION})`,
+    );
+  return header;
 }

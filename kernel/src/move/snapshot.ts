@@ -1,24 +1,38 @@
+import { Type, type Static } from "typebox";
 import { fromBase64, toBase64 } from "../crypto";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "../sql";
 
+export const SnapshotValue = Type.Union([
+  Type.Null(),
+  Type.Number(),
+  Type.String(),
+  Type.Object({ $b: Type.String() }),
+  Type.Object({ $i: Type.String() }),
+]);
+export type SnapshotValue = Static<typeof SnapshotValue>;
 
-export type SnapshotValue =
-  | null
-  | number
-  | string
-  | { $b: string }
-  | { $i: string };
-
-export type SnapshotRecord =
-  | {
-      t: "schema";
-      type: "table" | "index" | "trigger" | "view";
-      name: string;
-      table: string;
-      sql: string;
-      virtual?: boolean;
-    }
-  | { t: "rows"; table: string; columns: string[]; rows: SnapshotValue[][] };
+export const SnapshotRecord = Type.Union([
+  Type.Object({
+    t: Type.Literal("schema"),
+    type: Type.Union([
+      Type.Literal("table"),
+      Type.Literal("index"),
+      Type.Literal("trigger"),
+      Type.Literal("view"),
+    ]),
+    name: Type.String(),
+    table: Type.String(),
+    sql: Type.String(),
+    virtual: Type.Optional(Type.Boolean()),
+  }),
+  Type.Object({
+    t: Type.Literal("rows"),
+    table: Type.String(),
+    columns: Type.Array(Type.String()),
+    rows: Type.Array(Type.Array(SnapshotValue)),
+  }),
+]);
+export type SnapshotRecord = Static<typeof SnapshotRecord>;
 
 const PLATFORM_PREFIXES = ["sqlite_", "_cf_", "__"];
 const EXCLUDED_PREFIXES = [...PLATFORM_PREFIXES, "host_"];
@@ -29,7 +43,7 @@ interface MasterRow {
   type: "table" | "index" | "trigger" | "view";
   name: string;
   tbl_name: string;
-  sql: string | null;
+  sql: string;
 }
 
 const excluded = (name: string) =>
@@ -37,12 +51,12 @@ const excluded = (name: string) =>
 const quote = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`;
 const isVirtual = (sql: string) => /^\s*CREATE\s+VIRTUAL\s+TABLE/i.test(sql);
 
-async function readSchema(db: SqliteExecutor): Promise<MasterRow[]> {
+async function readSchema(db: SqliteExecutor) {
   const rows = await db.all<MasterRow>(
     `SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid`,
   );
   const virtualTables = rows
-    .filter((r) => r.type === "table" && isVirtual(r.sql!))
+    .filter((r) => r.type === "table" && isVirtual(r.sql))
     .map((r) => r.name);
   const isShadow = (name: string) =>
     virtualTables.some((v) => name !== v && name.startsWith(`${v}_`));
@@ -51,7 +65,7 @@ async function readSchema(db: SqliteExecutor): Promise<MasterRow[]> {
   );
 }
 
-function encodeValue(value: unknown): SnapshotValue {
+function encodeValue(value: unknown) {
   if (value === null || value === undefined) return null;
   if (typeof value === "number" || typeof value === "string") return value;
   if (typeof value === "bigint") return { $i: value.toString() };
@@ -61,7 +75,7 @@ function encodeValue(value: unknown): SnapshotValue {
   throw new Error(`Unsupported SQLite value: ${typeof value}`);
 }
 
-function decodeValue(value: SnapshotValue): SqliteValue {
+function decodeValue(value: SnapshotValue) {
   if (value === null || typeof value === "number" || typeof value === "string")
     return value;
   if ("$b" in value) return fromBase64(value.$b);
@@ -82,20 +96,20 @@ export async function* dumpDatabase(
       type: item.type,
       name: item.name,
       table: item.tbl_name,
-      sql: item.sql!,
-      ...(item.type === "table" && isVirtual(item.sql!)
+      sql: item.sql,
+      ...(item.type === "table" && isVirtual(item.sql)
         ? { virtual: true }
         : {}),
     };
   for (const item of schema) {
-    if (item.type !== "table" || isVirtual(item.sql!)) continue;
+    if (item.type !== "table" || isVirtual(item.sql)) continue;
     const columns = (
       await db.all<{ name: string }>(
         `SELECT name FROM pragma_table_info(?)`,
         item.name,
       )
     ).map((c) => c.name);
-    const order = /WITHOUT\s+ROWID/i.test(item.sql!) ? "" : "ORDER BY rowid ";
+    const order = /WITHOUT\s+ROWID/i.test(item.sql) ? "" : "ORDER BY rowid ";
     const query = `SELECT ${columns.map(quote).join(", ")} FROM ${quote(item.name)} ${order}LIMIT ? OFFSET ?`;
     const sizeOf =
       columns.map((c) => `coalesce(length(${quote(c)}), 0)`).join(" + ") || "0";
@@ -104,9 +118,11 @@ export async function* dumpDatabase(
       const lengths = await db.all<{ n: number }>(sizes, ROW_BATCH, offset);
       if (lengths.length === 0) break;
       take = 0;
-      for (let bytes = 0; take < lengths.length; take++) {
-        bytes += Number(lengths[take]!.n);
+      let bytes = 0;
+      for (const { n } of lengths) {
+        bytes += Number(n);
         if (take > 0 && bytes > RECORD_BYTES) break;
+        take++;
       }
       const rows = await db.all<Record<string, unknown>>(query, take, offset);
       if (rows.length === 0) break;
@@ -125,7 +141,7 @@ export async function loadDatabase(
   db: SqliteDatabase,
   records: AsyncIterable<SnapshotRecord>,
   batchRows = 500,
-): Promise<void> {
+) {
   const deferred: string[] = [];
   const rebuild: string[] = [];
   let batch: { sql: string; values: SqliteValue[] }[] = [];
@@ -176,7 +192,7 @@ export async function loadDatabase(
   });
 }
 
-export async function wipeDatabase(db: SqliteDatabase): Promise<void> {
+export async function wipeDatabase(db: SqliteDatabase) {
   const rows = await db.all<MasterRow>(
     `SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL`,
   );

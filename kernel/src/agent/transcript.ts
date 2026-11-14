@@ -1,12 +1,10 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation, EntryRecord } from "@earendil-works/pi-durable";
-import {
-  INPUT_ENTRY,
-  type InputEntryData,
-  type Mailbox,
-  type Turn,
-} from "./mailbox";
-import type { TranscriptItem } from "@neo/client";
+import { ASK_TOOL, askDetails } from "./tools/ask";
+import { INPUT_ENTRY, InputEntryData, type Mailbox } from "./mailbox";
+import { Attachment, parse, type TranscriptItem } from "@neo/client";
+import { Type } from "typebox";
+import Value from "typebox/value";
 export type { TranscriptItem } from "@neo/client";
 
 const OUTPUT_LIMIT = 4_000;
@@ -16,11 +14,7 @@ export async function readTranscript(
   conversation: Conversation,
   mailbox: Mailbox,
   options: { before?: number; limit?: number } = {},
-): Promise<{
-  items: TranscriptItem[];
-  turns: Record<string, Turn>;
-  before: number | null;
-}> {
+) {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
   const entries: EntryRecord[] = [];
   let cursor: Parameters<Conversation["entries"]>[2];
@@ -34,13 +28,12 @@ export async function readTranscript(
       context,
     );
     for (const entry of page.items) {
-      const id = entry.id as unknown as number;
-      if (options.before !== undefined && id >= options.before) continue;
+      if (options.before !== undefined && entry.id >= options.before) continue;
       if (entries.length < limit) entries.push(entry);
       else {
         more = true;
         if (entry.kind === INPUT_ENTRY) {
-          owner = (entry.data as InputEntryData).turnId;
+          owner = parse(InputEntryData, entry.data).turnId;
           break;
         }
       }
@@ -53,45 +46,52 @@ export async function readTranscript(
   const items: TranscriptItem[] = [];
   let turnId = owner;
   for (const entry of entries) {
-    const entryId = entry.id as unknown as number;
+    const entryId: number = entry.id;
     if (entry.kind === INPUT_ENTRY) {
-      const data = entry.data as InputEntryData;
+      const data = parse(InputEntryData, entry.data);
       if (!data.steered) turnId = data.turnId;
       items.push({
         type: "input",
         entryId,
         turnId: data.turnId,
-        steered: !!data.steered,
+        steered: data.steered,
         messages: data.messages,
       });
       continue;
     }
-    const message = entry.model?.[0] as Record<string, any> | undefined;
+    const message = entry.model?.[0];
     if (entry.kind === "pi.compaction")
       items.push({ type: "compaction", entryId, turnId });
     else if (entry.kind === "pi.reset")
       items.push({ type: "reset", entryId, turnId });
     else if (message?.role === "assistant") {
-      const parts = (message.content ?? []) as Record<string, any>[];
+      const parts = message.content;
       items.push({
         type: "assistant",
         entryId,
         turnId,
-        text: parts
-          .filter((p) => p.type === "text")
-          .map((p) => p.text)
-          .join(""),
+        text: parts.map((p) => (p.type === "text" ? p.text : "")).join(""),
         thinking: parts.some((p) => p.type === "thinking"),
-        toolCalls: parts
-          .filter((p) => p.type === "toolCall")
-          .map((p) => ({ id: p.id, name: p.name, args: p.arguments })),
+        toolCalls: parts.flatMap((p) =>
+          p.type === "toolCall"
+            ? [{ id: p.id, name: p.name, args: p.arguments }]
+            : [],
+        ),
         stopReason: message.stopReason ?? null,
         error: message.errorMessage ?? null,
       });
     } else if (message?.role === "toolResult") {
-      const output = ((message.content ?? []) as Record<string, any>[])
+      const output = message.content
         .map((p) => (p.type === "text" ? p.text : `[${p.type}]`))
         .join("");
+      const file =
+        message.toolName === "send_file" && !message.isError
+          ? sentFile(message.details)
+          : undefined;
+      const ask =
+        message.toolName === ASK_TOOL && !message.isError
+          ? askDetails(message.details)
+          : undefined;
       items.push({
         type: "tool",
         entryId,
@@ -102,14 +102,26 @@ export async function readTranscript(
           output.length > OUTPUT_LIMIT
             ? `${output.slice(0, OUTPUT_LIMIT)}…`
             : output,
-        isError: !!message.isError,
-        ...(message.toolName === "send_file" &&
-        !message.isError &&
-        message.details?.file
-          ? { file: message.details.file }
-          : {}),
+        isError: message.isError,
+        ...(file ? { file } : {}),
+        ...(ask ? { ask: { ...ask, answer: null } } : {}),
       });
     }
+  }
+  const answers = await mailbox.answers(
+    items.flatMap((i) =>
+      i.type === "tool" && i.ask ? [i.ask.questionId] : [],
+    ),
+  );
+  for (const item of items) {
+    if (item.type !== "tool" || !item.ask) continue;
+    const answer = answers.get(item.ask.questionId);
+    if (answer?.source === "user" && answer.meta)
+      item.ask.answer = {
+        messageId: answer.id,
+        answers: answer.meta.answer.answers,
+        at: answer.createdAt,
+      };
   }
   const ids = [
     ...new Set(items.map((i) => i.turnId).filter((t): t is string => !!t)),
@@ -121,7 +133,41 @@ export async function readTranscript(
   return {
     items: items.filter((i) => !i.turnId || !quiet.has(i.turnId)),
     turns: Object.fromEntries(turns),
-    before:
-      more && entries.length ? (entries[0]!.id as unknown as number) : null,
+    before: more ? (entries[0]?.id ?? null) : null,
   };
+}
+
+const SentFile = Type.Object({
+  file: Type.Intersect([
+    Attachment,
+    Type.Object({ caption: Type.Union([Type.String(), Type.Null()]) }),
+  ]),
+});
+
+function sentFile(details: unknown) {
+  return Value.Check(SentFile, details) ? details.file : undefined;
+}
+
+export async function findQuestion(
+  conversation: Conversation,
+  questionId: string,
+) {
+  let cursor: Parameters<Conversation["entries"]>[2];
+  for (;;) {
+    const page = await conversation.entries(
+      { order: "descending" },
+      200,
+      cursor,
+      context,
+    );
+    for (const entry of page.items) {
+      const message = entry.model?.[0];
+      if (message?.role !== "toolResult" || message.toolName !== ASK_TOOL)
+        continue;
+      const ask = askDetails(message.details);
+      if (ask?.questionId === questionId) return ask;
+    }
+    if (!page.next || page.items.length === 0) return undefined;
+    cursor = page.next;
+  }
 }

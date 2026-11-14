@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import { MEMORY_LIMIT, type Memory } from "../../services/memory";
-import { caller, json, refuse, type ToolServices } from "./shared";
+import { turnId, json, type ToolServices } from "./shared";
 
 const inclusion = Type.Union([
   Type.Literal("essential"),
@@ -19,12 +19,6 @@ const view = (m: Memory) => ({
 });
 
 export function memoryTools(services: ToolServices) {
-  const turn = async (conversationId: number) => {
-    const c = await caller(services, conversationId);
-    if (!c.turnId)
-      refuse("Memories change only in a turn that answers a message.");
-    return c as typeof c & { turnId: string };
-  };
   return [
     defineTool({
       name: "remember",
@@ -42,18 +36,13 @@ export function memoryTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await turn(api.conversationId);
+        const turn = await turnId(services);
         return json(
-          await services.memories.stageRemember(
-            c.agentId,
-            c.turnId,
-            api.callId,
-            {
-              text: args.text,
-              ...(args.memoryId ? { memoryId: args.memoryId } : {}),
-              ...(args.inclusion ? { inclusion: args.inclusion } : {}),
-            },
-          ),
+          await services.memories.stageRemember(turn, api.callId, {
+            text: args.text,
+            ...(args.memoryId ? { memoryId: args.memoryId } : {}),
+            ...(args.inclusion ? { inclusion: args.inclusion } : {}),
+          }),
         );
       },
     }),
@@ -64,14 +53,9 @@ export function memoryTools(services: ToolServices) {
       parameters: Type.Object({ memoryId: Type.String({ minLength: 1 }) }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await turn(api.conversationId);
+        const turn = await turnId(services);
         return json(
-          await services.memories.stageForget(
-            c.agentId,
-            c.turnId,
-            api.callId,
-            args.memoryId,
-          ),
+          await services.memories.stageForget(turn, api.callId, args.memoryId),
         );
       },
     }),
@@ -85,9 +69,7 @@ export function memoryTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
         const found = await services.memories.search(
-          c.agentId,
           args.query,
           args.limit ?? 5,
         );
@@ -103,15 +85,11 @@ export function memoryTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await caller(services, api.conversationId);
-        const page = await services.memories.page(
-          c.agentId,
-          args.after ?? null,
-        );
+        const page = await services.memories.page(args.after ?? null);
         return json({
           memories: page.memories.map(view),
           nextCursor: page.nextCursor,
-          total: await services.memories.count(c.agentId),
+          total: await services.memories.count(),
           limit: MEMORY_LIMIT,
         });
       },
@@ -132,11 +110,10 @@ export function memoryTools(services: ToolServices) {
       }),
       replay: "safe",
       execute: async (args, api) => {
-        const c = await turn(api.conversationId);
+        const turn = await turnId(services);
         return json(
           await services.memories.stageSelection(
-            c.agentId,
-            c.turnId,
+            turn,
             api.callId,
             args.changes,
           ),

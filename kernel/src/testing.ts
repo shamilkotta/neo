@@ -1,5 +1,7 @@
 import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
+import { JsonData } from "@neo/client";
+import type { Static } from "typebox";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -8,19 +10,21 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 
-export type ScriptStep =
-  | { text: string }
-  | { step: number }
-  | { tool: string; args: Record<string, unknown> }
-  | { gate: string }
-  | { recall: string };
+export const ScriptStep = Type.Union([
+  Type.Object({ text: Type.String() }),
+  Type.Object({ step: Type.Number() }),
+  Type.Object({ tool: Type.String(), args: JsonData }),
+  Type.Object({ gate: Type.String() }),
+  Type.Object({ recall: Type.String() }),
+]);
+export type ScriptStep = Static<typeof ScriptStep>;
 
 export const TEST_MODEL = { provider: "faux", modelId: "m" } as const;
 
 export function createTestRuntime() {
   const log: string[] = [];
   const seen: string[] = [];
-  const control = { block: [] as number[] };
+  const control: { block: number[] } = { block: [] };
   const gates = new Map<string, { open: boolean; waiters: (() => void)[] }>();
   const gateOf = (name: string) => {
     let g = gates.get(name);
@@ -42,11 +46,10 @@ export function createTestRuntime() {
       if (!g.open)
         await new Promise<void>((resolve, reject) => {
           g.waiters.push(resolve);
-          ctx.abortSignal?.addEventListener(
-            "abort",
-            () => reject(ctx.abortSignal!.reason),
-            { once: true },
-          );
+          const signal = ctx.abortSignal;
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
         });
       return { output: [{ type: "text", text: `gate ${args.name} passed` }] };
     },
@@ -61,11 +64,10 @@ export function createTestRuntime() {
       log.push(`start ${args.n}`);
       if (control.block.includes(args.n)) {
         await new Promise<never>((_, reject) => {
-          ctx.abortSignal?.addEventListener(
-            "abort",
-            () => reject(ctx.abortSignal!.reason),
-            { once: true },
-          );
+          const signal = ctx.abortSignal;
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
         });
       }
       log.push(`done ${args.n}`);
@@ -79,13 +81,13 @@ export function createTestRuntime() {
       return fauxAssistantMessage([fauxText(step.recall)]);
     }
     if ("text" in step) return fauxAssistantMessage([fauxText(step.text)]);
-    const [name, args] =
+    const call =
       "step" in step
-        ? ["step", { n: step.step }]
+        ? fauxToolCall("step", { n: step.step })
         : "gate" in step
-          ? ["gate", { name: step.gate }]
-          : [step.tool, step.args];
-    return fauxAssistantMessage([fauxToolCall(name, args as never)], {
+          ? fauxToolCall("gate", { name: step.gate })
+          : fauxToolCall(step.tool, step.args);
+    return fauxAssistantMessage([call], {
       stopReason: "toolUse",
     });
   };

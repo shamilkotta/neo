@@ -1,7 +1,6 @@
 import { Database, type Statement } from "bun:sqlite";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@neo/kernel";
 
-
 class SerialQueue {
   private tail: Promise<unknown> = Promise.resolve();
   run<T>(operation: () => T | Promise<T>): Promise<T> {

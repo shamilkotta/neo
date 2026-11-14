@@ -1,5 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
-import { RECOVERY_MS } from "@neo/kernel";
+import type { SharedRequest } from "@neo/kernel";
+import type {
+  AgentId,
+  AgentStatus,
+  NewAgent,
+  ProfileChange,
+} from "@neo/client";
 import { CloudflareHost } from "./host";
 
 export class InstanceDO extends DurableObject<Env> {
@@ -10,21 +16,60 @@ export class InstanceDO extends DurableObject<Env> {
     super(ctx, env);
     this.host = new CloudflareHost(ctx, env);
     this.ready = ctx.blockConcurrencyWhile(async () => {
-      const fallback = Date.now() + RECOVERY_MS;
-      const current = await ctx.storage.getAlarm();
-      if (current === null || current > fallback)
-        await ctx.storage.setAlarm(fallback);
       await this.host.open();
     });
   }
 
-  override async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request) {
     await this.ready;
-    return this.host.fetch(request);
+    const instance = request.headers.get("x-neo-instance");
+    if (!instance)
+      return Response.json({ error: "No instance" }, { status: 404 });
+    return this.host.fetch(request, instance);
   }
 
-  override async alarm(): Promise<void> {
+  async agentInit(instance: string, agentId: AgentId) {
     await this.ready;
-    await this.host.alarm();
+    return (await this.host.named(instance)).agentInit(agentId);
+  }
+
+  async agentConfig(instance: string) {
+    await this.ready;
+    return (await this.host.named(instance)).agentConfig();
+  }
+
+  async agentReport(instance: string, agentId: AgentId, status: AgentStatus) {
+    await this.ready;
+    await (await this.host.named(instance)).report(agentId, status);
+  }
+
+  async agentList(instance: string) {
+    await this.ready;
+    return (await this.host.named(instance)).services().registry.list();
+  }
+
+  async agentCreate(
+    instance: string,
+    by: string,
+    input: NewAgent,
+    key: string,
+  ) {
+    await this.ready;
+    return (await this.host.named(instance)).createAgent(input, by, key);
+  }
+
+  async agentUpdate(instance: string, agentId: AgentId, change: ProfileChange) {
+    await this.ready;
+    return (await this.host.named(instance)).updateAgent(agentId, change);
+  }
+
+  async sharedCall(instance: string, request: SharedRequest) {
+    await this.ready;
+    return (await this.host.named(instance)).sharedCall(request);
+  }
+
+  async sharedStream(instance: string, path: string) {
+    await this.ready;
+    return (await this.host.named(instance)).sharedStream(path);
   }
 }

@@ -86,7 +86,10 @@ async function main() {
       if (!values.out) throw new Error("--out is required");
       await neo.seal();
       try {
-        await Bun.write(values.out, new Response(await neo.exportBundle(passphrase)));
+        await Bun.write(
+          values.out,
+          new Response(await neo.exportBundle(passphrase)),
+        );
       } catch (error) {
         await neo.unseal();
         throw error;
@@ -105,18 +108,25 @@ async function main() {
       const fromToken = values["from-token"];
       const toToken = values["to-token"];
       if (!from || !fromToken || !to || !toToken)
-        throw new Error("--from, --from-token, --to and --to-token are required");
+        throw new Error(
+          "--from, --from-token, --to and --to-token are required",
+        );
       const source = new NeoClient({ url: from, token: fromToken });
       const dest = new NeoClient({ url: to, token: toToken });
       const before = await dest.status();
       if (before.state === "sealed")
-        throw new Error(`The target can't take an import (it is ${before.state})`);
+        throw new Error(
+          `The target can't take an import (it is ${before.state})`,
+        );
       await source.seal();
       const spool = mkdtempSync(join(tmpdir(), "neo-move-"));
       const file = join(spool, "instance.neo");
       let imported = false;
       try {
-        await Bun.write(file, new Response(await source.exportBundle(passphrase)));
+        await Bun.write(
+          file,
+          new Response(await source.exportBundle(passphrase)),
+        );
         const result = await dest.importBundle(Bun.file(file), passphrase);
         imported = true;
         await source.complete();

@@ -10,22 +10,22 @@ afterEach(async () => {
 });
 
 test("the instance serves the bundled web app next to its API", async () => {
-  const page = await fetch(`${neo.url()}/`);
+  const page = await fetch(`${neo.origin()}/`);
   expect(page.status).toBe(200);
   const html = await page.text();
   expect(html).toContain('<div id="root">');
-  const script = /src="(\.\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+  const script = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1];
   expect(script).toBeDefined();
-  const asset = await fetch(new URL(script!, `${neo.url()}/`));
+  const asset = await fetch(new URL(script!, `${neo.origin()}/`));
   expect(asset.status).toBe(200);
-  expect(await asset.text()).toContain("/v1/");
-  expect(await (await fetch(`${neo.url()}/some/app/route`)).text()).toContain(
-    '<div id="root">',
-  );
+  expect(await asset.text()).toContain("/agents/");
+  expect(
+    await (await fetch(`${neo.origin()}/some/app/route`)).text(),
+  ).toContain('<div id="root">');
 });
 
 test("the API answers cross-origin requests (standalone apps)", async () => {
-  const preflight = await fetch(`${neo.url()}/v1/status`, {
+  const preflight = await fetch(`${neo.url()}/status`, {
     method: "OPTIONS",
     headers: {
       origin: "https://app.example",
@@ -38,22 +38,22 @@ test("the API answers cross-origin requests (standalone apps)", async () => {
   expect(preflight.headers.get("access-control-allow-headers")).toContain(
     "authorization",
   );
-  const status = await fetch(`${neo.url()}/v1/status`, {
+  const status = await neo.fetch(`${neo.url()}/status`, {
     headers: { authorization: "Bearer t", origin: "https://app.example" },
   });
   expect(status.headers.get("access-control-allow-origin")).toBe("*");
-  expect((await fetch(`${neo.url()}/v1/events?token=t`)).status).toBe(401);
+  expect((await fetch(`${neo.url()}/events?token=t`)).status).toBe(401);
 });
 
 test("unauthenticated requests are refused before an instance exists", async () => {
   const base = neo.url();
-  expect((await fetch(`${base}/v1/status`)).status).toBe(401);
-  const wrong = await fetch(`${base}/v1/status`, {
+  expect((await fetch(`${base}/status`)).status).toBe(401);
+  const wrong = await fetch(`${base}/status`, {
     headers: { authorization: "Bearer nope", origin: "https://app.example" },
   });
   expect(wrong.status).toBe(401);
   expect(wrong.headers.get("access-control-allow-origin")).toBe("*");
-  expect(
-    (await fetch(`${base}/v1/status`, { method: "OPTIONS" })).status,
-  ).toBe(204);
+  expect((await fetch(`${base}/status`, { method: "OPTIONS" })).status).toBe(
+    204,
+  );
 });
