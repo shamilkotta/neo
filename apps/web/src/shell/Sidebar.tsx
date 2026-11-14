@@ -1,5 +1,5 @@
 import type { AgentSummary } from "@neo/client";
-import { Monitor, Moon, Star, PanelLeft, Plus, Search, Settings, Sun } from "lucide-react";
+import { Monitor, Moon, Star, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, Sun } from "lucide-react";
 import { cn, modKey } from "../lib/format";
 import { cycleTheme, theme } from "../lib/theme";
 import type { Instance } from "../state/instance";
@@ -38,11 +38,7 @@ export function Sidebar({
         )}
       >
         {open ? (
-          <div className="flex h-12 shrink-0 items-center gap-1.5 px-3">
-            <Round label={`Collapse (${modKey}B)`} onClick={() => toggleSidebar(false)}>
-              <PanelLeft className="size-[17px]" />
-            </Round>
-            <span className="flex-1" />
+          <div className="flex h-12 shrink-0 items-center justify-end gap-1.5 px-3">
             <Round label={`Search (${modKey}K)`} onClick={() => ui.palette.set(true)}>
               <Search className="size-[17px]" />
             </Round>
@@ -51,11 +47,7 @@ export function Sidebar({
             </Round>
           </div>
         ) : (
-          <div className="flex h-12 shrink-0 items-center justify-center">
-            <Round label={`Expand (${modKey}B)`} onClick={() => toggleSidebar(true)}>
-              <PanelLeft className="size-[17px]" />
-            </Round>
-          </div>
+          <div className="h-3 shrink-0" />
         )}
         <nav className={cn("flex-1 overflow-y-auto pb-3", open ? "px-2" : "px-2.5")}>
           {primary &&
@@ -72,6 +64,19 @@ export function Sidebar({
               <Mini key={a.id} agent={a} on={a.id === current} onChoose={onChoose} size={40} />
             ),
           )}
+          {!open && (
+            <button
+              type="button"
+              aria-label={`New agent (${modKey}⇧O)`}
+              title={`New agent (${modKey}⇧O)`}
+              onClick={() => ui.newAgent.set(true)}
+              className="group mt-1 flex w-full items-center justify-center py-1.5"
+            >
+              <span className="flex size-10 items-center justify-center rounded-[12px] border border-dashed border-line text-muted transition-colors group-hover:border-muted group-hover:text-fg">
+                <Plus className="size-[17px]" />
+              </span>
+            </button>
+          )}
         </nav>
         <Footer instance={instance} open={open} />
       </aside>
@@ -85,11 +90,6 @@ function Footer({ instance, open }: { instance: Instance; open: boolean }) {
   const ThemeIcon = t === "dark" ? Moon : t === "light" ? Sun : Monitor;
   return (
     <div className={cn("flex shrink-0 items-center gap-1.5 p-3", open ? "flex-row" : "flex-col")}>
-      {!open && (
-        <Round label={`New agent (${modKey}⇧O)`} onClick={() => ui.newAgent.set(true)}>
-          <Plus className="size-[17px]" />
-        </Round>
-      )}
       <Round label={`Settings (${modKey},)`} onClick={() => ui.settings.set("general")}>
         <Settings className="size-[17px]" />
         {status?.model === null && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warn" />}
@@ -97,6 +97,16 @@ function Footer({ instance, open }: { instance: Instance; open: boolean }) {
       <Round label={`Theme: ${t}`} onClick={cycleTheme}>
         <ThemeIcon className="size-[17px]" />
       </Round>
+      {open && <span className="flex-1" />}
+      <button
+        type="button"
+        aria-label={`${open ? "Collapse" : "Expand"} (${modKey}B)`}
+        title={`${open ? "Collapse" : "Expand"} (${modKey}B)`}
+        onClick={() => toggleSidebar(!open)}
+        className="flex size-9 items-center justify-center rounded-full text-faint transition-colors hover:bg-hover hover:text-fg max-[899px]:hidden"
+      >
+        {open ? <PanelLeftClose className="size-[17px]" /> : <PanelLeftOpen className="size-[17px]" />}
+      </button>
     </div>
   );
 }
