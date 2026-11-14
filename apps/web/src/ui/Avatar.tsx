@@ -22,20 +22,20 @@ export function Face({
       aria-hidden
       className={cn("shrink-0", activity === "paused" && "opacity-55 grayscale", className)}
     >
-      <rect width="40" height="40" rx="12" fill={color} />
-      <g className={working ? "animate-look" : undefined} style={{ transformOrigin: "20px 20px" }}>
-        {[14, 26].map((x) => (
-          <ellipse
-            key={x}
-            cx={x}
-            cy="19"
-            rx="3.1"
-            ry="4.4"
-            fill="#0a0a0c"
-            className="animate-blink"
-            style={{ transformOrigin: `${x}px 19px`, transformBox: "view-box" }}
-          />
-        ))}
+      <g transform="rotate(-8 20 20)">
+        <rect x="2" y="2" width="36" height="36" rx="13" fill={color} />
+        <g className={working ? "animate-look" : undefined} style={{ transformOrigin: "20px 20px" }}>
+          {[14, 26].map((x) => (
+            <g
+              key={x}
+              className="animate-blink"
+              style={{ transformOrigin: `${x}px 19px`, transformBox: "view-box" }}
+            >
+              <ellipse cx={x} cy="19" rx="3.4" ry="4.6" fill="#0a0a0c" />
+              <circle cx={x + 1.2} cy="17.2" r="1.2" fill="#fff" />
+            </g>
+          ))}
+        </g>
       </g>
     </svg>
   );

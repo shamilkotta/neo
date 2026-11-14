@@ -43,7 +43,7 @@ export function Workspace({ url, token, onForget }: { url: string; token: string
   if (!status)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4">
-        <Logo className="size-10 animate-pulse" />
+        <Logo className="animate-pulse text-[40px]" />
         {error ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <p className="max-w-xs text-[13px] text-muted">Can't reach your instance: {error}</p>
