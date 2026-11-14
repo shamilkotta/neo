@@ -39,13 +39,7 @@ export function App() {
 }
 
 export function Logo({ className }: { className?: string }) {
-  return (
-    <span className={cn("flex items-center justify-center rounded-[30%] bg-ident text-[#0a0a0c]", className)}>
-      <svg viewBox="0 0 32 32" className="size-[58%]" fill="none" stroke="currentColor" strokeWidth={3.6} strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 23V9l14 14V9" />
-      </svg>
-    </span>
-  );
+  return <span className={cn("font-brand leading-none text-fg tracking-normal [font-feature-settings:normal]", className)}>neo</span>;
 }
 
 function Connect({ url, onToken }: { url: string; onToken: (token: string) => void }) {
@@ -75,7 +69,7 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
           void submit();
         }}
       >
-        <Logo className="size-14 shadow-xl" />
+        <Logo className="text-[56px]" />
         <h1 className="mt-6 text-[26px] font-semibold tracking-tight">Welcome to Neo</h1>
         <p className="mt-1.5 text-center text-[14px] text-muted">Your always-on agent. Connect to your instance to continue.</p>
         <div className="mt-8 w-full">

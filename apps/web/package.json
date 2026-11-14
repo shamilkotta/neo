@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
+    "@fontsource/pacifico": "^5.3.0",
     "@neo/client": "workspace:*",
     "@tailwindcss/vite": "^4",
     "dompurify": "^3.4.17",
