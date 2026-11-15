@@ -81,9 +81,7 @@ export function AgentView({
               <span className="shimmer-text text-[12.5px] font-medium">Working</span>
             ) : activity === "paused" ? (
               <span className="text-[12.5px] text-warn">Paused</span>
-            ) : (
-              agent.title && <span className="hidden truncate text-[12.5px] text-muted sm:inline">{agent.title}</span>
-            )}
+            ) : null}
           </button>
         </header>
         {error && (
@@ -100,7 +98,7 @@ export function AgentView({
           session={session}
           name={agent.name}
           agents={status?.agents ?? NO_AGENTS}
-          empty={<Empty name={agent.name} id={agent.id} description={agent.description} onPick={(t) => composer.current?.fill(t)} />}
+          empty={<Empty name={agent.name} id={agent.id} onPick={(t) => composer.current?.fill(t)} />}
         />
         <Queue session={session} />
         <Composer
@@ -123,7 +121,7 @@ const SUGGESTIONS = [
   { icon: Lightbulb, title: "Remind me", text: "Remind me in 30 minutes to " },
 ];
 
-function Empty({ name, id, description, onPick }: { name: string; id: string; description: string | null; onPick: (t: string) => void }) {
+function Empty({ name, id, onPick }: { name: string; id: string; onPick: (t: string) => void }) {
   const hour = new Date().getHours();
   const greeting = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   return (
@@ -132,7 +130,7 @@ function Empty({ name, id, description, onPick }: { name: string; id: string; de
         <Avatar id={id} size={64} />
         <h1 className="mt-5 text-center text-[24px] font-semibold tracking-tight">{greeting}</h1>
         <p className="mt-1.5 max-w-md text-center text-[14.5px] text-muted">
-          {description ?? `${name} is always on. Ask anything, hand off work, or set up routines that run on their own.`}
+          {name} is always on. Ask anything, hand off work, or set up routines that run on their own.
         </p>
         <div className="mt-8 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
           {SUGGESTIONS.map((s, i) => (
