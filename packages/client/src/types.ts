@@ -85,6 +85,9 @@ export const AgentStatus = Type.Object({
   working: Type.Boolean(),
   queued: Type.Number(),
   paused: Type.Boolean(),
+  last: Nullable(
+    Type.Object({ text: Type.String(), fromUser: Type.Boolean() }),
+  ),
   at: Type.Number(),
 });
 export type AgentStatus = Static<typeof AgentStatus>;
