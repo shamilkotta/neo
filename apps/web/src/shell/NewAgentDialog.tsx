@@ -18,7 +18,6 @@ export function NewAgentDialog({ instance, onCreated }: { instance: Instance; on
 
 function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: string) => void }) {
   const [name, setName] = useState("");
-  const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
   return (
@@ -31,7 +30,6 @@ function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: str
         const agent = await attempt(() =>
           instance.root.createAgent({
             name: name.trim(),
-            ...(title.trim() ? { title: title.trim() } : {}),
             ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
           }),
         );
@@ -46,9 +44,6 @@ function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: str
         <Avatar id={name || "new"} name={name || "?"} size={44} />
         <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Researcher" className="h-10 text-[15px]" />
       </div>
-      <Field label="Title" hint="Optional">
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Keeps an eye on the news for me" />
-      </Field>
       <Field label="Instructions" hint="Optional. You can change these any time.">
         <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="What should it focus on? How should it talk?" />
       </Field>
