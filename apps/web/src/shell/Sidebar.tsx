@@ -152,7 +152,7 @@ function Mini({
 function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean; onChoose: (id: string) => void }) {
   const activity = activityOf(a);
   const line =
-    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : (a.description ?? (a.primary ? "Your main agent" : "Ready when you are"));
+    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : a.primary ? "Your main agent" : "Ready when you are";
   return (
     <button
       type="button"
@@ -169,7 +169,6 @@ function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[14.5px] font-semibold">{a.name}</span>
-          {a.title && <span className="truncate text-[13px] text-muted">· {a.title}</span>}
           {a.status?.queued ? (
             <span className="ml-auto rounded-full bg-brand px-1.5 text-[11px] leading-4 font-semibold text-white tabular-nums">
               {a.status.queued}
