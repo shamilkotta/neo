@@ -93,23 +93,17 @@ function Profile({
   const paused = state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
   const [draft, setDraft] = useState({
     name: agent.name,
-    title: agent.title ?? "",
-    description: agent.description ?? "",
     instructions: agent.instructions ?? "",
   });
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setDraft({
       name: agent.name,
-      title: agent.title ?? "",
-      description: agent.description ?? "",
       instructions: agent.instructions ?? "",
     });
   }, [agent.updatedAt]);
   const dirty =
     draft.name !== agent.name ||
-    draft.title !== (agent.title ?? "") ||
-    draft.description !== (agent.description ?? "") ||
     draft.instructions !== (agent.instructions ?? "");
   const set = (k: keyof typeof draft) => (e: { target: { value: string } }) => setDraft({ ...draft, [k]: e.target.value });
   return (
@@ -122,8 +116,6 @@ function Profile({
           () =>
             instance.root.updateAgent(agent.id, {
               name: draft.name.trim() || agent.name,
-              title: draft.title.trim() || null,
-              description: draft.description.trim() || null,
               instructions: draft.instructions.trim() || null,
             }),
           "Saved",
@@ -144,12 +136,6 @@ function Profile({
       <Field label="Name">
         <Input value={draft.name} onChange={set("name")} />
       </Field>
-      <Field label="Title" hint="A short role, shown under the name.">
-        <Input value={draft.title} onChange={set("title")} placeholder="Research assistant" />
-      </Field>
-      <Field label="Description">
-        <Textarea value={draft.description} onChange={set("description")} rows={2} placeholder="What this agent is for" />
-      </Field>
       <Field label="Instructions" hint="Always in its prompt. The model is chosen in Settings.">
         <Textarea value={draft.instructions} onChange={set("instructions")} rows={7} placeholder="How it should behave, what it should focus on…" />
       </Field>
@@ -158,7 +144,7 @@ function Profile({
           {saving ? <Spinner /> : "Save changes"}
         </Button>
         {dirty && (
-          <Button variant="ghost" onClick={() => setDraft({ name: agent.name, title: agent.title ?? "", description: agent.description ?? "", instructions: agent.instructions ?? "" })}>
+          <Button variant="ghost" onClick={() => setDraft({ name: agent.name, instructions: agent.instructions ?? "" })}>
             Discard
           </Button>
         )}
