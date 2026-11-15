@@ -38,7 +38,7 @@ import {
 } from "./agent/attachments";
 import { askTools } from "./agent/tools/ask";
 import { fileTools } from "./agent/tools/files";
-import { findQuestion } from "./agent/transcript";
+import { findQuestion, lastMessage } from "./agent/transcript";
 import {
   Mailbox,
   MailboxError,
@@ -268,6 +268,7 @@ export class NeoAgent {
       working: !!(await live.mailbox.currentTurn()),
       queued: (await live.mailbox.queue()).length,
       paused: (await live.self.get()).paused,
+      last: await lastMessage(await this.conversation(), live.mailbox),
       at: this.now(),
     };
   }

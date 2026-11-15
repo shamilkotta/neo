@@ -152,7 +152,7 @@ function Mini({
 function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean; onChoose: (id: string) => void }) {
   const activity = activityOf(a);
   const line =
-    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : a.primary ? "Your main agent" : "Ready when you are";
+    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : lastLine(a);
   return (
     <button
       type="button"
@@ -179,6 +179,12 @@ function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean
       </span>
     </button>
   );
+}
+
+function lastLine(a: AgentSummary) {
+  const last = a.status?.last;
+  if (!last) return "No messages yet";
+  return last.fromUser ? `You: ${last.text}` : last.text;
 }
 
 function Badged({ agent, children }: { agent: AgentSummary; children: React.ReactNode }) {

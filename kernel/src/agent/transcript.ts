@@ -10,6 +10,26 @@ export type { TranscriptItem } from "@neo/client";
 const OUTPUT_LIMIT = 4_000;
 const context = BACKGROUND_CONTEXT;
 
+const PREVIEW_LIMIT = 140;
+
+export async function lastMessage(conversation: Conversation, mailbox: Mailbox) {
+  const { items } = await readTranscript(conversation, mailbox, { limit: 30 });
+  for (const item of items.toReversed()) {
+    if (item.type === "assistant" && item.text.trim())
+      return { text: preview(item.text), fromUser: false };
+    if (item.type !== "input") continue;
+    const message = item.messages.findLast(
+      (m) => m.source === "user" && m.text.trim(),
+    );
+    if (message) return { text: preview(message.text), fromUser: true };
+  }
+  return null;
+}
+
+function preview(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, PREVIEW_LIMIT);
+}
+
 export async function readTranscript(
   conversation: Conversation,
   mailbox: Mailbox,
