@@ -1,4 +1,4 @@
-import { type ModelRef, type ProviderConfig, type ProviderInfo, type ProviderSetup, ThinkingLevel } from "@neo/client";
+import { type CustomModel, type ModelRef, type ProviderConfig, type ProviderInfo, type ProviderSetup, ThinkingLevel } from "@neo/client";
 import { Check, Info, KeyRound, LogOut, Monitor, Moon, Plus, SlidersHorizontal, Sun, Trash2, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import Value from "typebox/value";
@@ -220,29 +220,32 @@ function Providers({ instance }: { instance: Instance }) {
       )}
       <div className="flex flex-col gap-2">
         {providers?.map((p: ProviderInfo) => (
-          <div key={p.id} className="flex items-center gap-3 rounded-2xl border border-line bg-raised p-3">
-            <ProviderMark id={p.kind} />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13.5px] font-medium">{p.id}</div>
-              <div className="truncate text-[12px] text-muted">
-                {p.kind === "openai-compatible" ? `${p.baseUrl} · ${p.models.map((m) => m.id).join(", ")}` : p.kind}
+          <div key={p.id} className="rounded-2xl border border-line bg-raised p-3">
+            <div className="flex items-center gap-3">
+              <ProviderMark id={p.kind} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13.5px] font-medium">{p.id}</div>
+                <div className="truncate text-[12px] text-muted">
+                  {p.kind === "openai-compatible" ? p.baseUrl : p.kind}
+                </div>
               </div>
+              {p.hasKey && (
+                <span className="flex items-center gap-1 rounded-full bg-ok/10 px-2 py-0.5 text-[11.5px] font-medium text-ok">
+                  <Check className="size-3" /> Key set
+                </span>
+              )}
+              <IconButton
+                label="Remove"
+                size="sm"
+                onClick={async () => {
+                  if (await confirm({ title: `Remove ${p.id}?`, body: "Its key is deleted. Agents using its models stop working until you pick another.", action: "Remove", danger: true }))
+                    void attempt(() => instance.root.removeProvider(p.id), "Removed").then(done);
+                }}
+              >
+                <Trash2 className="size-3.5" />
+              </IconButton>
             </div>
-            {p.hasKey && (
-              <span className="flex items-center gap-1 rounded-full bg-ok/10 px-2 py-0.5 text-[11.5px] font-medium text-ok">
-                <Check className="size-3" /> Key set
-              </span>
-            )}
-            <IconButton
-              label="Remove"
-              size="sm"
-              onClick={async () => {
-                if (await confirm({ title: `Remove ${p.id}?`, body: "Its key is deleted. Agents using its models stop working until you pick another.", action: "Remove", danger: true }))
-                  void attempt(() => instance.root.removeProvider(p.id), "Removed").then(done);
-              }}
-            >
-              <Trash2 className="size-3.5" />
-            </IconButton>
+            {p.kind === "openai-compatible" && <CustomModels instance={instance} provider={p} onChange={done} />}
           </div>
         ))}
       </div>
@@ -289,6 +292,80 @@ function Providers({ instance }: { instance: Instance }) {
         )}
       </div>
     </>
+  );
+}
+
+function CustomModels({
+  instance,
+  provider,
+  onChange,
+}: {
+  instance: Instance;
+  provider: Extract<ProviderInfo, { kind: "openai-compatible" }>;
+  onChange: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (models: CustomModel[], message: string) => {
+    setBusy(true);
+    const { id, kind, baseUrl, env } = provider;
+    const ok = await attempt(
+      () =>
+        instance.root.putProvider({
+          id,
+          kind,
+          baseUrl,
+          models,
+          ...(env ? { env } : {}),
+        }),
+      message,
+    );
+    setBusy(false);
+    if (ok !== undefined) onChange();
+    return ok !== undefined;
+  };
+  const add = async () => {
+    const ids = draft
+      .split(",")
+      .map((s) => s.trim())
+      .filter((m) => m && !provider.models.some((x) => x.id === m));
+    if (ids.length && (await save([...provider.models, ...ids.map((m) => ({ id: m }))], ids.length > 1 ? "Models added" : "Model added"))) setDraft("");
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5 pl-12">
+      {provider.models.map((m) => (
+        <span key={m.id} className="flex items-center gap-1 rounded-full border border-line bg-sunken py-0.5 pr-1 pl-2.5 font-mono text-[11.5px]">
+          {m.id}
+          <button
+            type="button"
+            aria-label={`Remove ${m.id}`}
+            disabled={busy || provider.models.length === 1}
+            title={provider.models.length === 1 ? "A provider needs at least one model" : undefined}
+            onClick={() =>
+              void save(
+                provider.models.filter((x) => x.id !== m.id),
+                "Model removed",
+              )
+            }
+            className="rounded-full p-0.5 text-faint hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <X className="size-3" />
+          </button>
+        </span>
+      ))}
+      <form
+        className="flex min-w-40 flex-1 items-center gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void add();
+        }}
+      >
+        <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add model…" className="h-7 text-[12px]" />
+        <IconButton label="Add model" size="sm" type="submit" disabled={busy || !draft.trim()}>
+          <Plus className="size-3.5" />
+        </IconButton>
+      </form>
+    </div>
   );
 }
 
