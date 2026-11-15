@@ -401,23 +401,25 @@ function Live({ session }: { session: AgentSession }) {
   const pending = session.pending.use();
   if (!live.active && pending.length === 0) return null;
   const step = live.tools.at(-1);
-  const label = step ? "Working" : "Thinking";
   return (
-    <div className="mt-3 flex items-start">
-      <div
-        title={step ? humanize(step.name) : undefined}
-        className="group/live flex h-9 items-center gap-2 rounded-[20px] bg-bubble pr-3.5 pl-2"
-      >
-        <Face color={agentColor(session.id)} size={20} activity="working" />
-        <span className="shimmer-text text-[13.5px] font-medium">{label}</span>
-        {step && (
-          <span className="max-w-0 overflow-hidden text-[12.5px] whitespace-nowrap text-faint transition-[max-width] duration-300 group-hover/live:max-w-[240px]">
-            · {humanize(step.name)}
-          </span>
-        )}
-      </div>
+    <div className="mt-3 flex items-center gap-2" title={step ? humanize(step.name) : undefined}>
+      <Face color={agentColor(session.id)} size={20} activity="working" />
+      <LiveLabel busy={Boolean(step)} />
     </div>
   );
+}
+
+const MUSING = ["Pondering", "Mulling it over", "Connecting dots", "Brewing", "Piecing it together", "Chewing on it"];
+const DOING = ["Cooking", "Tinkering", "Rolling up sleeves", "On it", "Wiring things up", "Getting hands dirty"];
+
+function LiveLabel({ busy }: { busy: boolean }) {
+  const words = busy ? DOING : MUSING;
+  const [i, setI] = useState(() => Math.floor(Math.random() * words.length));
+  useEffect(() => {
+    const t = setInterval(() => setI((n) => n + 1), 4000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="shimmer-text text-[13.5px] font-medium">{words[i % words.length]}…</span>;
 }
 
 function CopyButton({ text }: { text: string }) {

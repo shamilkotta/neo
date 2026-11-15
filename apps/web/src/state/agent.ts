@@ -96,6 +96,7 @@ export class AgentSession {
       this.state.set(state);
       this.queue.set(queue);
       if (!state.turn) this.live.set(IDLE);
+      else if (!this.live.get().active) this.live.set((current) => ({ ...current, active: true }));
       this.settlePending(state, queue);
       this.error.set(undefined);
     } catch (e) {
