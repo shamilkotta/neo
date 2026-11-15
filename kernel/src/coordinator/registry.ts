@@ -5,8 +5,8 @@ import {
   AgentStatus,
   type NewAgent,
   type ProfileChange,
-  parseJson,
 } from "@neo/client";
+import Value from "typebox/value";
 import { PRIMARY_AGENT_ID } from "../agent/agents";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 
@@ -83,7 +83,7 @@ export class Registry {
     );
     return rows.map((row) => ({
       ...toProfile(row),
-      status: row.status ? parseJson(AgentStatus, row.status) : null,
+      status: readStatus(row.status),
     }));
   }
 
@@ -255,4 +255,10 @@ function toProfile(row: Row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readStatus(text: string | null) {
+  if (!text) return null;
+  const status: unknown = JSON.parse(text);
+  return Value.Check(AgentStatus, status) ? status : null;
 }
