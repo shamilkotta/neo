@@ -3,7 +3,6 @@ import { REGISTRY_SCHEMA } from "./coordinator/registry";
 import { MAILBOX_SCHEMA } from "./agent/mailbox";
 import { MESSAGING_SCHEMA } from "./agent/messaging";
 import { SCHEDULES_SCHEMA } from "./agent/schedules";
-import { EVENTS_SCHEMA } from "./services/events";
 import { HISTORY_SCHEMA } from "./services/history";
 import { MEMORY_SCHEMA } from "./services/memory";
 import { PROVIDERS_SCHEMA } from "./services/providers";
@@ -20,7 +19,6 @@ const META = async (tx: SqliteExecutor) => {
 
 const AGENT_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   META,
-  EVENTS_SCHEMA,
   AGENT_SCHEMA,
   MAILBOX_SCHEMA,
   MESSAGING_SCHEMA,
@@ -32,7 +30,6 @@ const AGENT_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
 
 const COORDINATOR_TABLES: ((tx: SqliteExecutor) => Promise<void>)[] = [
   META,
-  EVENTS_SCHEMA,
   SETTINGS_SCHEMA,
   SECRETS_SCHEMA,
   PROVIDERS_SCHEMA,

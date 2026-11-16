@@ -15,7 +15,7 @@ export function Queue({ session }: { session: AgentSession }) {
   const [editing, setEditing] = useState<string | null>(null);
   if (queue.length === 0) return null;
   const running = !!state?.turn;
-  const act = (fn: () => Promise<unknown>) => void attempt(fn).then(session.refresh);
+  const act = (fn: () => Promise<unknown>) => void attempt(fn);
   return (
     <div className="mx-auto w-full max-w-[760px] px-3 sm:px-6">
       <div className="animate-up -mb-px overflow-hidden rounded-t-2xl border border-b-0 border-line bg-panel">

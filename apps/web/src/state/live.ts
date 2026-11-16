@@ -1,4 +1,3 @@
-import type { LiveEvent } from "@neo/client";
 import { Type } from "typebox";
 import Value from "typebox/value";
 
@@ -16,13 +15,9 @@ export interface LiveTurn {
 
 export const IDLE: LiveTurn = { active: false, text: "", tools: [] };
 
-export function applyLive(
-  current: LiveTurn,
-  event: LiveEvent,
-  settle: () => void,
-): LiveTurn {
-  if (!Value.Check(PiEvent, event.data)) return current;
-  const e = event.data;
+export function applyLive(current: LiveTurn, event: unknown): LiveTurn {
+  if (!Value.Check(PiEvent, event)) return current;
+  const e = event;
   switch (e.type) {
     case "run_start":
       return { active: true, text: "", tools: [] };
@@ -37,7 +32,6 @@ export function applyLive(
       return text === current.text ? current : { ...current, active: true, text };
     }
     case "message_end":
-      settle();
       return { ...current, text: "" };
     case "tool_execution_start":
       return {
@@ -64,13 +58,11 @@ export function applyLive(
         ),
       };
     case "tool_execution_end":
-      settle();
       return {
         ...current,
         tools: current.tools.filter((t) => t.id !== e.toolCallId),
       };
     case "run_end":
-      settle();
       return current;
     default: {
       const unhandled: never = e;

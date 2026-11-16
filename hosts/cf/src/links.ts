@@ -8,7 +8,9 @@ export function coordinatorLink(env: Env, instance: string): CoordinatorLink {
   return {
     init: (agentId) => stub().agentInit(instance, agentId),
     config: () => stub().agentConfig(instance),
-    report: (agentId, status) => stub().agentReport(instance, agentId, status),
+    changed: (agentId, topics, status) =>
+      stub().agentChanged(instance, agentId, topics, status),
+    live: (agentId, events) => stub().agentLive(instance, agentId, events),
     agents: () => stub().agentList(instance),
     createAgent: (by, input, key) =>
       stub().agentCreate(instance, by, input, key),
@@ -29,6 +31,7 @@ export function agentCells(env: Env, instance: string): Cells {
         provision: (init) => stub().provision(init),
         profileChanged: (profile) => stub().profileChanged(profile),
         configChanged: (revision) => stub().configChanged(revision),
+        watch: (on) => stub().watch(on),
         status: () => stub().status(),
         isNew: () => stub().isNew(),
         seal: () => stub().seal(),

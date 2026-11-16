@@ -23,7 +23,13 @@ export function toBlocks(
   names: (id: string) => string,
 ): Block[] {
   const results = new Map<string, ToolItem>();
-  for (const i of items) if (i.type === "tool") results.set(i.toolCallId, i);
+  const answers = new Map<string, NonNullable<Ask["answer"]>>();
+  for (const i of items) {
+    if (i.type === "tool") results.set(i.toolCallId, i);
+    if (i.type === "input")
+      for (const m of i.messages)
+        if (m.answer) answers.set(m.answer.questionId, { messageId: m.id, answers: m.answer.answers, at: m.at });
+  }
   const blocks: Block[] = [];
   let reply: (Block & { kind: "reply" }) | null = null;
   let lastDay = "";
@@ -53,7 +59,8 @@ export function toBlocks(
       if (item.text) push({ kind: "text", key: `t-${item.entryId}`, text: item.text });
       for (const call of item.toolCalls) {
         const result = results.get(call.id);
-        if (result?.ask) push({ kind: "ask", key: call.id, ask: result.ask });
+        if (result?.ask)
+          push({ kind: "ask", key: call.id, ask: { ...result.ask, answer: result.ask.answer ?? answers.get(result.ask.questionId) ?? null } });
         else if (result?.file) push({ kind: "file", key: call.id, file: result.file });
         else if (result && !result.isError) {
           const action = actionOf(call.name, call.args, result.output, names);

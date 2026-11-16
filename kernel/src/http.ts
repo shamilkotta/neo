@@ -1,4 +1,5 @@
 import type { TSchema } from "typebox";
+import { tokenFromProtocols } from "@neo/client";
 import Value from "typebox/value";
 import { AttachmentError } from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
@@ -67,9 +68,9 @@ export const preflight = () =>
   new Response(null, { status: 204, headers: CORS });
 
 export function authorized(request: Request, token: string) {
-  const given = request.headers
-    .get("authorization")
-    ?.replace(/^Bearer\s+/i, "");
+  const given =
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+    tokenFromProtocols(request.headers.get("sec-websocket-protocol"));
   return !!given && timingSafeEqual(given, token);
 }
 
@@ -113,28 +114,6 @@ function errorResponse(error: unknown) {
       error.code === "not_found" ? 404 : 400,
     );
   return json({ error: message }, 500);
-}
-
-export function eventStream(
-  events: {
-    stream(after: number, signal: AbortSignal): ReadableStream<Uint8Array>;
-  },
-  request: Request,
-  url: URL,
-) {
-  const after =
-    Number(
-      url.searchParams.get("after") ??
-        request.headers.get("last-event-id") ??
-        0,
-    ) || 0;
-  return new Response(events.stream(after, request.signal), {
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-store",
-      "x-accel-buffering": "no",
-    },
-  });
 }
 
 export function matcher(request: Request, url: URL) {

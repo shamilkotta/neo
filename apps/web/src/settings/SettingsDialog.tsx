@@ -86,7 +86,7 @@ const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 function General({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const t = theme.use();
-  const { value, error, reload } = useLoad(
+  const { value, error } = useLoad(
     async () => ({ settings: await instance.root.settings(), models: await instance.root.models() }),
     [instance, version],
   );
@@ -95,10 +95,7 @@ function General({ instance }: { instance: Instance }) {
     if (value) setTz(value.settings.timezone);
   }, [value]);
   const save = (change: Parameters<typeof instance.root.updateSettings>[0]) =>
-    void attempt(() => instance.root.updateSettings(change), "Saved").then(() => {
-      reload();
-      void instance.refresh();
-    });
+    void attempt(() => instance.root.updateSettings(change), "Saved");
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <>
@@ -200,7 +197,7 @@ type Kind = (typeof KINDS)[number]["kind"];
 function Providers({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const status = instance.status.use();
-  const { value: providers, error, reload } = useLoad(() => instance.root.providers(), [instance, version]);
+  const { value: providers, error } = useLoad(() => instance.root.providers(), [instance, version]);
   const [adding, setAdding] = useState<Kind | null>(null);
   const [found, setFound] = useState<ProviderConfig[]>([]);
   useEffect(() => {
@@ -208,8 +205,6 @@ function Providers({ instance }: { instance: Instance }) {
   }, [instance, status?.capabilities.sockets]);
   const done = () => {
     setAdding(null);
-    reload();
-    void instance.refresh();
   };
   return (
     <>

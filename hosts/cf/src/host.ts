@@ -1,5 +1,8 @@
+import { AgentId, parse } from "@neo/client";
+import { type Static, Type } from "typebox";
 import {
   type AgentPorts,
+  type Clients,
   AgentHost,
   type CoordinatorPorts,
   CoordinatorHost,
@@ -12,6 +15,32 @@ import { agentCells, coordinatorLink } from "./links";
 import { CloudflareSqlite } from "./sqlite";
 
 const capabilities = { sockets: false, processes: false };
+
+export const SocketState = Type.Object({
+  instance: Type.String(),
+  watching: Type.Union([AgentId, Type.Null()]),
+});
+export type SocketState = Static<typeof SocketState>;
+
+export const socketState = (ws: WebSocket) =>
+  parse(SocketState, ws.deserializeAttachment());
+
+function socketClients(ctx: DurableObjectState): Clients {
+  const watchingOf = (ws: WebSocket) => socketState(ws).watching;
+  return {
+    send(signal, watching) {
+      const text = JSON.stringify(signal);
+      for (const ws of ctx.getWebSockets()) {
+        if (watching && watchingOf(ws) !== watching) continue;
+        try {
+          ws.send(text);
+        } catch {}
+      }
+    },
+    watching: (agentId) =>
+      ctx.getWebSockets().some((ws) => watchingOf(ws) === agentId),
+  };
+}
 
 export class CloudflareHost extends CoordinatorHost {
   constructor(
@@ -29,6 +58,7 @@ export class CloudflareHost extends CoordinatorHost {
       masterKey: await masterKeyFromBase64(this.env.NEO_MASTER_KEY),
       capabilities,
       cells: (instance) => agentCells(this.env, instance),
+      clients: socketClients(this.ctx),
       ...(this.env.NEO_TEST === "1" ? { test: true } : {}),
     };
   }

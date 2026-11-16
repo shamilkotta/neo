@@ -11,7 +11,6 @@ import {
 import { Type } from "typebox";
 import {
   body,
-  eventStream,
   HttpError,
   json,
   matcher,
@@ -49,7 +48,6 @@ async function route(neo: NeoCoordinator, request: Request, url: URL) {
       epoch: await neo.epoch(),
       capabilities: neo.host.capabilities,
       test: !!neo.host.test,
-      latestEvent: await neo.events.latest(),
     };
     if (neo.state === "active") {
       status.model = (await neo.model()) ?? null;
@@ -57,7 +55,6 @@ async function route(neo: NeoCoordinator, request: Request, url: URL) {
     }
     return json(status);
   }
-  if (is("GET", "/events")) return eventStream(neo.events, request, url);
 
   if (is("POST", "/move/seal")) {
     await neo.seal();

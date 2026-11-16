@@ -64,6 +64,10 @@ export class AgentDO extends DurableObject<Env> {
     await (await this.agent()).configChanged(revision);
   }
 
+  async watch(on: boolean) {
+    (await this.agent()).setWatched(on);
+  }
+
   async status() {
     return (await this.agent()).status();
   }

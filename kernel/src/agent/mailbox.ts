@@ -14,7 +14,8 @@ import { isSubmissionId } from "../pi-ids";
 import { attachmentsBlock } from "./attachments";
 import { agentHeader } from "./messaging";
 import { QUIET_REPLY } from "./schedules";
-import type { Events } from "../services/events";
+import type { Changes } from "../services/changes";
+import type { AgentTopic } from "@neo/client";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 import {
   JsonObject,
@@ -100,6 +101,7 @@ export interface MailboxHooks {
   conversation(): Promise<Conversation>;
   beforeWork(): Promise<void>;
   turnSettled(turn: Turn, messages: MailboxMessage[]): Promise<void>;
+  cancelled(messageId: string): Promise<void>;
   paused(): Promise<boolean>;
   timezone(): Promise<string>;
   checkImages(
@@ -164,7 +166,7 @@ export class Mailbox {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly harness: Harness,
-    private readonly events: Events,
+    private readonly changes: Changes<AgentTopic>,
     private readonly hooks: MailboxHooks,
     private readonly now: () => number,
   ) {}
@@ -291,10 +293,7 @@ export class Mailbox {
       return { message: toMessage(row), fresh: true };
     });
     if (!message.fresh) return message.message;
-    await this.events.emit({
-      type: "message.queued",
-      data: { message: message.message },
-    });
+    this.changes.touch("queue", "status");
     if (input.steer && (await this.currentTurn())) {
       await this.steer(message.message.id).catch(() => this.drain());
     } else {
@@ -339,13 +338,7 @@ export class Mailbox {
             m.id,
           );
       });
-      await this.events.emit({
-        type: "turn.started",
-        data: {
-          turnId,
-          messageIds: queued.map((m) => m.id),
-        },
-      });
+      this.changes.touch("status", "queue", "transcript");
       await this.submitTurn(turnId, input);
     });
   }
@@ -388,10 +381,7 @@ export class Mailbox {
         submission.id,
         message.id,
       );
-      await this.events.emit({
-        type: "message.steered",
-        data: { messageId, turnId: turn.id },
-      });
+      this.changes.touch("status", "queue", "transcript");
       this.trackSteer(message.id, submission.id);
     });
   }
@@ -407,7 +397,7 @@ export class Mailbox {
       await (await this.hooks.conversation()).abort(context);
       return true;
     });
-    if (stopped) await this.events.emit({ type: "turn.stopping", data: {} });
+    if (stopped) this.changes.touch("status");
     return stopped;
   }
 
@@ -421,7 +411,8 @@ export class Mailbox {
       if (!changed)
         throw new MailboxError("Only a queued message can be cancelled");
     });
-    await this.events.emit({ type: "message.cancelled", data: { messageId } });
+    this.changes.touch("queue", "status");
+    await this.hooks.cancelled(messageId);
   }
 
   async edit(messageId: string, text: string) {
@@ -443,7 +434,7 @@ export class Mailbox {
         "Only a queued message that is not an answer can be edited",
       );
     const message = toMessage(row);
-    await this.events.emit({ type: "message.edited", data: { message } });
+    this.changes.touch("queue");
     return message;
   }
 
@@ -463,7 +454,7 @@ export class Mailbox {
           );
       });
     });
-    await this.events.emit({ type: "queue.reordered", data: {} });
+    this.changes.touch("queue");
     return this.queue();
   }
 
@@ -583,17 +574,11 @@ export class Mailbox {
       );
     });
     const turn = present(await this.turn(turnId), `turn ${turnId}`);
-    await this.events.emit({ type: "turn.ended", data: { turn } });
+    this.changes.touch("status", "transcript");
     try {
       await this.hooks.turnSettled(turn, await this.turnMessages(turnId));
     } catch (e) {
-      await this.events.emit({
-        type: "error",
-        data: {
-          where: "turn.settled",
-          message: errorText(e),
-        },
-      });
+      console.error("turn.settled", errorText(e));
     }
     void this.drain();
   }
@@ -610,7 +595,7 @@ export class Mailbox {
         `UPDATE neo_mailbox SET status = 'queued', turn_id = NULL, steered = 0, pi_submission = NULL, started_at = NULL WHERE id = ?`,
         messageId,
       );
-      await this.events.emit({ type: "message.requeued", data: { messageId } });
+      this.changes.touch("queue", "status");
       void this.drain();
       return;
     }
@@ -623,10 +608,7 @@ export class Mailbox {
       this.now(),
       messageId,
     );
-    await this.events.emit({
-      type: "message.settled",
-      data: { messageId, status },
-    });
+    this.changes.touch("queue", "status");
   }
 
   private async entryText(entryId: unknown) {

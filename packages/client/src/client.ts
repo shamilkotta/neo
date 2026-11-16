@@ -9,11 +9,11 @@ import {
   AvailableModel,
   ImportResult,
   JsonObject,
-  LiveEvent,
   MailboxMessage,
   type QuestionAnswer,
   ModelRef,
-  NeoEvent,
+  ServerSignal,
+  type ClientSignal,
   ProviderConfig,
   ProviderInfo,
   Schedule,
@@ -29,6 +29,46 @@ import {
   type ProfileChange,
 } from "./types";
 
+export const SOCKET_PROTOCOL = "neo";
+const TOKEN_PREFIX = "bearer.";
+
+export const tokenProtocol = (token: string) =>
+  TOKEN_PREFIX +
+  btoa(String.fromCharCode(...new TextEncoder().encode(token)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+export function tokenFromProtocols(header: string | null) {
+  const entry = header
+    ?.split(",")
+    .map((p) => p.trim())
+    .find((p) => p.startsWith(TOKEN_PREFIX));
+  if (!entry) return undefined;
+  try {
+    const base64 = entry
+      .slice(TOKEN_PREFIX.length)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    return new TextDecoder().decode(
+      Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export interface SignalHandlers {
+  signal(signal: ServerSignal): void;
+  open?(): void;
+  close?(code: number): void;
+}
+
+export interface Connection {
+  watch(agentId: AgentId | null): void;
+  close(): void;
+}
+
 export class NeoApiError extends Error {
   constructor(
     readonly status: number,
@@ -43,6 +83,7 @@ export interface NeoClientOptions {
   url: string;
   token: string;
   fetch?: typeof fetch;
+  socket?: (url: string, protocols: string[]) => WebSocket;
 }
 
 class Http {
@@ -88,60 +129,6 @@ class Http {
     if (!response.ok) throw await apiError(response);
     return response;
   }
-
-  events(
-    handlers: {
-      durable?: (e: NeoEvent) => void;
-      live?: (e: LiveEvent) => void;
-      error?: (e: unknown) => void;
-    },
-    after = 0,
-  ) {
-    let last = after;
-    let stopped = false;
-    let controller: AbortController | undefined;
-    const run = async () => {
-      while (!stopped) {
-        controller = new AbortController();
-        try {
-          const response = await this.fetcher(
-            this.url(`/events?after=${last}`),
-            {
-              headers: {
-                authorization: `Bearer ${this.options.token}`,
-                accept: "text/event-stream",
-              },
-              signal: controller.signal,
-            },
-          );
-          if (!response.ok || !response.body)
-            throw new NeoApiError(
-              response.status,
-              "The event stream failed",
-              {},
-            );
-          for await (const frame of sseFrames(response.body)) {
-            if (frame.event === "live")
-              handlers.live?.(parseJson(LiveEvent, frame.data));
-            else if (frame.data) {
-              const event = parseJson(NeoEvent, frame.data);
-              last = Math.max(last, event.seq);
-              handlers.durable?.(event);
-            }
-          }
-        } catch (error) {
-          if (stopped) return;
-          handlers.error?.(error);
-        }
-        if (!stopped) await new Promise((r) => setTimeout(r, 2000));
-      }
-    };
-    void run();
-    return () => {
-      stopped = true;
-      controller?.abort();
-    };
-  }
 }
 
 export class NeoClient extends Http {
@@ -153,6 +140,53 @@ export class NeoClient extends Http {
   }
 
   status = () => this.call("GET", "/status", Status);
+
+  connect(handlers: SignalHandlers): Connection {
+    const socketUrl = this.url("/connect").replace(/^http/, "ws");
+    let socket: WebSocket | undefined;
+    let watching: AgentId | null = null;
+    let closed = false;
+    let retry = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const send = (signal: ClientSignal) => {
+      if (socket?.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify(signal));
+    };
+    const open = () => {
+      const protocols = [SOCKET_PROTOCOL, tokenProtocol(this.options.token)];
+      const current = this.options.socket
+        ? this.options.socket(socketUrl, protocols)
+        : new WebSocket(socketUrl, protocols);
+      socket = current;
+      current.addEventListener("open", () => {
+        retry = 0;
+        if (watching) send({ type: "watch", agentId: watching });
+        handlers.open?.();
+      });
+      current.addEventListener("message", (message: MessageEvent) => {
+        if (typeof message.data !== "string") return;
+        handlers.signal(parseJson(ServerSignal, message.data));
+      });
+      current.addEventListener("close", (event: CloseEvent) => {
+        if (closed || socket !== current) return;
+        handlers.close?.(event.code);
+        timer = setTimeout(open, Math.min(30_000, 500 * 2 ** retry++));
+      });
+    };
+    open();
+    return {
+      watch(agentId) {
+        if (watching === agentId) return;
+        watching = agentId;
+        send({ type: "watch", agentId });
+      },
+      close() {
+        closed = true;
+        clearTimeout(timer);
+        socket?.close();
+      },
+    };
+  }
 
   seal = () =>
     this.call("POST", "/move/seal", Type.Object({ state: Type.String() }), {});
@@ -304,7 +338,9 @@ export class AgentClient extends Http {
     (
       await this.raw(`/attachments${query({ path })}`, { method: "GET" })
     ).blob();
-  transcript = (options: { before?: number; limit?: number } = {}) =>
+  transcript = (
+    options: { before?: number; from?: number; limit?: number } = {},
+  ) =>
     this.call("GET", `/transcript${query(options)}`, TranscriptPage);
   turn = (id: string) =>
     this.call(
@@ -420,39 +456,4 @@ function query(params: Record<string, string | number | undefined>) {
   return entries.length
     ? `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)]))}`
     : "";
-}
-
-async function* sseFrames(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<{ event: string; data: string }> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of chunks(body)) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let end: number;
-    while ((end = buffer.indexOf("\n\n")) >= 0) {
-      const raw = buffer.slice(0, end);
-      buffer = buffer.slice(end + 2);
-      let event = "message";
-      const data: string[] = [];
-      for (const line of raw.split("\n")) {
-        if (line.startsWith("event: ")) event = line.slice(7);
-        else if (line.startsWith("data: ")) data.push(line.slice(6));
-      }
-      if (data.length) yield { event, data: data.join("\n") };
-    }
-  }
-}
-
-async function* chunks<T>(stream: ReadableStream<T>): AsyncGenerator<T> {
-  const reader = stream.getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      yield value;
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }

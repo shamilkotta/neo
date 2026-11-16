@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentProfile,
   AgentStatus,
+  AgentTopic,
   AgentSummary,
   ModelRef,
   NewAgent,
@@ -33,7 +34,14 @@ export interface CoordinatorLink {
   /** The agent's init if the registry has it; undefined for an agent that does not exist. */
   init(agentId: AgentId): Promise<AgentInit | undefined>;
   config(): Promise<AgentConfig>;
-  report(agentId: AgentId, status: AgentStatus): Promise<void>;
+  /** Something of the agent's changed; resolves to whether a client is watching it. */
+  changed(
+    agentId: AgentId,
+    topics: AgentTopic[],
+    status: AgentStatus | undefined,
+  ): Promise<boolean>;
+  /** Streaming output of a watched agent's run. */
+  live(agentId: AgentId, events: unknown[]): Promise<void>;
   agents(): Promise<AgentSummary[]>;
   /** `key` makes a retried call return the agent it already made. */
   createAgent(by: string, input: NewAgent, key: string): Promise<AgentProfile>;
@@ -56,6 +64,7 @@ export interface AgentLink {
   provision(init: AgentInit): Promise<void>;
   profileChanged(profile: AgentProfile): Promise<void>;
   configChanged(revision: number): Promise<void>;
+  watch(on: boolean): Promise<void>;
   status(): Promise<AgentStatus | undefined>;
   isNew(): Promise<boolean>;
   seal(): Promise<void>;

@@ -1,4 +1,4 @@
-import { Type, type Static, type TProperties, type TSchema } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 
 export function parse<const S extends TSchema>(schema: S, value: unknown) {
@@ -552,7 +552,6 @@ export const Status = Type.Object({
   test: Type.Boolean(),
   model: Type.Optional(Nullable(ModelRef)),
   agents: Type.Optional(Type.Array(AgentSummary)),
-  latestEvent: Type.Optional(Type.Number()),
 });
 export type Status = Static<typeof Status>;
 
@@ -565,7 +564,6 @@ export type AgentView = Static<typeof AgentView>;
 const agentStateFields = {
   turn: Nullable(Turn),
   queued: Type.Number(),
-  latestEvent: Type.Number(),
 };
 
 export const AgentState = Type.Union([
@@ -593,64 +591,44 @@ export const ImportResult = Type.Object({
 });
 export type ImportResult = Static<typeof ImportResult>;
 
-const event = <const T extends string, const D extends TProperties>(
-  type: T,
-  data: D,
-) => Type.Object({ type: Type.Literal(type), data: Type.Object(data) });
-
-export const EventBody = Type.Union([
-  event("agent.created", { agent: AgentProfile }),
-  event("agent.changed", { agent: AgentProfile }),
-  event("agent.deleted", { agentId: AgentId }),
-  event("agent.status", { agentId: AgentId, status: AgentStatus }),
-  event("agent.paused", {}),
-  event("agent.resumed", {}),
-  event("settings.changed", {}),
-  event("providers.changed", {}),
-  event("instance.sealed", {}),
-  event("instance.unsealed", {}),
-  event("instance.imported", {
-    from: Type.String(),
-    epoch: Type.Number(),
-  }),
-  event("agent.imported", {}),
-  event("schedule.changed", {}),
-  event("schedule.fired", {
-    scheduleId: Type.String(),
-    status: ScheduleRun.properties.status,
-    reason: Nullable(Type.String()),
-    messageId: Nullable(Type.String()),
-  }),
-  event("memory.changed", { turnId: Type.String(), applied: Type.Number() }),
-  event("message.queued", { message: MailboxMessage }),
-  event("message.edited", { message: MailboxMessage }),
-  event("message.steered", {
-    messageId: Type.String(),
-    turnId: Type.String(),
-  }),
-  event("message.cancelled", { messageId: Type.String() }),
-  event("message.requeued", { messageId: Type.String() }),
-  event("message.settled", { messageId: Type.String(), status: MessageStatus }),
-  event("queue.reordered", {}),
-  event("turn.started", {
-    turnId: Type.String(),
-    messageIds: Type.Array(Type.String()),
-  }),
-  event("turn.stopping", {}),
-  event("turn.ended", { turn: Turn }),
-  event("error", { where: Type.String(), message: Type.String() }),
+export const InstanceTopic = Type.Union([
+  Type.Literal("instance"),
+  Type.Literal("agents"),
+  Type.Literal("settings"),
+  Type.Literal("providers"),
 ]);
-export type EventBody = Static<typeof EventBody>;
-export type EventType = EventBody["type"];
+export type InstanceTopic = Static<typeof InstanceTopic>;
 
-export const NeoEvent = Type.Intersect([
-  Type.Object({ seq: Type.Number(), at: Type.Number() }),
-  EventBody,
+export const AgentTopic = Type.Union([
+  Type.Literal("status"),
+  Type.Literal("transcript"),
+  Type.Literal("queue"),
+  Type.Literal("schedules"),
+  Type.Literal("memory"),
+  Type.Literal("profile"),
 ]);
-export type NeoEvent = Static<typeof NeoEvent>;
+export type AgentTopic = Static<typeof AgentTopic>;
 
-export const LiveEvent = Type.Object({
-  type: Type.String(),
-  data: Type.Unknown(),
+export const ServerSignal = Type.Union([
+  Type.Object({
+    type: Type.Literal("changed"),
+    topics: Type.Array(InstanceTopic),
+  }),
+  Type.Object({
+    type: Type.Literal("agent"),
+    agentId: AgentId,
+    topics: Type.Array(AgentTopic),
+  }),
+  Type.Object({
+    type: Type.Literal("live"),
+    agentId: AgentId,
+    events: Type.Array(Type.Unknown()),
+  }),
+]);
+export type ServerSignal = Static<typeof ServerSignal>;
+
+export const ClientSignal = Type.Object({
+  type: Type.Literal("watch"),
+  agentId: Nullable(AgentId),
 });
-export type LiveEvent = Static<typeof LiveEvent>;
+export type ClientSignal = Static<typeof ClientSignal>;
