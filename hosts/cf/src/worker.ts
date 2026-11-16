@@ -15,7 +15,7 @@ export default {
     if (request.method === "OPTIONS") return preflight();
     if (!authorized(request, env.NEO_TOKEN)) return unauthorized();
     const path = api[1] ?? "/";
-    const test = env.NEO_TEST === "1" && request.headers.get("x-neo-instance");
+    const test = env.NEO_TEST === "1" && testInstance(request);
     const instance = test && NAME.test(test) ? test : INSTANCE;
     const headers = new Headers(request.headers);
     headers.set("x-neo-instance", instance);
@@ -42,3 +42,12 @@ export default {
     return env.INSTANCE.getByName(instance).fetch(new Request(target, init));
   },
 } satisfies ExportedHandler<Env>;
+
+const testInstance = (request: Request) =>
+  request.headers.get("x-neo-instance") ??
+  request.headers
+    .get("sec-websocket-protocol")
+    ?.split(",")
+    .map((p) => p.trim())
+    .find((p) => p.startsWith("instance."))
+    ?.slice("instance.".length);

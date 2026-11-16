@@ -121,7 +121,6 @@ function Profile({
           "Saved",
         );
         setSaving(false);
-        void instance.refresh();
       }}
     >
       <div className="flex items-center gap-3 rounded-2xl border border-line bg-raised p-3">
@@ -163,7 +162,7 @@ function Profile({
           icon={paused ? <Play className="size-3.5 fill-current" /> : <Pause className="size-3.5" />}
           onClick={() =>
             void attempt(
-              () => (paused ? session.client.resume() : session.client.pause()).then(session.refresh),
+              () => paused ? session.client.resume() : session.client.pause(),
               paused ? "Resumed" : "Paused",
             )
           }
@@ -186,7 +185,7 @@ function Profile({
               if (ok !== undefined) {
                 ui.details.set(null);
                 onDeleted();
-                void instance.refresh();
+                instance.forget(agent.id);
               }
             }}
           >
@@ -208,8 +207,8 @@ function describe(s: Schedule) {
 }
 
 function Routines({ session }: { session: AgentSession }) {
-  const version = session.changed.use();
-  const { value: schedules, error, reload } = useLoad(() => session.client.schedules(), [session, version]);
+  const version = session.schedulesVersion.use();
+  const { value: schedules, error } = useLoad(() => session.client.schedules(), [session, version]);
   if (error) return <p className="pt-2 text-[13px] text-danger">{error}</p>;
   if (!schedules)
     return (
@@ -245,7 +244,7 @@ function Routines({ session }: { session: AgentSession }) {
                 {s.window && ` · ${s.window.start}–${s.window.end}`}
               </div>
             </div>
-            <Switch checked={s.enabled} label={s.enabled ? "Turn off" : "Turn on"} onChange={(on) => void attempt(() => session.client.toggleSchedule(s.id, on)).then(reload)} />
+            <Switch checked={s.enabled} label={s.enabled ? "Turn off" : "Turn on"} onChange={(on) => void attempt(() => session.client.toggleSchedule(s.id, on))} />
           </div>
           <p className="mt-2 line-clamp-3 text-[12.5px] leading-relaxed text-fg/80">{s.prompt}</p>
           <div className="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] text-faint">

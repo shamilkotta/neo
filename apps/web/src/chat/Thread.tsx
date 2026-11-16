@@ -20,7 +20,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -58,43 +57,13 @@ export function Thread({
     [thread.items, thread.turns, names],
   );
   const scroller = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
   const top = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
   const [away, setAway] = useState(false);
   const loadingOlder = useRef(false);
-  const anchor = useRef<number | null>(null);
-  const lastTop = useRef(0);
 
-  const unpin = useCallback(() => {
-    pinned.current = false;
-    setAway(true);
+  const toBottom = useCallback(() => {
+    scroller.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
-
-  const toBottom = useCallback((smooth?: boolean) => {
-    const el = scroller.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-  }, []);
-
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    if (anchor.current !== null) {
-      el.scrollTop += el.scrollHeight - anchor.current;
-      anchor.current = null;
-    } else if (pinned.current) el.scrollTop = el.scrollHeight;
-  }, [blocks]);
-
-  useEffect(() => {
-    const el = content.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => {
-      if (pinned.current) toBottom();
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [toBottom, thread.loaded]);
 
   useEffect(() => {
     const el = top.current;
@@ -103,12 +72,8 @@ export function Thread({
       ([entry]) => {
         if (!entry?.isIntersecting || loadingOlder.current) return;
         loadingOlder.current = true;
-        anchor.current = scroller.current?.scrollHeight ?? null;
         void session.loadOlder().finally(() => {
           loadingOlder.current = false;
-          requestAnimationFrame(() => {
-            anchor.current = null;
-          });
         });
       },
       { root: scroller.current, rootMargin: "400px 0px 0px 0px" },
@@ -123,21 +88,10 @@ export function Thread({
     <div className="relative min-h-0 flex-1">
       <div
         ref={scroller}
-        className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none]"
-        onWheel={(e) => {
-          if (e.deltaY < 0) unpin();
-        }}
-        onTouchMove={unpin}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          const movedUp = el.scrollTop < lastTop.current - 1;
-          lastTop.current = el.scrollTop;
-          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-          pinned.current = near && !movedUp;
-          setAway(!pinned.current);
-        }}
+        className="flex h-full flex-col-reverse overflow-y-auto overscroll-contain"
+        onScroll={(e) => setAway(e.currentTarget.scrollTop < -120)}
       >
-        <div ref={content} className="flex min-h-full flex-col">
+        <div className="flex min-h-full shrink-0 flex-col">
           {!thread.loaded ? (
             <ThreadSkeleton />
           ) : nothing ? (
@@ -161,7 +115,7 @@ export function Thread({
       </div>
       <button
         type="button"
-        onClick={() => toBottom(true)}
+        onClick={toBottom}
         aria-label="Jump to latest"
         className={cn(
           "absolute bottom-3 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-raised text-muted shadow-lg transition-all duration-200 hover:text-fg",

@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { ATTACHMENTS_ROOT, USER_ROOT } from "./agent/attachments";
 import { readTranscript } from "./agent/transcript";
 import { ScriptStep } from "./testing";
-import { body, eventStream, HttpError, json, matcher, serve } from "./http";
+import { body, HttpError, json, matcher, serve } from "./http";
 import type { NeoAgent } from "./neo";
 import { joinPath, type Vfs, type VfsStat } from "./vfs/vfs";
 
@@ -32,10 +32,8 @@ async function route(neo: NeoAgent, request: Request, url: URL) {
       state: neo.state,
       turn: (await live?.mailbox.currentTurn()) ?? null,
       queued: live ? (await live.mailbox.queue()).length : 0,
-      latestEvent: await neo.events.latest(),
     });
   }
-  if (is("GET", "/events")) return eventStream(neo.events, request, url);
 
   const live = neo.services();
 
@@ -76,10 +74,12 @@ async function route(neo: NeoAgent, request: Request, url: URL) {
   }
   if (is("GET", "/transcript")) {
     const before = url.searchParams.get("before");
+    const from = url.searchParams.get("from");
     const limit = url.searchParams.get("limit");
     return json(
       await readTranscript(await neo.conversation(), live.mailbox, {
         ...(before ? { before: Number(before) } : {}),
+        ...(from ? { from: Number(from) } : {}),
         ...(limit ? { limit: Number(limit) } : {}),
       }),
     );

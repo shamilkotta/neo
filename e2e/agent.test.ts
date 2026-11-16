@@ -475,25 +475,33 @@ describe("recovery", () => {
 });
 
 describe("client", () => {
-  test("NeoClient follows the event stream", async () => {
-    const status = await neo.call("GET", "/status", AgentState);
-    const client = neo.client().agent(agentId("neo"));
+  test("a watching socket hears what changed and the live run", async () => {
     const seen: string[] = [];
-    const stop = client.events(
-      {
-        durable: (e) => seen.push(e.type),
-        live: (e) =>
-          seen.push(
-            `live:${Value.Check(Type.Object({ type: Type.String() }), e.data) ? e.data.type : "?"}`,
-          ),
+    let opened = false;
+    const connection = neo.client().connect({
+      open: () => {
+        opened = true;
       },
-      status.latestEvent,
-    );
+      signal: (signal) => {
+        if (signal.type === "agent") seen.push(...signal.topics);
+        else if (signal.type === "live")
+          for (const e of signal.events)
+            if (Value.Check(Type.Object({ type: Type.String() }), e))
+              seen.push(`live:${e.type}`);
+      },
+    });
+    connection.watch(agentId("neo"));
+    await until(async () => opened, 5000, "socket open");
     await script([{ text: "streamed" }]);
-    await client.send("hi");
-    await until(async () => seen.includes("turn.ended"), 5000, "turn.ended");
-    stop();
-    expect(seen).toContain("message.queued");
+    await neo.client().agent(agentId("neo")).send("hi");
+    await until(
+      async () => seen.includes("live:run_end") && seen.includes("transcript"),
+      5000,
+      "signals",
+    );
+    connection.close();
+    expect(seen).toContain("queue");
+    expect(seen).toContain("status");
     expect(seen).toContain("live:run_start");
   });
 });

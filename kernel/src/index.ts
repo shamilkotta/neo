@@ -18,5 +18,4 @@ export { authorized, preflight, unauthorized } from "./http";
 export { PRIMARY_AGENT_ID, type AgentProfile } from "./agent/agents";
 export type { MailboxMessage, Turn } from "./agent/mailbox";
 export type { TranscriptItem } from "./agent/transcript";
-export type { NeoEvent, LiveEvent } from "./services/events";
 export type { SharedReply, SharedRequest } from "./vfs/mount";

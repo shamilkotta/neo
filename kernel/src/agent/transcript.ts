@@ -33,7 +33,7 @@ function preview(text: string) {
 export async function readTranscript(
   conversation: Conversation,
   mailbox: Mailbox,
-  options: { before?: number; limit?: number } = {},
+  options: { before?: number; from?: number; limit?: number } = {},
 ) {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
   const entries: EntryRecord[] = [];
@@ -49,9 +49,10 @@ export async function readTranscript(
     );
     for (const entry of page.items) {
       if (options.before !== undefined && entry.id >= options.before) continue;
-      if (entries.length < limit) entries.push(entry);
+      const wanted = options.from === undefined || entry.id >= options.from;
+      if (wanted && entries.length < limit) entries.push(entry);
       else {
-        more = true;
+        if (wanted) more = true;
         if (entry.kind === INPUT_ENTRY) {
           owner = parse(InputEntryData, entry.data).turnId;
           break;

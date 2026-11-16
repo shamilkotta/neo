@@ -107,7 +107,7 @@ export const Composer = forwardRef<
       e.preventDefault();
       void submit();
     }
-    if (e.key === "Escape" && running && empty) void attempt(() => session.client.stop().then(session.refresh));
+    if (e.key === "Escape" && running && empty) void attempt(() => session.client.stop());
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -117,7 +117,7 @@ export const Composer = forwardRef<
     }
   };
 
-  const stop = () => void attempt(() => session.client.stop().then(session.refresh));
+  const stop = () => void attempt(() => session.client.stop());
   return (
     <div className="mx-auto w-full max-w-[820px] px-3 pb-[max(10px,env(safe-area-inset-bottom))] sm:px-5 sm:pb-4">
       <div className="rounded-[22px] border border-line-strong bg-raised transition-[border-color,box-shadow] focus-within:border-[color-mix(in_srgb,var(--brand)_45%,transparent)] focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--brand)_14%,transparent)]">

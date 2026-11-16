@@ -1,4 +1,4 @@
-import type { AgentId } from "@neo/client";
+import type { AgentId, ServerSignal } from "@neo/client";
 import type { Cells, CoordinatorLink } from "./links";
 import { NeoAgent } from "./neo";
 import { NeoCoordinator } from "./coordinator/coordinator";
@@ -26,6 +26,12 @@ export interface AgentPorts {
   now?: () => number;
 }
 
+/** The browsers connected to the instance; the host owns the sockets. */
+export interface Clients {
+  send(signal: ServerSignal, watching?: AgentId): void;
+  watching(agentId: AgentId): boolean;
+}
+
 export interface CoordinatorPorts {
   name: string;
   db: SqliteDatabase;
@@ -33,6 +39,7 @@ export interface CoordinatorPorts {
   masterKey: CryptoKey;
   capabilities: Capabilities;
   cells(instance: string): Cells;
+  clients: Clients;
   timezone?: string;
   test?: boolean;
   now?: () => number;

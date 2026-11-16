@@ -92,7 +92,13 @@ export async function instance(): Promise<Instance> {
     { preconnect: fetch.preconnect },
   );
   const client = () =>
-    new NeoClient({ url: base, token: TOKEN, fetch: fetcher });
+    new NeoClient({
+      url: base,
+      token: TOKEN,
+      fetch: fetcher,
+      socket: (url, protocols) =>
+        new WebSocket(url, [...protocols, `instance.${name}`]),
+    });
   const root = client();
   const agent = (id: string) => caller(root.agent(agentId(id)));
   return {

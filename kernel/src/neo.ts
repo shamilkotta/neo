@@ -23,7 +23,7 @@ import {
   type AgentId,
   type AgentMessage,
   type AgentProfile,
-  type EventType,
+  type AgentTopic,
   isAgentId,
   type QuestionAnswer,
 } from "@neo/client";
@@ -61,7 +61,7 @@ import { SetupError, StateError, storedState } from "./errors";
 import { decodeNdjson, encodeNdjson, readPart, writePart } from "./move/bundle";
 import { wipeDatabase } from "./move/snapshot";
 import { createAgentSchema, getMeta, hasTable, setMeta } from "./schema";
-import { Events } from "./services/events";
+import { Changes } from "./services/changes";
 import { History } from "./services/history";
 import { Memories } from "./services/memory";
 import { ModelCatalog } from "./services/providers";
@@ -100,19 +100,12 @@ type Home = { state: "empty" } | Held;
 
 const EMPTY: Home = { state: "empty" };
 
-const STATUS_EVENTS = new Set<EventType>([
-  "message.queued",
-  "message.cancelled",
-  "message.steered",
-  "message.requeued",
-  "turn.started",
-  "turn.ended",
-  "agent.paused",
-  "agent.resumed",
-]);
+const LIVE_FLUSH_MS = 50;
+
+const TRANSCRIPT_EVENTS = new Set(["message_end", "tool_execution_end", "run_end"]);
 
 export class NeoAgent {
-  readonly events: Events;
+  readonly changes = new Changes<AgentTopic>();
   readonly now: () => number;
   readonly catalog = new ModelCatalog();
   private live: Live | undefined;
@@ -125,20 +118,16 @@ export class NeoAgent {
   private conversation_: Conversation | undefined;
   private config_: AgentConfig | undefined;
   private stale = true;
-  private reporting: Promise<void> | undefined;
-  private reportAgain = false;
+  private readonly unsynced = new Set<AgentTopic>();
+  private syncing: Promise<void> | undefined;
+  private watched = false;
+  private liveBuffer: unknown[] = [];
+  private liveTimer: ReturnType<typeof setTimeout> | undefined;
 
   private constructor(readonly host: AgentPorts) {
     this.now = host.now ?? Date.now;
-    this.events = new Events(host.db, this.now);
     if (host.test) this.catalog.addHostProvider(host.test.provider);
-    this.events.subscribe((event) => {
-      if (STATUS_EVENTS.has(event.type)) this.report();
-      if (event.type === "message.cancelled" && this.live)
-        void this.live.messaging
-          .cancelled(event.data.messageId)
-          .catch(() => {});
-    });
+    this.changes.subscribe((topics) => this.sync(topics));
   }
 
   static async open(host: AgentPorts) {
@@ -228,7 +217,7 @@ export class NeoAgent {
     if (this.home.state === "empty" || this.home.agentId !== profile.id) return;
     await new AgentSelf(this.host.db).setProfile(profile);
     if (this.live) await this.live.self.setProfile(profile);
-    await this.events.emit({ type: "agent.changed", data: { agent: profile } });
+    this.changes.touch("profile", "status");
   }
 
   async config() {
@@ -273,25 +262,48 @@ export class NeoAgent {
     };
   }
 
-  private report() {
-    if (this.reporting) {
-      this.reportAgain = true;
-      return;
-    }
-    this.reporting = (async () => {
-      do {
-        this.reportAgain = false;
-        const status = await this.status().catch(() => undefined);
+  private sync(topics: AgentTopic[]) {
+    for (const topic of topics) this.unsynced.add(topic);
+    this.syncing ??= (async () => {
+      while (this.unsynced.size > 0) {
+        const batch = [...this.unsynced];
+        this.unsynced.clear();
         const home = this.home;
-        if (status && home.state !== "empty")
-          await this.host
-            .coordinator(home.instance)
-            .report(home.agentId, status)
-            .catch(() => {});
-      } while (this.reportAgain);
+        if (home.state === "empty") continue;
+        const status = batch.includes("status")
+          ? await this.status().catch(() => undefined)
+          : undefined;
+        this.watched = await this.host
+          .coordinator(home.instance)
+          .changed(home.agentId, batch, status)
+          .catch(() => this.watched);
+      }
     })().finally(() => {
-      this.reporting = undefined;
+      this.syncing = undefined;
     });
+  }
+
+  setWatched(on: boolean) {
+    this.watched = on;
+    if (!on) this.liveBuffer = [];
+  }
+
+  private pushLive(event: unknown) {
+    if (!this.watched) return;
+    this.liveBuffer.push(event);
+    this.liveTimer ??= setTimeout(() => this.flushLive(), LIVE_FLUSH_MS);
+  }
+
+  private flushLive() {
+    this.liveTimer = undefined;
+    const events = this.liveBuffer;
+    this.liveBuffer = [];
+    const home = this.home;
+    if (events.length === 0 || home.state === "empty") return;
+    void this.host
+      .coordinator(home.instance)
+      .live(home.agentId, events)
+      .catch(() => {});
   }
 
   async deliver(message: AgentMessage) {
@@ -346,7 +358,7 @@ export class NeoAgent {
       throw new StateError(this.home.state, `The agent is ${this.home.state}`);
     await this.stop();
     await this.setState(this.home, "sealed");
-    await this.events.emit({ type: "instance.sealed", data: {} });
+    this.changes.touch("status");
   }
 
   async unseal() {
@@ -355,7 +367,7 @@ export class NeoAgent {
       throw new StateError(this.home.state, "The agent is not sealed");
     await this.setState(this.home, "active");
     await this.start();
-    await this.events.emit({ type: "instance.unsealed", data: {} });
+    this.changes.touch("status");
   }
 
   async markMoved() {
@@ -397,7 +409,7 @@ export class NeoAgent {
       instance: init.instance,
     };
     await this.start();
-    await this.events.emit({ type: "agent.imported", data: {} });
+    this.changes.touch("status", "transcript", "queue", "schedules", "memory", "profile");
   }
 
   async destroy() {
@@ -475,23 +487,14 @@ export class NeoAgent {
           (await live.mailbox.message(messageId))?.status === "queued",
         timezone: () => this.timezone(),
       });
-      for (const run of runs)
-        await this.events.emit({
-          type: "schedule.fired",
-          data: {
-            scheduleId: run.scheduleId,
-            status: run.status,
-            reason: run.reason,
-            messageId: run.messageId,
-          },
-        });
+      if (runs.length > 0) this.changes.touch("schedules");
       if (!more) return;
     }
   }
 
   async schedulesChanged() {
     await this.arm();
-    await this.events.emit({ type: "schedule.changed", data: {} });
+    this.changes.touch("schedules");
   }
 
   async conversation() {
@@ -581,12 +584,12 @@ export class NeoAgent {
 
   async pause() {
     await this.services().self.setPaused(true);
-    await this.events.emit({ type: "agent.paused", data: {} });
+    this.changes.touch("status", "profile");
   }
 
   async resume() {
     await this.services().self.setPaused(false);
-    await this.events.emit({ type: "agent.resumed", data: {} });
+    this.changes.touch("status", "profile");
     await this.services().mailbox.drain();
   }
 
@@ -652,15 +655,10 @@ export class NeoAgent {
         onWake: (wake) => void this.arm(wake).catch(() => {}),
         onReport: (error, info) => {
           if (info.type === "listener_error") return;
-          void this.events
-            .emit({
-              type: "error",
-              data: {
-                where: info.type,
-                message: error instanceof Error ? error.message : String(error),
-              },
-            })
-            .catch(() => {});
+          console.error(
+            info.type,
+            error instanceof Error ? error.message : String(error),
+          );
         },
         ...(this.host.now ? { now: this.host.now } : {}),
       },
@@ -669,11 +667,13 @@ export class NeoAgent {
     const mailbox = new Mailbox(
       db,
       harness,
-      this.events,
+      this.changes,
       {
         conversation: () => this.conversation(),
         beforeWork: () => this.arm({ active: true }),
         turnSettled: (turn, messages) => this.turnSettled(turn, messages),
+        cancelled: (messageId) =>
+          this.services().messaging.cancelled(messageId).catch(() => {}),
         paused: async () => (await self.get()).paused,
         timezone: () => this.timezone(),
         checkImages: async (attachments) => {
@@ -787,7 +787,7 @@ export class NeoAgent {
     );
     harness.resume();
     await this.arm();
-    this.report();
+    this.changes.touch("status");
   }
 
   private async watch() {
@@ -806,7 +806,8 @@ export class NeoAgent {
           event.type === "usage_changed"
         )
           continue;
-        this.events.live("pi", event);
+        this.pushLive(event);
+        if (TRANSCRIPT_EVENTS.has(event.type)) this.changes.touch("transcript");
       }
     });
     live.watches.push(stream);
@@ -821,10 +822,7 @@ export class NeoAgent {
     );
     await live.history.sync(await this.conversation()).catch(() => {});
     if (applied > 0)
-      await this.events.emit({
-        type: "memory.changed",
-        data: { turnId: turn.id, applied },
-      });
+      this.changes.touch("memory");
     await this.arm();
   }
 

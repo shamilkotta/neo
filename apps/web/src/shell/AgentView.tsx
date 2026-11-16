@@ -4,7 +4,6 @@ import { type DragEvent, useEffect, useRef, useState } from "react";
 import { Composer, type ComposerHandle, DropOverlay } from "../chat/Composer";
 import { Queue } from "../chat/Queue";
 import { Thread } from "../chat/Thread";
-import { session as sessionFor } from "../state/agent";
 import type { Instance } from "../state/instance";
 import { toggleSidebar, ui } from "../state/ui";
 import { Avatar } from "../ui/Avatar";
@@ -23,8 +22,8 @@ export function AgentView({
   agent: AgentSummary;
   onDeleted: () => void;
 }) {
-  const session = sessionFor(instance.root, agent.id);
-  useEffect(() => session.attach(), [session]);
+  const session = instance.session(agent.id);
+  useEffect(() => instance.watch(agent.id), [instance, agent.id]);
   const state = session.state.use();
   const error = session.error.use();
   const status = instance.status.use();
