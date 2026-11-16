@@ -64,6 +64,12 @@ export function Thread({
   const [away, setAway] = useState(false);
   const loadingOlder = useRef(false);
   const anchor = useRef<number | null>(null);
+  const lastTop = useRef(0);
+
+  const unpin = useCallback(() => {
+    pinned.current = false;
+    setAway(true);
+  }, []);
 
   const toBottom = useCallback((smooth?: boolean) => {
     const el = scroller.current;
@@ -100,6 +106,9 @@ export function Thread({
         anchor.current = scroller.current?.scrollHeight ?? null;
         void session.loadOlder().finally(() => {
           loadingOlder.current = false;
+          requestAnimationFrame(() => {
+            anchor.current = null;
+          });
         });
       },
       { root: scroller.current, rootMargin: "400px 0px 0px 0px" },
@@ -114,12 +123,18 @@ export function Thread({
     <div className="relative min-h-0 flex-1">
       <div
         ref={scroller}
-        className="h-full overflow-y-auto overscroll-contain"
+        className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none]"
+        onWheel={(e) => {
+          if (e.deltaY < 0) unpin();
+        }}
+        onTouchMove={unpin}
         onScroll={(e) => {
           const el = e.currentTarget;
+          const movedUp = el.scrollTop < lastTop.current - 1;
+          lastTop.current = el.scrollTop;
           const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-          pinned.current = near;
-          setAway(!near);
+          pinned.current = near && !movedUp;
+          setAway(!pinned.current);
         }}
       >
         <div ref={content} className="flex min-h-full flex-col">
