@@ -368,7 +368,9 @@ function PendingView({ session }: { session: AgentSession }) {
 function Live({ session }: { session: AgentSession }) {
   const live = session.live.use();
   const pending = session.pending.use();
-  if (!live.active && pending.length === 0) return null;
+  const thread = session.thread.use();
+  const running = Object.values(thread.turns).some((t) => t.status === "running");
+  if (!live.active && !running && pending.length === 0) return null;
   const step = live.tools.at(-1);
   return (
     <div className="mt-3 flex items-center gap-2" title={step ? humanize(step.name) : undefined}>

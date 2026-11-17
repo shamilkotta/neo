@@ -162,9 +162,9 @@ export class AgentSession {
       this.thread.get().items.flatMap((i) => (i.type === "input" ? i.messages.map((m) => m.id) : [])),
     );
     const paused = state.state === "active" && state.agent.paused;
-    const waiting = new Set(paused ? [] : this.queue.get().map((m) => m.id));
+    const parked = new Set(paused ? this.queue.get().map((m) => m.id) : []);
     this.pending.set((all) => {
-      const left = all.filter((p) => !p.id || (!shown.has(p.id) && (waiting.has(p.id) || !!state.turn)));
+      const left = all.filter((p) => !p.id || (!shown.has(p.id) && !parked.has(p.id)));
       return left.length === all.length ? all : left;
     });
   }
