@@ -53,7 +53,7 @@ import { memoryTools } from "./agent/tools/memory";
 import type { ToolServices } from "./agent/tools/shared";
 import { scheduleTools } from "./agent/tools/schedules";
 import { HEARTBEAT, Schedules } from "./agent/schedules";
-import { handleAgentApi } from "./api";
+import { agentApi } from "./api";
 import type { Address, AgentPorts } from "./host";
 import type { AgentConfig, AgentInit } from "./links";
 import { toBase64 } from "./crypto";
@@ -167,8 +167,11 @@ export class NeoAgent {
     return this.live;
   }
 
+  private api?: ReturnType<typeof agentApi>;
+
   fetch(request: Request) {
-    return handleAgentApi(this, request);
+    this.api ??= agentApi(this);
+    return this.api.fetch(request);
   }
 
   private link() {

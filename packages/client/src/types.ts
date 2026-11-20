@@ -64,6 +64,9 @@ export function agentId(value: string) {
   return value;
 }
 
+export const RecordId = Type.String({ pattern: "^[\\w-]{1,64}$" });
+export const ProviderId = Type.String({ pattern: "^[a-z0-9][a-z0-9-]{0,62}$" });
+
 export const AgentId = Type.Unsafe<AgentId>(
   Type.String({ pattern: AGENT_ID, maxLength: 64 }),
 );
@@ -503,7 +506,7 @@ export const ProviderSetup = Type.Union([
   builtin("openai"),
   builtin("openrouter"),
   Type.Object({
-    id: Type.String({ pattern: "^[a-z0-9][a-z0-9-]{0,62}$" }),
+    id: ProviderId,
     kind: Type.Literal("openai-compatible"),
     baseUrl: Type.String({ minLength: 1 }),
     models: Type.Array(CustomModel, { minItems: 1 }),

@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Hono } from "hono";
 import type { SharedRequest } from "@neo/kernel";
 import { ClientSignal, SOCKET_PROTOCOL } from "@neo/client";
 import Value from "typebox/value";
@@ -14,6 +15,9 @@ import { CloudflareHost, socketState, type SocketState } from "./host";
 export class InstanceDO extends DurableObject<Env> {
   private readonly host: CloudflareHost;
   private readonly ready: Promise<void>;
+  private readonly routes = new Hono<{ Bindings: { instance: string } }>()
+    .get("/connect", (c) => this.accept(c.req.raw, c.env.instance))
+    .all("*", (c) => this.host.fetch(c.req.raw, c.env.instance));
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -28,8 +32,7 @@ export class InstanceDO extends DurableObject<Env> {
     const instance = request.headers.get("x-neo-instance");
     if (!instance)
       return Response.json({ error: "No instance" }, { status: 404 });
-    if (new URL(request.url).pathname === "/connect") return this.accept(request, instance);
-    return this.host.fetch(request, instance);
+    return this.routes.fetch(request, { instance });
   }
 
   private accept(request: Request, instance: string) {
@@ -46,7 +49,10 @@ export class InstanceDO extends DurableObject<Env> {
     });
   }
 
-  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+  override async webSocketMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer,
+  ) {
     await this.ready;
     if (typeof message !== "string") return;
     let signal: unknown;
@@ -58,10 +64,9 @@ export class InstanceDO extends DurableObject<Env> {
     if (!Value.Check(ClientSignal, signal)) return;
     const socket = socketState(ws);
     ws.serializeAttachment({ ...socket, watching: signal.agentId });
-    await (await this.host.named(socket.instance)).watchChanged(
-      socket.watching,
-      signal.agentId,
-    );
+    await (
+      await this.host.named(socket.instance)
+    ).watchChanged(socket.watching, signal.agentId);
   }
 
   override async webSocketClose(ws: WebSocket) {
@@ -76,10 +81,9 @@ export class InstanceDO extends DurableObject<Env> {
     await this.ready;
     const socket = socketState(ws);
     ws.serializeAttachment({ ...socket, watching: null });
-    await (await this.host.named(socket.instance)).watchChanged(
-      socket.watching,
-      null,
-    );
+    await (
+      await this.host.named(socket.instance)
+    ).watchChanged(socket.watching, null);
   }
 
   async agentInit(instance: string, agentId: AgentId) {

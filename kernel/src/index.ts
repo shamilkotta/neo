@@ -14,7 +14,7 @@ export {
 export { rechunk } from "./vfs/vfs";
 export { masterKeyFromBase64, newMasterKeyBase64 } from "./services/secrets";
 export { randomToken } from "./crypto";
-export { authorized, preflight, unauthorized } from "./http";
+export { requireToken, withCors } from "./http";
 export { PRIMARY_AGENT_ID, type AgentProfile } from "./agent/agents";
 export type { MailboxMessage, Turn } from "./agent/mailbox";
 export type { TranscriptItem } from "./agent/transcript";
