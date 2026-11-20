@@ -37,7 +37,7 @@ import { Settings } from "../services/settings";
 import { TEST_MODEL } from "../testing";
 import { serveShared, type SharedRequest } from "../vfs/mount";
 import { Vfs } from "../vfs/vfs";
-import { handleCoordinatorApi } from "./api";
+import { coordinatorApi } from "./api";
 import { Registry, RegistryError } from "./registry";
 
 interface Services {
@@ -99,8 +99,11 @@ export class NeoCoordinator {
     return this.live;
   }
 
+  private api?: ReturnType<typeof coordinatorApi>;
+
   fetch(request: Request) {
-    return handleCoordinatorApi(this, request);
+    this.api ??= coordinatorApi(this);
+    return this.api.fetch(request);
   }
 
   async setInstance(name: string) {

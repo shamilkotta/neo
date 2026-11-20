@@ -1,45 +1,33 @@
 import {
-  isAgentId,
+  AgentId,
+  JsonObject,
   NewAgent,
   ProfileChange,
-  JsonObject,
   ProviderConfig,
+  ProviderId,
   SettingsChange,
-  type AgentId,
   type Status,
 } from "@neo/client";
 import { Type } from "typebox";
-import {
-  body,
-  HttpError,
-  json,
-  matcher,
-  serve,
-  valid,
-} from "../http";
+import { api, HttpError, jsonBody, pathParams, valid } from "../http";
+
+const ByAgent = pathParams(Type.Object({ id: AgentId }));
+const ByProvider = pathParams(Type.Object({ id: ProviderId }));
 import { NEO_VERSION } from "../neo";
 import { detectLocalProviders } from "../services/providers";
 import type { NeoCoordinator } from "./coordinator";
 
-export function handleCoordinatorApi(neo: NeoCoordinator, request: Request) {
-  return serve(request, async (request, url) => {
+export function coordinatorApi(neo: NeoCoordinator) {
+  const app = api();
+  const live = () => neo.services();
+  const providers = async () => ({ providers: await live().providers.list() });
+
+  app.use(async (_c, next) => {
     await neo.finishDeletes();
-    return route(neo, request, url);
+    await next();
   });
-}
 
-async function route(neo: NeoCoordinator, request: Request, url: URL) {
-  const { is, param } = matcher(request, url);
-  let id: string | undefined;
-  const agentParam = (method: string) => {
-    const raw = param(method, /^\/agents\/([\w-]+)$/);
-    if (raw !== undefined && !isAgentId(raw))
-      throw new HttpError(404, "No such agent");
-    return raw;
-  };
-  let agentId: AgentId | undefined;
-
-  if (is("GET", "/status")) {
+  app.get("/status", async (c) => {
     const status: Status = {
       version: NEO_VERSION,
       host: neo.host.name,
@@ -51,97 +39,102 @@ async function route(neo: NeoCoordinator, request: Request, url: URL) {
     };
     if (neo.state === "active") {
       status.model = (await neo.model()) ?? null;
-      status.agents = await neo.services().registry.list();
+      status.agents = await live().registry.list();
     }
-    return json(status);
-  }
+    return c.json(status);
+  });
 
-  if (is("POST", "/move/seal")) {
+  app.post("/move/seal", async (c) => {
     await neo.seal();
-    return json({ state: neo.state });
-  }
-  if (is("POST", "/move/unseal")) {
+    return c.json({ state: neo.state });
+  });
+  app.post("/move/unseal", async (c) => {
     await neo.unseal();
-    return json({ state: neo.state });
-  }
-  if (is("POST", "/move/export")) {
-    const { passphrase } = await body(
-      request,
-      Type.Object({ passphrase: Type.Optional(Type.String()) }),
-    );
-    return new Response(await neo.exportBundle(passphrase || undefined), {
-      headers: {
-        "content-type": "application/x-neo-bundle",
-        "cache-control": "no-store",
-      },
-    });
-  }
-  if (is("POST", "/move/import")) {
-    if (!request.body)
-      throw new HttpError(400, "The bundle is the request body");
-    return json(
+    return c.json({ state: neo.state });
+  });
+  app.post(
+    "/move/export",
+    jsonBody(Type.Object({ passphrase: Type.Optional(Type.String()) })),
+    async (c) => {
+      const { passphrase } = c.req.valid("json");
+      return new Response(await neo.exportBundle(passphrase || undefined), {
+        headers: { "content-type": "application/x-neo-bundle" },
+      });
+    },
+  );
+  app.post("/move/import", async (c) => {
+    const bundle = c.req.raw.body;
+    if (!bundle) throw new HttpError(400, "The bundle is the request body");
+    return c.json(
       await neo.importBundle(
-        request.body,
-        request.headers.get("x-neo-passphrase") || undefined,
+        bundle,
+        c.req.header("x-neo-passphrase") || undefined,
       ),
     );
-  }
-  if (is("POST", "/move/complete")) {
+  });
+  app.post("/move/complete", async (c) => {
     await neo.markMoved();
-    return json({ state: neo.state });
-  }
+    return c.json({ state: neo.state });
+  });
 
-  const live = neo.services();
-
-  if (is("GET", "/agents")) return json({ agents: await live.registry.list() });
-  if (is("POST", "/agents")) {
-    const agent = await neo.createAgent(await body(request, NewAgent));
-    return json({ agent }, 201);
-  }
-  if ((agentId = agentParam("GET")) !== undefined) {
-    const agent = await live.registry.get(agentId);
+  app.get("/agents", async (c) =>
+    c.json({ agents: await live().registry.list() }),
+  );
+  app.post("/agents", jsonBody(NewAgent), async (c) =>
+    c.json({ agent: await neo.createAgent(c.req.valid("json")) }, 201),
+  );
+  app.get("/agents/:id", ByAgent, async (c) => {
+    const agent = await live().registry.get(c.req.valid("param").id);
     if (!agent) throw new HttpError(404, "No such agent");
-    return json({ agent });
-  }
-  if ((agentId = agentParam("PATCH")) !== undefined)
-    return json({
-      agent: await neo.updateAgent(agentId, await body(request, ProfileChange)),
-    });
-  if ((agentId = agentParam("DELETE")) !== undefined) {
-    await neo.deleteAgent(agentId);
-    return json({ deleted: agentId });
-  }
+    return c.json({ agent });
+  });
+  app.patch("/agents/:id", ByAgent, jsonBody(ProfileChange), async (c) =>
+    c.json({
+      agent: await neo.updateAgent(
+        c.req.valid("param").id,
+        c.req.valid("json"),
+      ),
+    }),
+  );
+  app.delete("/agents/:id", ByAgent, async (c) => {
+    const id = c.req.valid("param").id;
+    await neo.deleteAgent(id);
+    return c.json({ deleted: id });
+  });
 
-  if (is("GET", "/settings"))
-    return json({ settings: await live.settings.all() });
-  if (is("PUT", "/settings"))
-    return json({
-      settings: await neo.updateSettings(await body(request, SettingsChange)),
-    });
+  app.get("/settings", async (c) =>
+    c.json({ settings: await live().settings.all() }),
+  );
+  app.put("/settings", jsonBody(SettingsChange), async (c) =>
+    c.json({ settings: await neo.updateSettings(c.req.valid("json")) }),
+  );
 
-  if (is("GET", "/providers"))
-    return json({ providers: await live.providers.list() });
-  if (is("GET", "/providers/detect"))
-    return json({
+  app.get("/providers", async (c) => c.json(await providers()));
+  app.get("/providers/detect", async (c) =>
+    c.json({
       found: neo.host.capabilities.sockets ? await detectLocalProviders() : [],
-    });
-  if ((id = param("PUT", /^\/providers\/([\w-]+)$/)) !== undefined) {
-    const config = valid(ProviderConfig, {
-      ...(await body(request, JsonObject)),
-      id,
-    });
-    await neo.putProvider(config);
-    return json({ providers: await live.providers.list() });
-  }
-  if ((id = param("DELETE", /^\/providers\/([\w-]+)$/)) !== undefined) {
-    await neo.removeProvider(id);
-    return json({ providers: await live.providers.list() });
-  }
-  if (is("GET", "/models"))
-    return json({
+    }),
+  );
+  app.put("/providers/:id", ByProvider, jsonBody(JsonObject), async (c) => {
+    await neo.putProvider(
+      valid(ProviderConfig, {
+        ...c.req.valid("json"),
+        id: c.req.valid("param").id,
+      }),
+    );
+    return c.json(await providers());
+  });
+  app.delete("/providers/:id", ByProvider, async (c) => {
+    await neo.removeProvider(c.req.valid("param").id);
+    return c.json(await providers());
+  });
+
+  app.get("/models", async (c) =>
+    c.json({
       models: await neo.catalog.available(),
       default: (await neo.model()) ?? null,
-    });
+    }),
+  );
 
-  throw new HttpError(404, "Not found");
+  return app;
 }

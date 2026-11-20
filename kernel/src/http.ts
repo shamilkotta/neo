@@ -1,5 +1,10 @@
-import type { TSchema } from "typebox";
+import type { Static, TSchema } from "typebox";
 import { tokenFromProtocols } from "@neo/client";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { validator } from "hono/validator";
 import Value from "typebox/value";
 import { AttachmentError } from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
@@ -13,59 +18,65 @@ import { VfsError } from "./vfs/vfs";
 
 export class HttpError extends Error {
   constructor(
-    readonly status: number,
+    readonly status: ContentfulStatusCode,
     message: string,
   ) {
     super(message);
   }
 }
 
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers":
-    "authorization, content-type, last-event-id, x-neo-passphrase",
-  "access-control-max-age": "86400",
-};
+export const withCors = cors({
+  origin: "*",
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowHeaders: [
+    "authorization",
+    "content-type",
+    "last-event-id",
+    "x-neo-passphrase",
+  ],
+  maxAge: 86400,
+});
 
-export const json = (value: unknown, status = 200) =>
-  Response.json(value, { status, headers: { "cache-control": "no-store" } });
-
-export function withCors(response: Response) {
-  const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
+export function api() {
+  const app = new Hono();
+  app.use(withCors);
+  app.use(async (c, next) => {
+    await next();
+    c.header("cache-control", "no-store");
   });
+  app.notFound((c) => c.json({ error: "Not found" }, 404));
+  app.onError((error, c) => errorResponse(c, error));
+  return app;
 }
 
-export async function body<const S extends TSchema>(
-  request: Request,
+export function valid<const S extends TSchema>(
   schema: S,
-) {
-  const data: unknown = await request.json().catch(() => {
-    throw new HttpError(400, "The body is not JSON");
-  });
-  return valid(schema, data);
-}
-
-export function valid<const S extends TSchema>(schema: S, data: unknown) {
-  if (!Value.Check(schema, data))
-    throw new HttpError(400, invalid(schema, data));
-  return data;
-}
-
-function invalid(schema: TSchema, data: unknown) {
+  data: unknown,
+  part = "body",
+): Static<S> {
+  if (Value.Check(schema, data)) return data;
   const [first] = Value.Errors(schema, data);
-  return first
-    ? `Invalid body: ${first.instancePath || "/"} ${first.message}`
-    : "Invalid body";
+  throw new HttpError(
+    400,
+    first
+      ? `Invalid ${part}: ${first.instancePath || "/"} ${first.message}`
+      : `Invalid ${part}`,
+  );
 }
 
-export const preflight = () =>
-  new Response(null, { status: 204, headers: CORS });
+export const jsonBody = <const S extends TSchema>(schema: S) =>
+  validator("json", (value): Static<S> => valid(schema, value));
+
+export const queryParams = <const S extends TSchema>(schema: S) =>
+  validator("query", (value): Static<S> =>
+    valid(schema, Value.Convert(schema, value), "query"),
+  );
+
+export const pathParams = <const S extends TSchema>(schema: S) =>
+  validator("param", (value): Static<S> => {
+    if (!Value.Check(schema, value)) throw new HttpError(404, "Not found");
+    return value;
+  });
 
 export function authorized(request: Request, token: string) {
   const given =
@@ -74,32 +85,27 @@ export function authorized(request: Request, token: string) {
   return !!given && timingSafeEqual(given, token);
 }
 
-export const unauthorized = () =>
-  withCors(json({ error: "Unauthorized" }, 401));
+export const requireToken =
+  (token: (c: Context) => string): MiddlewareHandler =>
+  async (c, next) => {
+    if (authorized(c.req.raw, token(c))) return next();
+    await withCors(c, async () => {
+      c.res = c.json({ error: "Unauthorized" }, 401);
+    });
+    return c.res;
+  };
 
-export type Router = (request: Request, url: URL) => Promise<Response>;
-
-export async function serve(request: Request, route: Router) {
-  if (request.method === "OPTIONS") return preflight();
-  const url = new URL(request.url);
-  let response: Response;
-  try {
-    response = await route(request, url);
-  } catch (error) {
-    response = errorResponse(error);
-  }
-  return withCors(response);
-}
-
-function errorResponse(error: unknown) {
-  if (error instanceof HttpError)
-    return json({ error: error.message }, error.status);
+function errorResponse(c: Context, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof HttpError)
+    return c.json({ error: message }, error.status);
+  if (error instanceof HTTPException)
+    return c.json({ error: message }, error.status);
   if (error instanceof StateError)
-    return json({ error: message, state: error.state }, 409);
+    return c.json({ error: message, state: error.state }, 409);
   if (error instanceof SetupError)
-    return json({ error: message, setup: true }, 409);
-  if (error instanceof RegistryError) return json({ error: message }, 409);
+    return c.json({ error: message, setup: true }, 409);
+  if (error instanceof RegistryError) return c.json({ error: message }, 409);
   if (
     error instanceof MailboxError ||
     error instanceof AttachmentError ||
@@ -107,21 +113,11 @@ function errorResponse(error: unknown) {
     error instanceof BundleError ||
     error instanceof MemoryError
   )
-    return json({ error: message }, 400);
+    return c.json({ error: message }, 400);
   if (error instanceof VfsError)
-    return json(
+    return c.json(
       { error: message, code: error.code },
       error.code === "not_found" ? 404 : 400,
     );
-  return json({ error: message }, 500);
-}
-
-export function matcher(request: Request, url: URL) {
-  const { method } = request;
-  const path = url.pathname;
-  return {
-    is: (m: string, p: string) => method === m && path === p,
-    param: (m: string, pattern: RegExp) =>
-      method === m ? pattern.exec(path)?.[1] : undefined,
-  };
+  return c.json({ error: message }, 500);
 }
