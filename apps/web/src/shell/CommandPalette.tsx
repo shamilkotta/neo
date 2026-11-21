@@ -1,5 +1,16 @@
 import type { AgentSummary } from "@neo/client";
-import { AlarmClock, CornerDownLeft, KeyRound, type LucideIcon, Monitor, PanelLeft, Plus, Search, Settings, UserRound } from "lucide-react";
+import {
+  AlarmClock,
+  CornerDownLeft,
+  KeyRound,
+  type LucideIcon,
+  Monitor,
+  PanelLeft,
+  Plus,
+  Search,
+  Settings,
+  UserRound,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { cn, modKey } from "../lib/format";
 import { cycleTheme } from "../lib/theme";
@@ -18,16 +29,33 @@ interface Command {
 
 const icon = (I: LucideIcon) => <I className="size-4" />;
 
-export function CommandPalette({ agents, onChoose }: { agents: AgentSummary[]; onChoose: (id: string) => void }) {
+export function CommandPalette({
+  agents,
+  onChoose,
+}: {
+  agents: AgentSummary[];
+  onChoose: (id: string) => void;
+}) {
   const open = ui.palette.use();
   return (
-    <Dialog open={open} onClose={() => ui.palette.set(false)} bare className="sm:w-[560px]">
+    <Dialog
+      open={open}
+      onClose={() => ui.palette.set(false)}
+      bare
+      className="sm:w-[560px]"
+    >
       {open && <Palette agents={agents} onChoose={onChoose} />}
     </Dialog>
   );
 }
 
-function Palette({ agents, onChoose }: { agents: AgentSummary[]; onChoose: (id: string) => void }) {
+function Palette({
+  agents,
+  onChoose,
+}: {
+  agents: AgentSummary[];
+  onChoose: (id: string) => void;
+}) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const list = useRef<HTMLDivElement>(null);
@@ -41,23 +69,73 @@ function Palette({ agents, onChoose }: { agents: AgentSummary[]; onChoose: (id: 
         hint: n < 9 ? `${modKey}${n + 1}` : undefined,
         run: () => onChoose(a.id),
       })),
-      { id: "new", label: "New agent", group: "Actions", icon: icon(Plus), hint: `${modKey}⇧O`, run: () => ui.newAgent.set(true) },
-      { id: "profile", label: "Edit agent profile", group: "Actions", icon: icon(UserRound), hint: `${modKey}.`, run: () => ui.details.set("profile") },
-      { id: "routines", label: "Routines", group: "Actions", icon: icon(AlarmClock), run: () => ui.details.set("routines") },
-      { id: "sidebar", label: "Toggle sidebar", group: "Actions", icon: icon(PanelLeft), hint: `${modKey}B`, run: () => toggleSidebar() },
-      { id: "theme", label: "Switch theme", group: "Preferences", icon: icon(Monitor), run: cycleTheme },
-      { id: "settings", label: "Settings", group: "Preferences", icon: icon(Settings), hint: `${modKey},`, run: () => ui.settings.set("general") },
-      { id: "providers", label: "Providers and API keys", group: "Preferences", icon: icon(KeyRound), run: () => ui.settings.set("providers") },
+      {
+        id: "new",
+        label: "New agent",
+        group: "Actions",
+        icon: icon(Plus),
+        hint: `${modKey}⇧O`,
+        run: () => ui.newAgent.set(true),
+      },
+      {
+        id: "profile",
+        label: "Edit agent profile",
+        group: "Actions",
+        icon: icon(UserRound),
+        hint: `${modKey}.`,
+        run: () => ui.details.set("profile"),
+      },
+      {
+        id: "routines",
+        label: "Routines",
+        group: "Actions",
+        icon: icon(AlarmClock),
+        run: () => ui.details.set("routines"),
+      },
+      {
+        id: "sidebar",
+        label: "Toggle sidebar",
+        group: "Actions",
+        icon: icon(PanelLeft),
+        hint: `${modKey}B`,
+        run: () => toggleSidebar(),
+      },
+      {
+        id: "theme",
+        label: "Switch theme",
+        group: "Preferences",
+        icon: icon(Monitor),
+        run: cycleTheme,
+      },
+      {
+        id: "settings",
+        label: "Settings",
+        group: "Preferences",
+        icon: icon(Settings),
+        hint: `${modKey},`,
+        run: () => ui.settings.set("general"),
+      },
+      {
+        id: "providers",
+        label: "Providers and API keys",
+        group: "Preferences",
+        icon: icon(KeyRound),
+        run: () => ui.settings.set("providers"),
+      },
     ],
     [agents, onChoose],
   );
   const shown = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    return commands.filter((c) => words.every((w) => `${c.label} ${c.group}`.toLowerCase().includes(w)));
+    return commands.filter((c) =>
+      words.every((w) => `${c.label} ${c.group}`.toLowerCase().includes(w)),
+    );
   }, [commands, q]);
   useEffect(() => setI(0), [q]);
   useEffect(() => {
-    list.current?.querySelector(`[data-i="${i}"]`)?.scrollIntoView({ block: "nearest" });
+    list.current
+      ?.querySelector(`[data-i="${i}"]`)
+      ?.scrollIntoView({ block: "nearest" });
   }, [i]);
   const run = (c: Command | undefined) => {
     if (!c) return;
@@ -91,23 +169,42 @@ function Palette({ agents, onChoose }: { agents: AgentSummary[]; onChoose: (id: 
         <Kbd>esc</Kbd>
       </div>
       <div ref={list} className="overflow-y-auto p-1.5">
-        {shown.length === 0 && <div className="py-10 text-center text-[13px] text-muted">No results</div>}
+        {shown.length === 0 && (
+          <div className="py-10 text-center text-[13px] text-muted">
+            No results
+          </div>
+        )}
         {shown.map((c, n) => {
           const header = c.group !== lastGroup;
           lastGroup = c.group;
           return (
             <div key={c.id}>
-              {header && <div className="px-2.5 pt-2.5 pb-1 text-[11px] font-medium text-faint">{c.group}</div>}
+              {header && (
+                <div className="px-2.5 pt-2.5 pb-1 text-[11px] font-medium text-faint">
+                  {c.group}
+                </div>
+              )}
               <button
                 type="button"
                 data-i={n}
                 onMouseMove={() => setI(n)}
                 onClick={() => run(c)}
-                className={cn("flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13.5px]", n === i && "bg-hover")}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[13.5px]",
+                  n === i && "bg-hover",
+                )}
               >
-                <span className="flex size-5 items-center justify-center text-muted">{c.icon}</span>
+                <span className="flex size-5 items-center justify-center text-muted">
+                  {c.icon}
+                </span>
                 <span className="flex-1 truncate">{c.label}</span>
-                {n === i ? <CornerDownLeft className="size-3.5 text-faint" /> : c.hint && <span className="text-[11.5px] text-faint">{c.hint}</span>}
+                {n === i ? (
+                  <CornerDownLeft className="size-3.5 text-faint" />
+                ) : (
+                  c.hint && (
+                    <span className="text-[11.5px] text-faint">{c.hint}</span>
+                  )
+                )}
               </button>
             </div>
           );

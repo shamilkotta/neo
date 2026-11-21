@@ -1,4 +1,9 @@
-import type { AgentClient, AgentSummary, InputMessage, Turn } from "@neo/client";
+import type {
+  AgentClient,
+  AgentSummary,
+  InputMessage,
+  Turn,
+} from "@neo/client";
 import {
   AlarmClock,
   ArrowDown,
@@ -105,7 +110,12 @@ export function Thread({
                 </div>
               )}
               {blocks.map((b) => (
-                <BlockView key={b.key} block={b} client={session.client} name={name} />
+                <BlockView
+                  key={b.key}
+                  block={b}
+                  client={session.client}
+                  name={name}
+                />
               ))}
               <PendingView session={session} />
               <Live session={session} />
@@ -119,7 +129,9 @@ export function Thread({
         aria-label="Jump to latest"
         className={cn(
           "absolute bottom-3 left-1/2 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-raised text-muted shadow-lg transition-all duration-200 hover:text-fg",
-          away ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+          away
+            ? "translate-y-0 opacity-100"
+            : "pointer-events-none translate-y-2 opacity-0",
         )}
       >
         <ArrowDown className="size-4" />
@@ -128,7 +140,13 @@ export function Thread({
   );
 }
 
-function LiveOrEmpty({ session, empty }: { session: AgentSession; empty: ReactNode }) {
+function LiveOrEmpty({
+  session,
+  empty,
+}: {
+  session: AgentSession;
+  empty: ReactNode;
+}) {
   const live = session.live.use();
   const pending = session.pending.use();
   if (!live.active && pending.length === 0) return <>{empty}</>;
@@ -166,7 +184,9 @@ const BlockView = memo(function BlockView({
   switch (block.kind) {
     case "day":
       return (
-        <div className="flex justify-center pt-5 pb-2 text-[12px] font-medium text-muted">{dayLabel(block.at)}</div>
+        <div className="flex justify-center pt-5 pb-2 text-[12px] font-medium text-muted">
+          {dayLabel(block.at)}
+        </div>
       );
     case "note":
       return (
@@ -178,10 +198,17 @@ const BlockView = memo(function BlockView({
       );
     case "input":
       return (
-        <InputView client={client} message={block.message} steered={block.steered} turn={block.turn} />
+        <InputView
+          client={client}
+          message={block.message}
+          steered={block.steered}
+          turn={block.turn}
+        />
       );
     case "reply":
-      return <ReplyView client={client} segments={block.segments} name={name} />;
+      return (
+        <ReplyView client={client} segments={block.segments} name={name} />
+      );
   }
 });
 
@@ -196,7 +223,8 @@ function InputView({
   steered: boolean;
   turn?: Turn;
 }) {
-  const failed = turn && (turn.status === "failed" || turn.status === "interrupted");
+  const failed =
+    turn && (turn.status === "failed" || turn.status === "interrupted");
   if (m.source !== "user") return <Marker message={m} />;
   return (
     <div className="turn group mt-2 flex flex-col items-end gap-0.5">
@@ -238,7 +266,8 @@ function InputView({
 
 function Marker({ message: m }: { message: InputMessage }) {
   const [open, setOpen] = useState(false);
-  const Icon = m.source === "schedule" ? AlarmClock : m.source === "agent" ? Bot : Info;
+  const Icon =
+    m.source === "schedule" ? AlarmClock : m.source === "agent" ? Bot : Info;
   const label =
     m.source === "schedule"
       ? `Routine · ${m.routine ?? "ran"}`
@@ -257,7 +286,9 @@ function Marker({ message: m }: { message: InputMessage }) {
         <span className="text-faint">{clock(m.at)}</span>
       </button>
       {open && m.text && (
-        <div className="animate-in max-w-[80%] rounded-[16px] border border-line px-3.5 py-2 text-[13px] whitespace-pre-wrap text-muted">{m.text}</div>
+        <div className="animate-in max-w-[80%] rounded-[16px] border border-line px-3.5 py-2 text-[13px] whitespace-pre-wrap text-muted">
+          {m.text}
+        </div>
       )}
     </div>
   );
@@ -291,7 +322,13 @@ function ReplyView({
   );
 }
 
-function SegmentView({ client, segment: s }: { client: AgentClient; segment: Segment }) {
+function SegmentView({
+  client,
+  segment: s,
+}: {
+  client: AgentClient;
+  segment: Segment;
+}) {
   switch (s.kind) {
     case "text":
       return (
@@ -304,7 +341,9 @@ function SegmentView({ client, segment: s }: { client: AgentClient; segment: Seg
     case "ask":
       return <QuestionCard client={client} ask={s.ask} />;
     case "file":
-      return <FileCard client={client} file={s.file} caption={s.file.caption} />;
+      return (
+        <FileCard client={client} file={s.file} caption={s.file.caption} />
+      );
     case "error":
       return (
         <div className="flex max-w-[88%] items-start gap-2 rounded-[16px] bg-danger/10 px-3.5 py-2 text-[13px] text-danger">
@@ -335,11 +374,18 @@ function ActionChip({ kind, text }: { kind: ActionKind; text: string }) {
 }
 
 function Bubble({ children }: { children: ReactNode }) {
-  return <div className="max-w-[88%] min-w-0 rounded-[20px] bg-bubble px-3.5 py-2 text-[14.5px]">{children}</div>;
+  return (
+    <div className="max-w-[88%] min-w-0 rounded-[20px] bg-bubble px-3.5 py-2 text-[14.5px]">
+      {children}
+    </div>
+  );
 }
 
 const humanize = (name: string) => {
-  const s = name.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+  const s = name
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 };
 
@@ -350,7 +396,10 @@ function PendingView({ session }: { session: AgentSession }) {
       {p.files.length > 0 && (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
           {p.files.map((f, i) => (
-            <span key={`${f}-${i}`} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-muted">
+            <span
+              key={`${f}-${i}`}
+              className="rounded-full border border-line px-2.5 py-1 text-[12px] text-muted"
+            >
               {f}
             </span>
           ))}
@@ -369,19 +418,38 @@ function Live({ session }: { session: AgentSession }) {
   const live = session.live.use();
   const pending = session.pending.use();
   const thread = session.thread.use();
-  const running = Object.values(thread.turns).some((t) => t.status === "running");
+  const running = Object.values(thread.turns).some(
+    (t) => t.status === "running",
+  );
   if (!live.active && !running && pending.length === 0) return null;
   const step = live.tools.at(-1);
   return (
-    <div className="mt-3 flex items-center gap-2" title={step ? humanize(step.name) : undefined}>
+    <div
+      className="mt-3 flex items-center gap-2"
+      title={step ? humanize(step.name) : undefined}
+    >
       <Face color={agentColor(session.id)} size={20} activity="working" />
       <LiveLabel busy={Boolean(step)} />
     </div>
   );
 }
 
-const MUSING = ["Pondering", "Mulling it over", "Connecting dots", "Brewing", "Piecing it together", "Chewing on it"];
-const DOING = ["Cooking", "Tinkering", "Rolling up sleeves", "On it", "Wiring things up", "Getting hands dirty"];
+const MUSING = [
+  "Pondering",
+  "Mulling it over",
+  "Connecting dots",
+  "Brewing",
+  "Piecing it together",
+  "Chewing on it",
+];
+const DOING = [
+  "Cooking",
+  "Tinkering",
+  "Rolling up sleeves",
+  "On it",
+  "Wiring things up",
+  "Getting hands dirty",
+];
 
 function LiveLabel({ busy }: { busy: boolean }) {
   const words = busy ? DOING : MUSING;
@@ -390,7 +458,11 @@ function LiveLabel({ busy }: { busy: boolean }) {
     const t = setInterval(() => setI((n) => n + 1), 4000);
     return () => clearInterval(t);
   }, []);
-  return <span className="shimmer-text text-[13.5px] font-medium">{words[i % words.length]}…</span>;
+  return (
+    <span className="shimmer-text text-[13.5px] font-medium">
+      {words[i % words.length]}…
+    </span>
+  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -407,8 +479,11 @@ function CopyButton({ text }: { text: string }) {
         })
       }
     >
-      {done ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
+      {done ? (
+        <Check className="size-3.5 text-ok" />
+      ) : (
+        <Copy className="size-3.5" />
+      )}
     </IconButton>
   );
 }
-

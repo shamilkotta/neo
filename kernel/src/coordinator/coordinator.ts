@@ -205,7 +205,11 @@ export class NeoCoordinator {
     topics: AgentTopic[],
     status: AgentStatus | undefined,
   ) {
-    if (status && this.live && (await this.live.registry.setStatus(agentId, status)))
+    if (
+      status &&
+      this.live &&
+      (await this.live.registry.setStatus(agentId, status))
+    )
       this.changes.touch("agents");
     this.host.clients.send({ type: "agent", agentId, topics }, agentId);
     return this.host.clients.watching(agentId);

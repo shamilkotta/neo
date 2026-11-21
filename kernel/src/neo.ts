@@ -102,7 +102,11 @@ const EMPTY: Home = { state: "empty" };
 
 const LIVE_FLUSH_MS = 50;
 
-const TRANSCRIPT_EVENTS = new Set(["message_end", "tool_execution_end", "run_end"]);
+const TRANSCRIPT_EVENTS = new Set([
+  "message_end",
+  "tool_execution_end",
+  "run_end",
+]);
 
 export class NeoAgent {
   readonly changes = new Changes<AgentTopic>();
@@ -412,7 +416,14 @@ export class NeoAgent {
       instance: init.instance,
     };
     await this.start();
-    this.changes.touch("status", "transcript", "queue", "schedules", "memory", "profile");
+    this.changes.touch(
+      "status",
+      "transcript",
+      "queue",
+      "schedules",
+      "memory",
+      "profile",
+    );
   }
 
   async destroy() {
@@ -676,7 +687,9 @@ export class NeoAgent {
         beforeWork: () => this.arm({ active: true }),
         turnSettled: (turn, messages) => this.turnSettled(turn, messages),
         cancelled: (messageId) =>
-          this.services().messaging.cancelled(messageId).catch(() => {}),
+          this.services()
+            .messaging.cancelled(messageId)
+            .catch(() => {}),
         paused: async () => (await self.get()).paused,
         timezone: () => this.timezone(),
         checkImages: async (attachments) => {
@@ -824,8 +837,7 @@ export class NeoAgent {
       turn.status === "completed",
     );
     await live.history.sync(await this.conversation()).catch(() => {});
-    if (applied > 0)
-      this.changes.touch("memory");
+    if (applied > 0) this.changes.touch("memory");
     await this.arm();
   }
 

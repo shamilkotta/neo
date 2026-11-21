@@ -1,5 +1,12 @@
 import type { AgentSummary } from "@neo/client";
-import { Star, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings } from "lucide-react";
+import {
+  Star,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Search,
+  Settings,
+} from "lucide-react";
 import { cn, modKey } from "../lib/format";
 import type { Instance } from "../state/instance";
 import { toggleSidebar, ui } from "../state/ui";
@@ -33,34 +40,71 @@ export function Sidebar({
         className={cn(
           "z-40 flex h-full shrink-0 flex-col overflow-hidden bg-bg transition-[width,transform] duration-250 ease-[cubic-bezier(0.23,1,0.32,1)]",
           "max-[899px]:fixed max-[899px]:inset-y-0 max-[899px]:left-0 max-[899px]:w-[288px] max-[899px]:shadow-2xl",
-          open ? "min-[900px]:w-[288px]" : "max-[899px]:-translate-x-full min-[900px]:w-[76px]",
+          open
+            ? "min-[900px]:w-[288px]"
+            : "max-[899px]:-translate-x-full min-[900px]:w-[76px]",
         )}
       >
         {open ? (
           <div className="flex h-12 shrink-0 items-center justify-end gap-1.5 px-3">
-            <Round label={`Search (${modKey}K)`} onClick={() => ui.palette.set(true)}>
+            <Round
+              label={`Search (${modKey}K)`}
+              onClick={() => ui.palette.set(true)}
+            >
               <Search className="size-[17px]" />
             </Round>
-            <Round label={`New agent (${modKey}⇧O)`} onClick={() => ui.newAgent.set(true)}>
+            <Round
+              label={`New agent (${modKey}⇧O)`}
+              onClick={() => ui.newAgent.set(true)}
+            >
               <Plus className="size-[17px]" />
             </Round>
           </div>
         ) : (
           <div className="h-3 shrink-0" />
         )}
-        <nav className={cn("flex-1 overflow-y-auto pb-3", open ? "px-2" : "px-2.5")}>
+        <nav
+          className={cn(
+            "flex-1 overflow-y-auto pb-3",
+            open ? "px-2" : "px-2.5",
+          )}
+        >
           {primary &&
             (open ? (
-              <AgentRow agent={primary} on={primary.id === current} onChoose={onChoose} />
+              <AgentRow
+                agent={primary}
+                on={primary.id === current}
+                onChoose={onChoose}
+              />
             ) : (
-              <Mini agent={primary} on={primary.id === current} onChoose={onChoose} size={40} />
+              <Mini
+                agent={primary}
+                on={primary.id === current}
+                onChoose={onChoose}
+                size={40}
+              />
             ))}
-          {primary && rest.length > 0 && <div className={cn("my-2 h-px bg-line", open ? "mx-3" : "mx-auto w-8")} />}
+          {primary && rest.length > 0 && (
+            <div
+              className={cn("my-2 h-px bg-line", open ? "mx-3" : "mx-auto w-8")}
+            />
+          )}
           {rest.map((a) =>
             open ? (
-              <AgentRow key={a.id} agent={a} on={a.id === current} onChoose={onChoose} />
+              <AgentRow
+                key={a.id}
+                agent={a}
+                on={a.id === current}
+                onChoose={onChoose}
+              />
             ) : (
-              <Mini key={a.id} agent={a} on={a.id === current} onChoose={onChoose} size={40} />
+              <Mini
+                key={a.id}
+                agent={a}
+                on={a.id === current}
+                onChoose={onChoose}
+                size={40}
+              />
             ),
           )}
           {!open && (
@@ -86,10 +130,20 @@ export function Sidebar({
 function Footer({ instance, open }: { instance: Instance; open: boolean }) {
   const status = instance.status.use();
   return (
-    <div className={cn("flex shrink-0 items-center gap-1.5 p-3", open ? "flex-row" : "flex-col")}>
-      <Round label={`Settings (${modKey},)`} onClick={() => ui.settings.set("general")}>
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 p-3",
+        open ? "flex-row" : "flex-col",
+      )}
+    >
+      <Round
+        label={`Settings (${modKey},)`}
+        onClick={() => ui.settings.set("general")}
+      >
         <Settings className="size-[17px]" />
-        {status?.model === null && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warn" />}
+        {status?.model === null && (
+          <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-warn" />
+        )}
       </Round>
       {open && <span className="flex-1" />}
       <button
@@ -99,13 +153,25 @@ function Footer({ instance, open }: { instance: Instance; open: boolean }) {
         onClick={() => toggleSidebar(!open)}
         className="flex size-9 items-center justify-center rounded-full text-faint transition-colors hover:bg-hover hover:text-fg max-[899px]:hidden"
       >
-        {open ? <PanelLeftClose className="size-[17px]" /> : <PanelLeftOpen className="size-[17px]" />}
+        {open ? (
+          <PanelLeftClose className="size-[17px]" />
+        ) : (
+          <PanelLeftOpen className="size-[17px]" />
+        )}
       </button>
     </div>
   );
 }
 
-function Round({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function Round({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
@@ -149,10 +215,22 @@ function Mini({
   );
 }
 
-function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean; onChoose: (id: string) => void }) {
+function AgentRow({
+  agent: a,
+  on,
+  onChoose,
+}: {
+  agent: AgentSummary;
+  on: boolean;
+  onChoose: (id: string) => void;
+}) {
   const activity = activityOf(a);
   const line =
-    activity === "working" ? "Working…" : activity === "paused" ? "Paused" : lastLine(a);
+    activity === "working"
+      ? "Working…"
+      : activity === "paused"
+        ? "Paused"
+        : lastLine(a);
   return (
     <button
       type="button"
@@ -175,7 +253,14 @@ function AgentRow({ agent: a, on, onChoose }: { agent: AgentSummary; on: boolean
             </span>
           ) : null}
         </span>
-        <span className={cn("mt-px block truncate text-[13px]", activity === "working" ? "text-ok" : "text-muted")}>{line}</span>
+        <span
+          className={cn(
+            "mt-px block truncate text-[13px]",
+            activity === "working" ? "text-ok" : "text-muted",
+          )}
+        >
+          {line}
+        </span>
       </span>
     </button>
   );
@@ -187,7 +272,13 @@ function lastLine(a: AgentSummary) {
   return last.fromUser ? `You: ${last.text}` : last.text;
 }
 
-function Badged({ agent, children }: { agent: AgentSummary; children: React.ReactNode }) {
+function Badged({
+  agent,
+  children,
+}: {
+  agent: AgentSummary;
+  children: React.ReactNode;
+}) {
   return (
     <span className="relative shrink-0">
       {children}

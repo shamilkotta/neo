@@ -1,5 +1,24 @@
-import { type CustomModel, type ModelRef, type ProviderConfig, type ProviderInfo, type ProviderSetup, ThinkingLevel } from "@neo/client";
-import { Check, Info, KeyRound, LogOut, Monitor, Moon, Plus, SlidersHorizontal, Sun, Trash2, X } from "lucide-react";
+import {
+  type CustomModel,
+  type ModelRef,
+  type ProviderConfig,
+  type ProviderInfo,
+  type ProviderSetup,
+  ThinkingLevel,
+} from "@neo/client";
+import {
+  Check,
+  Info,
+  KeyRound,
+  LogOut,
+  Monitor,
+  Moon,
+  Plus,
+  SlidersHorizontal,
+  Sun,
+  Trash2,
+  X,
+} from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import Value from "typebox/value";
 import { cn } from "../lib/format";
@@ -20,14 +39,27 @@ const SECTIONS: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "about", label: "About", icon: Info },
 ];
 
-export function SettingsDialog({ instance, onForget }: { instance: Instance; onForget: () => void }) {
+export function SettingsDialog({
+  instance,
+  onForget,
+}: {
+  instance: Instance;
+  onForget: () => void;
+}) {
   const section = ui.settings.use();
   return (
-    <Dialog open={!!section} onClose={() => ui.settings.set(null)} bare className="sm:w-[760px]">
+    <Dialog
+      open={!!section}
+      onClose={() => ui.settings.set(null)}
+      bare
+      className="sm:w-[760px]"
+    >
       {section && (
         <div className="flex h-[min(600px,85dvh)] flex-col sm:flex-row">
           <nav className="flex shrink-0 gap-1 border-line p-2 max-sm:overflow-x-auto max-sm:border-b sm:w-48 sm:flex-col sm:border-r sm:bg-panel sm:p-3">
-            <div className="hidden px-2 pt-1 pb-3 text-[15px] font-semibold sm:block">Settings</div>
+            <div className="hidden px-2 pt-1 pb-3 text-[15px] font-semibold sm:block">
+              Settings
+            </div>
             {SECTIONS.map((s) => (
               <button
                 key={s.id}
@@ -35,7 +67,9 @@ export function SettingsDialog({ instance, onForget }: { instance: Instance; onF
                 onClick={() => ui.settings.set(s.id)}
                 className={cn(
                   "flex h-8 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors",
-                  section === s.id ? "bg-hover text-fg" : "text-muted hover:text-fg",
+                  section === s.id
+                    ? "bg-hover text-fg"
+                    : "text-muted hover:text-fg",
                 )}
               >
                 <s.icon className="size-4" />
@@ -44,13 +78,19 @@ export function SettingsDialog({ instance, onForget }: { instance: Instance; onF
             ))}
           </nav>
           <div className="relative min-h-0 flex-1 overflow-y-auto">
-            <IconButton label="Close" className="absolute top-3 right-3 z-10" onClick={() => ui.settings.set(null)}>
+            <IconButton
+              label="Close"
+              className="absolute top-3 right-3 z-10"
+              onClick={() => ui.settings.set(null)}
+            >
               <X className="size-4" />
             </IconButton>
             <div className="p-6 pt-5">
               {section === "general" && <General instance={instance} />}
               {section === "providers" && <Providers instance={instance} />}
-              {section === "about" && <About instance={instance} onForget={onForget} />}
+              {section === "about" && (
+                <About instance={instance} onForget={onForget} />
+              )}
             </div>
           </div>
         </div>
@@ -68,7 +108,15 @@ function Heading({ title, body }: { title: string; body?: string }) {
   );
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-2 border-b border-line py-4 first:pt-0 last:border-b-0 sm:flex-row sm:items-center sm:gap-6">
       <div className="min-w-0 flex-1">
@@ -80,14 +128,18 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
-const key = (m: ModelRef | null | undefined) => (m ? `${m.provider}/${m.modelId}` : "");
+const key = (m: ModelRef | null | undefined) =>
+  m ? `${m.provider}/${m.modelId}` : "";
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 function General({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const t = theme.use();
   const { value, error } = useLoad(
-    async () => ({ settings: await instance.root.settings(), models: await instance.root.models() }),
+    async () => ({
+      settings: await instance.root.settings(),
+      models: await instance.root.models(),
+    }),
     [instance, version],
   );
   const [tz, setTz] = useState("");
@@ -99,20 +151,28 @@ function General({ instance }: { instance: Instance }) {
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <>
-      <Heading title="General" body="Applies to every agent on this instance." />
+      <Heading
+        title="General"
+        body="Applies to every agent on this instance."
+      />
       {error && <p className="mb-4 text-[13px] text-danger">{error}</p>}
       <Row label="Appearance">
         <div className="flex rounded-xl bg-sunken p-0.5">
-          {([
-            ["light", Sun, "Light"],
-            ["dark", Moon, "Dark"],
-            ["system", Monitor, "System"],
-          ] as const).map(([id, I, label]) => (
+          {(
+            [
+              ["light", Sun, "Light"],
+              ["dark", Moon, "Dark"],
+              ["system", Monitor, "System"],
+            ] as const
+          ).map(([id, I, label]) => (
             <button
               key={id}
               type="button"
               onClick={() => setTheme(id)}
-              className={cn("flex h-7 flex-1 items-center justify-center gap-1.5 rounded-[10px] text-[12.5px] font-medium transition-all", t === id ? "bg-raised shadow-sm" : "text-muted hover:text-fg")}
+              className={cn(
+                "flex h-7 flex-1 items-center justify-center gap-1.5 rounded-[10px] text-[12.5px] font-medium transition-all",
+                t === id ? "bg-raised shadow-sm" : "text-muted hover:text-fg",
+              )}
             >
               <I className="size-3.5" />
               {label}
@@ -126,31 +186,61 @@ function General({ instance }: { instance: Instance }) {
         </div>
       ) : (
         <>
-          <Row label="Model" hint={value.models.models.length ? "Used by every agent." : "Add a provider first."}>
+          <Row
+            label="Model"
+            hint={
+              value.models.models.length
+                ? "Used by every agent."
+                : "Add a provider first."
+            }
+          >
             <Select
               value={key(value.settings.model)}
               onChange={(e) => {
                 const v = e.target.value;
                 const slash = v.indexOf("/");
-                save({ model: v ? { provider: v.slice(0, slash), modelId: v.slice(slash + 1) } : null });
+                save({
+                  model: v
+                    ? {
+                        provider: v.slice(0, slash),
+                        modelId: v.slice(slash + 1),
+                      }
+                    : null,
+                });
               }}
             >
-              <option value="">Default ({key(value.models.default) || "none"})</option>
-              {value.settings.model && !value.models.models.some((m) => key({ provider: m.provider, modelId: m.id }) === key(value.settings.model)) && (
-                <option value={key(value.settings.model)}>{key(value.settings.model)}</option>
+              <option value="">
+                Default ({key(value.models.default) || "none"})
+              </option>
+              {value.settings.model &&
+                !value.models.models.some(
+                  (m) =>
+                    key({ provider: m.provider, modelId: m.id }) ===
+                    key(value.settings.model),
+                ) && (
+                  <option value={key(value.settings.model)}>
+                    {key(value.settings.model)}
+                  </option>
+                )}
+              {[...new Set(value.models.models.map((m) => m.provider))].map(
+                (provider) => (
+                  <optgroup key={provider} label={provider}>
+                    {value.models.models
+                      .filter((m) => m.provider === provider)
+                      .map((m) => (
+                        <option key={m.id} value={`${m.provider}/${m.id}`}>
+                          {m.name || m.id}
+                        </option>
+                      ))}
+                  </optgroup>
+                ),
               )}
-              {[...new Set(value.models.models.map((m) => m.provider))].map((provider) => (
-                <optgroup key={provider} label={provider}>
-                  {value.models.models.filter((m) => m.provider === provider).map((m) => (
-                    <option key={m.id} value={`${m.provider}/${m.id}`}>
-                      {m.name || m.id}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
             </Select>
           </Row>
-          <Row label="Thinking" hint="How hard the model reasons before answering.">
+          <Row
+            label="Thinking"
+            hint="How hard the model reasons before answering."
+          >
             <Select
               value={value.settings.thinking ?? ""}
               onChange={(e) => {
@@ -166,14 +256,26 @@ function General({ instance }: { instance: Instance }) {
               ))}
             </Select>
           </Row>
-          <Row label="Timezone" hint="Routines and reminders run in this timezone.">
+          <Row
+            label="Timezone"
+            hint="Routines and reminders run in this timezone."
+          >
             <div className="flex gap-2">
-              <Input value={tz} onChange={(e) => setTz(e.target.value)} onBlur={() => tz !== value.settings.timezone && save({ timezone: tz })} />
+              <Input
+                value={tz}
+                onChange={(e) => setTz(e.target.value)}
+                onBlur={() =>
+                  tz !== value.settings.timezone && save({ timezone: tz })
+                }
+              />
               {tz !== browserTz && (
-                <Button size="md" onClick={() => {
-                  setTz(browserTz);
-                  save({ timezone: browserTz });
-                }}>
+                <Button
+                  size="md"
+                  onClick={() => {
+                    setTz(browserTz);
+                    save({ timezone: browserTz });
+                  }}
+                >
                   Use mine
                 </Button>
               )}
@@ -188,8 +290,16 @@ function General({ instance }: { instance: Instance }) {
 const KINDS = [
   { kind: "anthropic", label: "Anthropic", body: "Claude models" },
   { kind: "openai", label: "OpenAI", body: "GPT models" },
-  { kind: "openrouter", label: "OpenRouter", body: "Hundreds of models, one key" },
-  { kind: "openai-compatible", label: "Custom", body: "Ollama, LM Studio, vLLM, Groq…" },
+  {
+    kind: "openrouter",
+    label: "OpenRouter",
+    body: "Hundreds of models, one key",
+  },
+  {
+    kind: "openai-compatible",
+    label: "Custom",
+    body: "Ollama, LM Studio, vLLM, Groq…",
+  },
 ] as const;
 
 type Kind = (typeof KINDS)[number]["kind"];
@@ -197,25 +307,37 @@ type Kind = (typeof KINDS)[number]["kind"];
 function Providers({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const status = instance.status.use();
-  const { value: providers, error } = useLoad(() => instance.root.providers(), [instance, version]);
+  const { value: providers, error } = useLoad(
+    () => instance.root.providers(),
+    [instance, version],
+  );
   const [adding, setAdding] = useState<Kind | null>(null);
   const [found, setFound] = useState<ProviderConfig[]>([]);
   useEffect(() => {
-    if (status?.capabilities.sockets) instance.root.detectProviders().then(setFound, () => {});
+    if (status?.capabilities.sockets)
+      instance.root.detectProviders().then(setFound, () => {});
   }, [instance, status?.capabilities.sockets]);
   const done = () => {
     setAdding(null);
   };
   return (
     <>
-      <Heading title="Providers" body="Keys are encrypted with this instance's data key." />
+      <Heading
+        title="Providers"
+        body="Keys are encrypted with this instance's data key."
+      />
       {error && <p className="mb-4 text-[13px] text-danger">{error}</p>}
       {providers?.length === 0 && !adding && (
-        <div className="mb-4 rounded-2xl border border-warn/30 bg-warn/8 px-4 py-3 text-[13px]">Add a provider to start chatting.</div>
+        <div className="mb-4 rounded-2xl border border-warn/30 bg-warn/8 px-4 py-3 text-[13px]">
+          Add a provider to start chatting.
+        </div>
       )}
       <div className="flex flex-col gap-2">
         {providers?.map((p: ProviderInfo) => (
-          <div key={p.id} className="rounded-2xl border border-line bg-raised p-3">
+          <div
+            key={p.id}
+            className="rounded-2xl border border-line bg-raised p-3"
+          >
             <div className="flex items-center gap-3">
               <ProviderMark id={p.kind} />
               <div className="min-w-0 flex-1">
@@ -233,39 +355,75 @@ function Providers({ instance }: { instance: Instance }) {
                 label="Remove"
                 size="sm"
                 onClick={async () => {
-                  if (await confirm({ title: `Remove ${p.id}?`, body: "Its key is deleted. Agents using its models stop working until you pick another.", action: "Remove", danger: true }))
-                    void attempt(() => instance.root.removeProvider(p.id), "Removed").then(done);
+                  if (
+                    await confirm({
+                      title: `Remove ${p.id}?`,
+                      body: "Its key is deleted. Agents using its models stop working until you pick another.",
+                      action: "Remove",
+                      danger: true,
+                    })
+                  )
+                    void attempt(
+                      () => instance.root.removeProvider(p.id),
+                      "Removed",
+                    ).then(done);
                 }}
               >
                 <Trash2 className="size-3.5" />
               </IconButton>
             </div>
-            {p.kind === "openai-compatible" && <CustomModels instance={instance} provider={p} onChange={done} />}
+            {p.kind === "openai-compatible" && (
+              <CustomModels instance={instance} provider={p} onChange={done} />
+            )}
           </div>
         ))}
       </div>
-      {found.filter((f) => !providers?.some((p) => p.id === f.id)).length > 0 && (
+      {found.filter((f) => !providers?.some((p) => p.id === f.id)).length >
+        0 && (
         <div className="mt-5">
-          <div className="mb-2 text-[12px] font-medium text-muted">Found on this machine</div>
-          {found.filter((f) => !providers?.some((p) => p.id === f.id)).map((p) => (
-            <div key={p.id} className="mb-2 flex items-center gap-3 rounded-2xl border border-dashed border-line-strong p-3">
-              <ProviderMark id={p.kind} />
-              <div className="min-w-0 flex-1 text-[13px]">
-                {p.id} · {p.kind === "openai-compatible" ? p.models.length : 0} models
+          <div className="mb-2 text-[12px] font-medium text-muted">
+            Found on this machine
+          </div>
+          {found
+            .filter((f) => !providers?.some((p) => p.id === f.id))
+            .map((p) => (
+              <div
+                key={p.id}
+                className="mb-2 flex items-center gap-3 rounded-2xl border border-dashed border-line-strong p-3"
+              >
+                <ProviderMark id={p.kind} />
+                <div className="min-w-0 flex-1 text-[13px]">
+                  {p.id} ·{" "}
+                  {p.kind === "openai-compatible" ? p.models.length : 0} models
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void attempt(
+                      () => instance.root.putProvider(p),
+                      "Added",
+                    ).then(done)
+                  }
+                >
+                  Add
+                </Button>
               </div>
-              <Button size="sm" onClick={() => void attempt(() => instance.root.putProvider(p), "Added").then(done)}>
-                Add
-              </Button>
-            </div>
-          ))}
+            ))}
         </div>
       )}
       <div className="mt-6">
         {adding ? (
-          <AddProvider instance={instance} kind={adding} onCancel={() => setAdding(null)} onDone={done} />
+          <AddProvider
+            instance={instance}
+            kind={adding}
+            onCancel={() => setAdding(null)}
+            onDone={done}
+          />
         ) : (
           <>
-            <div className="mb-2 text-[12px] font-medium text-muted">Add a provider</div>
+            <div className="mb-2 text-[12px] font-medium text-muted">
+              Add a provider
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {KINDS.map((k) => (
                 <button
@@ -276,8 +434,12 @@ function Providers({ instance }: { instance: Instance }) {
                 >
                   <ProviderMark id={k.kind} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[13.5px] font-medium">{k.label}</span>
-                    <span className="block truncate text-[12px] text-muted">{k.body}</span>
+                    <span className="block text-[13.5px] font-medium">
+                      {k.label}
+                    </span>
+                    <span className="block truncate text-[12px] text-muted">
+                      {k.body}
+                    </span>
                   </span>
                   <Plus className="size-4 text-faint" />
                 </button>
@@ -324,18 +486,32 @@ function CustomModels({
       .split(",")
       .map((s) => s.trim())
       .filter((m) => m && !provider.models.some((x) => x.id === m));
-    if (ids.length && (await save([...provider.models, ...ids.map((m) => ({ id: m }))], ids.length > 1 ? "Models added" : "Model added"))) setDraft("");
+    if (
+      ids.length &&
+      (await save(
+        [...provider.models, ...ids.map((m) => ({ id: m }))],
+        ids.length > 1 ? "Models added" : "Model added",
+      ))
+    )
+      setDraft("");
   };
   return (
     <div className="mt-3 flex flex-wrap items-center gap-1.5 pl-12">
       {provider.models.map((m) => (
-        <span key={m.id} className="flex items-center gap-1 rounded-full border border-line bg-sunken py-0.5 pr-1 pl-2.5 font-mono text-[11.5px]">
+        <span
+          key={m.id}
+          className="flex items-center gap-1 rounded-full border border-line bg-sunken py-0.5 pr-1 pl-2.5 font-mono text-[11.5px]"
+        >
           {m.id}
           <button
             type="button"
             aria-label={`Remove ${m.id}`}
             disabled={busy || provider.models.length === 1}
-            title={provider.models.length === 1 ? "A provider needs at least one model" : undefined}
+            title={
+              provider.models.length === 1
+                ? "A provider needs at least one model"
+                : undefined
+            }
             onClick={() =>
               void save(
                 provider.models.filter((x) => x.id !== m.id),
@@ -355,8 +531,18 @@ function CustomModels({
           void add();
         }}
       >
-        <Input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add model…" className="h-7 text-[12px]" />
-        <IconButton label="Add model" size="sm" type="submit" disabled={busy || !draft.trim()}>
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Add model…"
+          className="h-7 text-[12px]"
+        />
+        <IconButton
+          label="Add model"
+          size="sm"
+          type="submit"
+          disabled={busy || !draft.trim()}
+        >
           <Plus className="size-3.5" />
         </IconButton>
       </form>
@@ -373,7 +559,17 @@ function ProviderMark({ id }: { id: string }) {
   );
 }
 
-function AddProvider({ instance, kind, onCancel, onDone }: { instance: Instance; kind: Kind; onCancel: () => void; onDone: () => void }) {
+function AddProvider({
+  instance,
+  kind,
+  onCancel,
+  onDone,
+}: {
+  instance: Instance;
+  kind: Kind;
+  onCancel: () => void;
+  onDone: () => void;
+}) {
   const [id, setId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [models, setModels] = useState("");
@@ -393,10 +589,18 @@ function AddProvider({ instance, kind, onCancel, onDone }: { instance: Instance;
               id: id.trim(),
               kind,
               baseUrl: baseUrl.trim(),
-              models: models.split(",").map((s) => s.trim()).filter(Boolean).map((m) => ({ id: m })),
+              models: models
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((m) => ({ id: m })),
             }
           : builtin(kind);
-        const ok = await attempt(() => instance.root.putProvider(apiKey ? { ...setup, apiKey } : setup), `${label} added`);
+        const ok = await attempt(
+          () =>
+            instance.root.putProvider(apiKey ? { ...setup, apiKey } : setup),
+          `${label} added`,
+        );
         setBusy(false);
         if (ok !== undefined) onDone();
       }}
@@ -408,18 +612,37 @@ function AddProvider({ instance, kind, onCancel, onDone }: { instance: Instance;
       {custom && (
         <>
           <Field label="Id">
-            <Input autoFocus value={id} onChange={(e) => setId(e.target.value)} placeholder="ollama" />
+            <Input
+              autoFocus
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+              placeholder="ollama"
+            />
           </Field>
           <Field label="Base URL">
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://127.0.0.1:11434/v1" />
+            <Input
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://127.0.0.1:11434/v1"
+            />
           </Field>
           <Field label="Models" hint="Comma separated">
-            <Input value={models} onChange={(e) => setModels(e.target.value)} placeholder="llama3.2, qwen3" />
+            <Input
+              value={models}
+              onChange={(e) => setModels(e.target.value)}
+              placeholder="llama3.2, qwen3"
+            />
           </Field>
         </>
       )}
       <Field label={custom ? "API key (if it needs one)" : "API key"}>
-        <Input autoFocus={!custom} type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+        <Input
+          autoFocus={!custom}
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="sk-…"
+        />
       </Field>
       <div className="flex justify-end gap-2">
         <Button onClick={onCancel}>Cancel</Button>
@@ -431,7 +654,13 @@ function AddProvider({ instance, kind, onCancel, onDone }: { instance: Instance;
   );
 }
 
-function About({ instance, onForget }: { instance: Instance; onForget: () => void }) {
+function About({
+  instance,
+  onForget,
+}: {
+  instance: Instance;
+  onForget: () => void;
+}) {
   const status = instance.status.use();
   const rows: [string, string | undefined][] = [
     ["Version", status?.version],
@@ -445,7 +674,10 @@ function About({ instance, onForget }: { instance: Instance; onForget: () => voi
       <Heading title="About" />
       <div className="overflow-hidden rounded-2xl border border-line">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between gap-4 border-b border-line px-4 py-2.5 text-[13px] last:border-b-0">
+          <div
+            key={k}
+            className="flex items-center justify-between gap-4 border-b border-line px-4 py-2.5 text-[13px] last:border-b-0"
+          >
             <span className="text-muted">{k}</span>
             <span className="truncate font-mono text-[12px]">{v ?? "—"}</span>
           </div>
@@ -456,7 +688,15 @@ function About({ instance, onForget }: { instance: Instance; onForget: () => voi
         variant="danger"
         icon={<LogOut className="size-4" />}
         onClick={async () => {
-          if (await confirm({ title: "Disconnect?", body: "This browser forgets the token. Your agents keep running.", action: "Disconnect", danger: true })) onForget();
+          if (
+            await confirm({
+              title: "Disconnect?",
+              body: "This browser forgets the token. Your agents keep running.",
+              action: "Disconnect",
+              danger: true,
+            })
+          )
+            onForget();
         }}
       >
         Disconnect

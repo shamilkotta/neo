@@ -1,5 +1,12 @@
 import type { MailboxMessage } from "@neo/client";
-import { ArrowUp, ChevronDown, CornerDownRight, Paperclip, Pencil, X } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronDown,
+  CornerDownRight,
+  Paperclip,
+  Pencil,
+  X,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { AgentSession } from "../state/agent";
 import { cn } from "../lib/format";
@@ -28,7 +35,12 @@ export function Queue({ session }: { session: AgentSession }) {
             {queue.length}
           </span>
           Queued {queue.length === 1 ? "message" : "messages"}
-          <ChevronDown className={cn("ml-auto size-4 transition-transform", !open && "-rotate-90")} />
+          <ChevronDown
+            className={cn(
+              "ml-auto size-4 transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
         </button>
         {open && (
           <div className="flex max-h-48 flex-col overflow-y-auto px-2 pb-2">
@@ -40,12 +52,19 @@ export function Queue({ session }: { session: AgentSession }) {
                 onEdit={() => setEditing(m.id)}
                 onSave={(text) => {
                   setEditing(null);
-                  if (text && text !== m.text) act(() => session.client.editQueued(m.id, text));
+                  if (text && text !== m.text)
+                    act(() => session.client.editQueued(m.id, text));
                 }}
                 actions={
                   <>
                     {running && (
-                      <IconButton label="Add to the running turn" size="sm" onClick={() => act(() => session.client.steerQueued(m.id))}>
+                      <IconButton
+                        label="Add to the running turn"
+                        size="sm"
+                        onClick={() =>
+                          act(() => session.client.steerQueued(m.id))
+                        }
+                      >
                         <CornerDownRight className="size-3.5" />
                       </IconButton>
                     )}
@@ -64,10 +83,20 @@ export function Queue({ session }: { session: AgentSession }) {
                         <ArrowUp className="size-3.5" />
                       </IconButton>
                     )}
-                    <IconButton label="Edit" size="sm" onClick={() => setEditing(m.id)}>
+                    <IconButton
+                      label="Edit"
+                      size="sm"
+                      onClick={() => setEditing(m.id)}
+                    >
                       <Pencil className="size-3.5" />
                     </IconButton>
-                    <IconButton label="Remove" size="sm" onClick={() => act(() => session.client.cancelQueued(m.id))}>
+                    <IconButton
+                      label="Remove"
+                      size="sm"
+                      onClick={() =>
+                        act(() => session.client.cancelQueued(m.id))
+                      }
+                    >
                       <X className="size-3.5" />
                     </IconButton>
                   </>
@@ -117,10 +146,16 @@ function Row({
           {m.attachments.length}
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate text-[13px]" title={m.text} onDoubleClick={onEdit}>
+      <span
+        className="min-w-0 flex-1 truncate text-[13px]"
+        title={m.text}
+        onDoubleClick={onEdit}
+      >
         {m.text || "Attachment"}
       </span>
-      <span className="flex shrink-0 opacity-60 transition-opacity group-hover:opacity-100">{actions}</span>
+      <span className="flex shrink-0 opacity-60 transition-opacity group-hover:opacity-100">
+        {actions}
+      </span>
     </div>
   );
 }

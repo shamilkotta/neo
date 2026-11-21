@@ -22,8 +22,12 @@ export const confirm = (ask: Omit<Ask, "resolve" | "input">) =>
   open(ask).then((v) => v !== null);
 
 export const promptText = (
-  ask: Omit<Ask, "resolve" | "input"> & { placeholder?: string; value?: string },
-) => open({ ...ask, input: { placeholder: ask.placeholder, value: ask.value } });
+  ask: Omit<Ask, "resolve" | "input"> & {
+    placeholder?: string;
+    value?: string;
+  },
+) =>
+  open({ ...ask, input: { placeholder: ask.placeholder, value: ask.value } });
 
 export function ConfirmHost() {
   const ask = asks.use();
@@ -38,7 +42,12 @@ function ConfirmDialog({ ask }: { ask: Ask }) {
   };
   const ok = !ask.input || value.trim().length > 0;
   return (
-    <Dialog open onClose={() => done(null)} title={ask.title} description={ask.body}>
+    <Dialog
+      open
+      onClose={() => done(null)}
+      title={ask.title}
+      description={ask.body}
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();

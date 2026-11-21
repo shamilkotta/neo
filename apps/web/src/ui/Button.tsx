@@ -9,8 +9,7 @@ const VARIANT: Record<Variant, string> = {
   secondary:
     "bg-raised text-fg border border-line hover:bg-hover hover:border-line-strong shadow-[0_1px_0_var(--line)]",
   ghost: "text-muted hover:text-fg hover:bg-hover",
-  danger:
-    "bg-danger/10 text-danger hover:bg-danger/15 border border-danger/20",
+  danger: "bg-danger/10 text-danger hover:bg-danger/15 border border-danger/20",
 };
 
 const SIZE: Record<Size, string> = {

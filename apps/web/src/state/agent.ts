@@ -42,7 +42,10 @@ export class AgentSession {
   readonly error = createStore<string | undefined>(undefined);
   readonly schedulesVersion = createStore(0);
 
-  constructor(root: NeoClient, readonly id: AgentId) {
+  constructor(
+    root: NeoClient,
+    readonly id: AgentId,
+  ) {
     this.client = root.agent(id);
   }
 
@@ -51,7 +54,8 @@ export class AgentSession {
       const state = await this.client.status();
       this.state.set(state);
       if (!state.turn) this.live.set(IDLE);
-      else if (!this.live.get().active) this.live.set((current) => ({ ...current, active: true }));
+      else if (!this.live.get().active)
+        this.live.set((current) => ({ ...current, active: true }));
       this.settlePending();
     }),
   );
@@ -71,7 +75,13 @@ export class AgentSession {
         this.thread.set({ ...page, older: page.before, loaded: true });
       } else {
         const from = openFrom(current);
-        this.thread.set(mergeTail(this.thread.get(), from, await this.client.transcript({ from, limit: PAGE })));
+        this.thread.set(
+          mergeTail(
+            this.thread.get(),
+            from,
+            await this.client.transcript({ from, limit: PAGE }),
+          ),
+        );
       }
       this.settlePending();
     }),
@@ -117,7 +127,10 @@ export class AgentSession {
     await this.guard(async () => {
       const page = await this.client.transcript({ before, limit: PAGE });
       this.thread.set((current) => ({
-        items: [...page.items, ...current.items.filter((i) => i.entryId >= before)],
+        items: [
+          ...page.items,
+          ...current.items.filter((i) => i.entryId >= before),
+        ],
         turns: { ...page.turns, ...current.turns },
         older: page.before,
         loaded: true,
@@ -129,15 +142,26 @@ export class AgentSession {
     const key = `web-${crypto.randomUUID()}`;
     const running = !!this.state.get()?.turn;
     if (!running)
-      this.pending.set((all) => [...all, { key, text, files: files.map((f) => f.name || "file"), at: Date.now() }]);
+      this.pending.set((all) => [
+        ...all,
+        {
+          key,
+          text,
+          files: files.map((f) => f.name || "file"),
+          at: Date.now(),
+        },
+      ]);
     try {
       const attachments = [];
-      for (const file of files) attachments.push(await this.client.upload(file, file.name || "file"));
+      for (const file of files)
+        attachments.push(await this.client.upload(file, file.name || "file"));
       const message = await this.client.send(text, {
         clientId: key,
         ...(attachments.length ? { attachments } : {}),
       });
-      this.pending.set((all) => all.map((p) => (p.key === key ? { ...p, id: message.id } : p)));
+      this.pending.set((all) =>
+        all.map((p) => (p.key === key ? { ...p, id: message.id } : p)),
+      );
       this.settlePending();
       return { queued: running };
     } catch (e) {
@@ -159,12 +183,18 @@ export class AgentSession {
     const state = this.state.get();
     if (!state) return;
     const shown = new Set(
-      this.thread.get().items.flatMap((i) => (i.type === "input" ? i.messages.map((m) => m.id) : [])),
+      this.thread
+        .get()
+        .items.flatMap((i) =>
+          i.type === "input" ? i.messages.map((m) => m.id) : [],
+        ),
     );
     const paused = state.state === "active" && state.agent.paused;
     const parked = new Set(paused ? this.queue.get().map((m) => m.id) : []);
     this.pending.set((all) => {
-      const left = all.filter((p) => !p.id || (!shown.has(p.id) && !parked.has(p.id)));
+      const left = all.filter(
+        (p) => !p.id || (!shown.has(p.id) && !parked.has(p.id)),
+      );
       return left.length === all.length ? all : left;
     });
   }
@@ -173,13 +203,24 @@ export class AgentSession {
 function openFrom(thread: Thread) {
   const last = thread.items.at(-1);
   if (!last) return 0;
-  const open = thread.items.find((i) => i.type === "input" && thread.turns[i.turnId]?.status === "running");
+  const open = thread.items.find(
+    (i) => i.type === "input" && thread.turns[i.turnId]?.status === "running",
+  );
   return open ? open.entryId : last.entryId + 1;
 }
 
-function mergeTail(current: Thread, from: number, page: TranscriptPage): Thread {
+function mergeTail(
+  current: Thread,
+  from: number,
+  page: TranscriptPage,
+): Thread {
   if (page.before !== null)
-    return { items: page.items, turns: page.turns, older: page.before, loaded: true };
+    return {
+      items: page.items,
+      turns: page.turns,
+      older: page.before,
+      loaded: true,
+    };
   return {
     items: [...current.items.filter((i) => i.entryId < from), ...page.items],
     turns: { ...current.turns, ...page.turns },

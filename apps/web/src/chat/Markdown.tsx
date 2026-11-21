@@ -43,11 +43,7 @@ function onClick(e: MouseEvent<HTMLDivElement>) {
   void navigator.clipboard.writeText(code).then(() => toast("Copied"));
 }
 
-export const Markdown = memo(function Markdown({
-  text,
-}: {
-  text: string;
-}) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const html = useMemo(() => render(text), [text]);
   return (
     <div

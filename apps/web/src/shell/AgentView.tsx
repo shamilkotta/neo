@@ -1,5 +1,11 @@
 import type { AgentSummary } from "@neo/client";
-import { AlarmClock, Brain, Lightbulb, ListChecks, PanelLeft } from "lucide-react";
+import {
+  AlarmClock,
+  Brain,
+  Lightbulb,
+  ListChecks,
+  PanelLeft,
+} from "lucide-react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
 import { Composer, type ComposerHandle, DropOverlay } from "../chat/Composer";
 import { Queue } from "../chat/Queue";
@@ -33,8 +39,15 @@ export function AgentView({
   const depth = useRef(0);
 
   const running = !!state?.turn;
-  const paused = state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
-  const activity = state ? (paused ? "paused" : running ? "working" : "idle") : activityOf(agent);
+  const paused =
+    state?.state === "active" ? state.agent.paused : !!agent.status?.paused;
+  const activity = state
+    ? paused
+      ? "paused"
+      : running
+        ? "working"
+        : "idle"
+    : activityOf(agent);
 
   useEffect(() => {
     const title = agent.name === "Neo" ? "Neo" : `${agent.name} · Neo`;
@@ -66,7 +79,11 @@ export function AgentView({
     <div className="flex min-h-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col" {...drag}>
         <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line px-2.5 sm:px-3">
-          <IconButton label="Agents" className="min-[900px]:hidden" onClick={() => toggleSidebar(true)}>
+          <IconButton
+            label="Agents"
+            className="min-[900px]:hidden"
+            onClick={() => toggleSidebar(true)}
+          >
             <PanelLeft className="size-[18px]" />
           </IconButton>
           <button
@@ -74,10 +91,18 @@ export function AgentView({
             onClick={() => ui.details.set(details ? null : "profile")}
             className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-2 pl-1 transition-colors hover:bg-hover"
           >
-            <Avatar id={agent.id} size={22} activity={activity === "working" ? undefined : activity} />
-            <span className="truncate text-[14px] font-semibold">{agent.name}</span>
+            <Avatar
+              id={agent.id}
+              size={22}
+              activity={activity === "working" ? undefined : activity}
+            />
+            <span className="truncate text-[14px] font-semibold">
+              {agent.name}
+            </span>
             {activity === "working" ? (
-              <span className="shimmer-text text-[12.5px] font-medium">Working</span>
+              <span className="shimmer-text text-[12.5px] font-medium">
+                Working
+              </span>
             ) : activity === "paused" ? (
               <span className="text-[12.5px] text-warn">Paused</span>
             ) : null}
@@ -87,7 +112,10 @@ export function AgentView({
           <div className="mx-auto mb-2 w-full max-w-[760px] px-4">
             <div className="flex items-center gap-2 rounded-xl border border-danger/20 bg-danger/8 px-3 py-2 text-[12.5px] text-danger">
               {error}
-              <button className="ml-auto font-medium underline" onClick={() => void session.refresh()}>
+              <button
+                className="ml-auto font-medium underline"
+                onClick={() => void session.refresh()}
+              >
                 Retry
               </button>
             </div>
@@ -97,7 +125,13 @@ export function AgentView({
           session={session}
           name={agent.name}
           agents={status?.agents ?? NO_AGENTS}
-          empty={<Empty name={agent.name} id={agent.id} onPick={(t) => composer.current?.fill(t)} />}
+          empty={
+            <Empty
+              name={agent.name}
+              id={agent.id}
+              onPick={(t) => composer.current?.fill(t)}
+            />
+          }
         />
         <Queue session={session} />
         <Composer
@@ -108,28 +142,63 @@ export function AgentView({
         />
         <DropOverlay visible={dragging} />
       </div>
-      <DetailsDrawer instance={instance} session={session} agent={agent} onDeleted={onDeleted} />
+      <DetailsDrawer
+        instance={instance}
+        session={session}
+        agent={agent}
+        onDeleted={onDeleted}
+      />
     </div>
   );
 }
 
 const SUGGESTIONS = [
-  { icon: AlarmClock, title: "Set up a routine", text: "Every weekday at 9am, send me a short brief of what's on my plate." },
-  { icon: Brain, title: "Teach it about you", text: "Here's what you should know about me and how I like to work: " },
-  { icon: ListChecks, title: "Plan something", text: "Help me plan my week. Ask me what I need to get done first." },
+  {
+    icon: AlarmClock,
+    title: "Set up a routine",
+    text: "Every weekday at 9am, send me a short brief of what's on my plate.",
+  },
+  {
+    icon: Brain,
+    title: "Teach it about you",
+    text: "Here's what you should know about me and how I like to work: ",
+  },
+  {
+    icon: ListChecks,
+    title: "Plan something",
+    text: "Help me plan my week. Ask me what I need to get done first.",
+  },
   { icon: Lightbulb, title: "Remind me", text: "Remind me in 30 minutes to " },
 ];
 
-function Empty({ name, id, onPick }: { name: string; id: string; onPick: (t: string) => void }) {
+function Empty({
+  name,
+  id,
+  onPick,
+}: {
+  name: string;
+  id: string;
+  onPick: (t: string) => void;
+}) {
   const hour = new Date().getHours();
-  const greeting = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const greeting =
+    hour < 5
+      ? "Up late"
+      : hour < 12
+        ? "Good morning"
+        : hour < 18
+          ? "Good afternoon"
+          : "Good evening";
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
       <div className="animate-up flex w-full max-w-[640px] flex-col items-center">
         <Avatar id={id} size={64} />
-        <h1 className="mt-5 text-center text-[24px] font-semibold tracking-tight">{greeting}</h1>
+        <h1 className="mt-5 text-center text-[24px] font-semibold tracking-tight">
+          {greeting}
+        </h1>
         <p className="mt-1.5 max-w-md text-center text-[14.5px] text-muted">
-          {name} is always on. Ask anything, hand off work, or set up routines that run on their own.
+          {name} is always on. Ask anything, hand off work, or set up routines
+          that run on their own.
         </p>
         <div className="mt-8 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
           {SUGGESTIONS.map((s, i) => (
@@ -144,8 +213,12 @@ function Empty({ name, id, onPick }: { name: string; id: string; onPick: (t: str
                 <s.icon className="size-4" />
               </span>
               <span className="min-w-0">
-                <span className="block text-[13.5px] font-medium">{s.title}</span>
-                <span className="mt-0.5 line-clamp-2 block text-[12.5px] text-muted">{s.text}</span>
+                <span className="block text-[13.5px] font-medium">
+                  {s.title}
+                </span>
+                <span className="mt-0.5 line-clamp-2 block text-[12.5px] text-muted">
+                  {s.text}
+                </span>
               </span>
             </button>
           ))}

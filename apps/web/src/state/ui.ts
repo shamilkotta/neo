@@ -6,7 +6,9 @@ export type SettingsSection = "general" | "providers" | "about";
 const wide = () => matchMedia("(min-width: 900px)").matches;
 
 export const ui = {
-  sidebar: createStore<boolean>(wide() && localStorage.getItem("neo.sidebar") !== "closed"),
+  sidebar: createStore<boolean>(
+    wide() && localStorage.getItem("neo.sidebar") !== "closed",
+  ),
   details: createStore<DetailsTab | null>(null),
   settings: createStore<SettingsSection | null>(null),
   palette: createStore(false),
