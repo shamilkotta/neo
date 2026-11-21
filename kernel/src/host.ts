@@ -26,7 +26,6 @@ export interface AgentPorts {
   now?: () => number;
 }
 
-/** The browsers connected to the instance; the host owns the sockets. */
 export interface Clients {
   send(signal: ServerSignal, watching?: AgentId): void;
   watching(agentId: AgentId): boolean;
