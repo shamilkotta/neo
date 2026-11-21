@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 
 export interface LiveTool {
   id: string;

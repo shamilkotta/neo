@@ -48,7 +48,7 @@ export function Workspace({
     setSelected(id);
     history.replaceState(null, "", `#agent=${encodeURIComponent(id)}`);
     closeSidebarOnMobile();
-  }, []);
+  }, [setSelected]);
 
   useShortcuts(agents, current?.id, choose);
 

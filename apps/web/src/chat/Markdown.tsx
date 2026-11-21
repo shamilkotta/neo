@@ -1,4 +1,4 @@
-import DOMPurify from "dompurify";
+import purify from "dompurify";
 import { Marked, type Tokens } from "marked";
 import { memo, type MouseEvent, useMemo } from "react";
 import { toast } from "../lib/toast";
@@ -23,7 +23,7 @@ const marked = new Marked({
   },
 });
 
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+purify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noreferrer noopener");
@@ -31,12 +31,14 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 export const render = (text: string) =>
-  DOMPurify.sanitize(marked.parse(text, { async: false }), {
+  purify.sanitize(marked.parse(text, { async: false }), {
     ADD_ATTR: ["target", "data-copy"],
   });
 
 function onClick(e: MouseEvent<HTMLDivElement>) {
-  const button = (e.target as HTMLElement).closest("[data-copy]");
+  const button = e.target instanceof Element
+    ? e.target.closest("[data-copy]")
+    : null;
   if (!button) return;
   const code = button.closest(".codeblock")?.querySelector("code")?.textContent;
   if (code == null) return;
@@ -47,6 +49,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const html = useMemo(() => render(text), [text]);
   return (
     <div
+      role="presentation"
       className="prose"
       onClick={onClick}
       dangerouslySetInnerHTML={{ __html: html }}

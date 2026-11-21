@@ -144,6 +144,7 @@ function Lightbox({
   }, [onClose]);
   return createPortal(
     <div
+      role="presentation"
       className="animate-in fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
       onClick={onClose}
     >

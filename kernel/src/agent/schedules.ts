@@ -636,7 +636,7 @@ function resolve(
 
 function checkTimezone(timezone: string) {
   try {
-    new Intl.DateTimeFormat("en", { timeZone: timezone });
+    new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
   } catch {
     throw new ScheduleError(`Unknown timezone ${timezone}`);
   }

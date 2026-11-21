@@ -1,5 +1,5 @@
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import { parse, SettingsShape, type SettingsChange } from "@neo/client";
 export type { SettingsShape } from "@neo/client";
 
@@ -74,7 +74,7 @@ export class Settings {
 
 function checkTimezone(timezone: string) {
   try {
-    new Intl.DateTimeFormat("en", { timeZone: timezone });
+    new Intl.DateTimeFormat("en", { timeZone: timezone }).format();
   } catch {
     throw new Error(`Unknown timezone ${timezone}`);
   }

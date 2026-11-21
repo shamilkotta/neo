@@ -7,3 +7,28 @@ singleQuote = false
 # trailingComma = "none"
 endOfLine = "lf"
 ignorePatterns = ["bun.lock", "**/worker-configuration.d.ts"]
+
+[lint]
+ignorePatterns = ["**/worker-configuration.d.ts"]
+
+[lint.categories]
+correctness = "error"
+suspicious = "warn"
+
+[lint.rules]
+"@typescript-eslint/no-explicit-any" = "error"
+"react-hooks/exhaustive-deps" = "warn"
+"no-unused-vars" = ["error", { argsIgnorePattern = "^_", varsIgnorePattern = "^_", caughtErrorsIgnorePattern = "^_" }]
+"react/react-in-jsx-scope" = "off"
+"no-underscore-dangle" = "off"
+"unicorn/consistent-function-scoping" = "off"
+"no-control-regex" = "off"
+"@typescript-eslint/no-unused-private-class-members" = "off"
+"@typescript-eslint/no-useless-default-assignment" = "off"
+"jsx-a11y/no-autofocus" = "off"
+"jsx-a11y/control-has-associated-label" = "off"
+"@typescript-eslint/consistent-return" = "off"
+"promise/always-return" = "off"
+"no-empty" = ["warn", { allowEmptyCatch = true }]
+"@typescript-eslint/no-shadow" = ["warn", { ignoreOnInitialization = true }]
+"import/no-unassigned-import" = ["warn", { allow = ["**/*.css"] }]

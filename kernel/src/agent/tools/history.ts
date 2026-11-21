@@ -22,7 +22,7 @@ export function historyTools(services: ToolServices) {
         limit: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         await ready();
         const results = await services.history.search(args.query, {
           ...(args.before !== undefined ? { before: args.before } : {}),
@@ -45,7 +45,7 @@ export function historyTools(services: ToolServices) {
         workStepsOffset: Type.Optional(Type.Number({ minimum: 0 })),
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         await ready();
         if (args.messageId !== undefined) {
           const line = await services.history.message(args.messageId);

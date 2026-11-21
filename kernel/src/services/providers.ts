@@ -29,7 +29,7 @@ import {
   type ProviderInfo,
   type ProviderKind,
 } from "@neo/client";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 export type { ProviderKind, CustomModel, ProviderConfig } from "@neo/client";
 
 export const PROVIDERS_SCHEMA = async (tx: SqliteExecutor) => {

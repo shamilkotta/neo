@@ -1,5 +1,11 @@
 import { useSyncExternalStore } from "react";
 
+type Updater<T> = (current: T) => T;
+
+function isUpdater<T>(next: T | Updater<T>): next is Updater<T> {
+  return typeof next === "function";
+}
+
 export function createStore<T>(initial: T) {
   let value = initial;
   const listeners = new Set<() => void>();
@@ -9,8 +15,8 @@ export function createStore<T>(initial: T) {
   };
   return {
     get: () => value,
-    set(next: T | ((current: T) => T)) {
-      value = next instanceof Function ? next(value) : next;
+    set(next: T | Updater<T>) {
+      value = isUpdater(next) ? next(value) : next;
       for (const fn of listeners) fn();
     },
     use: () => useSyncExternalStore(subscribe, () => value),

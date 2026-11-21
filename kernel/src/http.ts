@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { validator } from "hono/validator";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import { AttachmentError } from "./agent/attachments";
 import { MailboxError } from "./agent/mailbox";
 import { ScheduleError } from "./agent/schedules";

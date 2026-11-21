@@ -19,7 +19,7 @@ export class Changes<T extends string> {
     this.timer = undefined;
     const topics = [...this.pending];
     this.pending.clear();
-    for (const listener of [...this.listeners]) {
+    for (const listener of Array.from(this.listeners)) {
       try {
         listener(topics);
       } catch {}

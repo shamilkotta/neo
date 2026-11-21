@@ -1,5 +1,5 @@
 import { Type, type Static, type TSchema } from "typebox";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 
 export function parse<const S extends TSchema>(schema: S, value: unknown) {
   Value.Assert(schema, value);

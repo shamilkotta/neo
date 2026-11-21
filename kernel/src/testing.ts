@@ -55,7 +55,7 @@ export function createTestRuntime() {
     },
   });
   const faux = fauxProvider({ provider: "faux", models: [{ id: "m" }] });
-  const step = defineTool({
+  const stepTool = defineTool({
     name: "step",
     description: "Do one step of work",
     parameters: Type.Object({ n: Type.Number() }),
@@ -124,7 +124,7 @@ export function createTestRuntime() {
   };
   return {
     provider: faux.provider,
-    extension: defineExtension({ name: "test", tools: [step, gate] }),
+    extension: defineExtension({ name: "test", tools: [stepTool, gate] }),
     release,
     log,
     seen,

@@ -137,7 +137,7 @@ export function scheduleTools(services: ToolServices) {
         ),
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         const list = await services.schedules.list(args.all ? "all" : "active");
         return json({ schedules: await Promise.all(list.map(view)) });
       },
@@ -151,7 +151,7 @@ export function scheduleTools(services: ToolServices) {
         ...fields,
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         const { scheduleId, ...change } = args;
         const timezone = await services.timezone();
         const schedule = await attempt(() =>
@@ -167,7 +167,7 @@ export function scheduleTools(services: ToolServices) {
       description: "Delete a schedule that is no longer needed.",
       parameters: Type.Object({ scheduleId: Type.String({ minLength: 1 }) }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         const removed = await attempt(() =>
           services.schedules.remove(args.scheduleId),
         );

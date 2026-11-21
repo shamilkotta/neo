@@ -114,7 +114,7 @@ export function AgentView({
               {error}
               <button
                 className="ml-auto font-medium underline"
-                onClick={() => void session.refresh()}
+                onClick={() => session.refresh()}
               >
                 Retry
               </button>

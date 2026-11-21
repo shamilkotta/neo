@@ -196,7 +196,9 @@ export class VfsExecutionEnv implements ExecutionEnv {
     return attempt(
       context,
       path,
-      async () => void (await this.vfs.stat(this.resolve(path))),
+      async () => {
+        await this.vfs.stat(this.resolve(path));
+      },
     );
   }
 

@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import { Question } from "@neo/client";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import { ulid } from "../../ids";
 import { refuse, type ToolServices } from "./shared";
 

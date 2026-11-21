@@ -9,7 +9,7 @@ export interface Action {
 type Names = (id: string) => string;
 
 const record = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  v && typeof v === "object" ? Object.fromEntries(Object.entries(v)) : {};
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 
 function parsed(output: string) {

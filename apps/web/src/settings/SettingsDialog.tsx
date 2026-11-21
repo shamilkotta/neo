@@ -19,8 +19,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
-import Value from "typebox/value";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { Value } from "typebox/value";
 import { cn } from "../lib/format";
 import { setTheme, theme } from "../lib/theme";
 import { attempt } from "../lib/toast";
@@ -136,19 +136,19 @@ function General({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const t = theme.use();
   const { value, error } = useLoad(
-    async () => ({
-      settings: await instance.root.settings(),
-      models: await instance.root.models(),
-    }),
-    [instance, version],
+    useCallback(
+      async () => ({
+        settings: await instance.root.settings(),
+        models: await instance.root.models(),
+      }),
+      [instance, version],
+    ),
   );
-  const [tz, setTz] = useState("");
-  useEffect(() => {
-    if (value) setTz(value.settings.timezone);
-  }, [value]);
+  const [tzDraft, setTz] = useState<string>();
+  const tz = tzDraft ?? value?.settings.timezone ?? "";
   const save = (change: Parameters<typeof instance.root.updateSettings>[0]) =>
     void attempt(() => instance.root.updateSettings(change), "Saved");
-  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const browserTz = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <>
       <Heading
@@ -308,8 +308,7 @@ function Providers({ instance }: { instance: Instance }) {
   const version = instance.settingsVersion.use();
   const status = instance.status.use();
   const { value: providers, error } = useLoad(
-    () => instance.root.providers(),
-    [instance, version],
+    useCallback(() => instance.root.providers(), [instance, version]),
   );
   const [adding, setAdding] = useState<Kind | null>(null);
   const [found, setFound] = useState<ProviderConfig[]>([]);
@@ -362,11 +361,13 @@ function Providers({ instance }: { instance: Instance }) {
                       action: "Remove",
                       danger: true,
                     })
-                  )
-                    void attempt(
+                  ) {
+                    await attempt(
                       () => instance.root.removeProvider(p.id),
                       "Removed",
-                    ).then(done);
+                    );
+                    done();
+                  }
                 }}
               >
                 <Trash2 className="size-3.5" />
@@ -398,12 +399,13 @@ function Providers({ instance }: { instance: Instance }) {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() =>
-                    void attempt(
+                  onClick={async () => {
+                    await attempt(
                       () => instance.root.putProvider(p),
                       "Added",
-                    ).then(done)
-                  }
+                    );
+                    done();
+                  }}
                 >
                   Add
                 </Button>

@@ -45,7 +45,7 @@ function png(
   const bytes = new Uint8Array(24 + padding);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
   bytes.set(
-    [..."IHDR"].map((c) => c.charCodeAt(0)),
+    new TextEncoder().encode("IHDR"),
     12,
   );
   new DataView(bytes.buffer).setUint32(16, width);

@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import {
   type ClipboardEvent,
-  forwardRef,
   type KeyboardEvent,
+  type Ref,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -33,14 +33,17 @@ export interface ComposerHandle {
 const draftKey = (id: string) => `neo.draft:${id}`;
 const MAX_FILES = 10;
 
-export const Composer = forwardRef<
-  ComposerHandle,
-  {
-    session: AgentSession;
-    name: string;
-    onNeedsSetup: () => void;
-  }
->(function Composer({ session, name, onNeedsSetup }, ref) {
+export function Composer({
+  ref,
+  session,
+  name,
+  onNeedsSetup,
+}: {
+  ref?: Ref<ComposerHandle>;
+  session: AgentSession;
+  name: string;
+  onNeedsSetup: () => void;
+}) {
   const [text, setText] = useState(
     () => sessionStorage.getItem(draftKey(session.id)) ?? "",
   );
@@ -221,7 +224,7 @@ export const Composer = forwardRef<
       </div>
     </div>
   );
-});
+}
 
 function Pending({
   file,
@@ -236,7 +239,9 @@ function Pending({
     () => (file.type.startsWith("image/") ? URL.createObjectURL(file) : null),
     [file],
   );
-  useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url]);
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url);
+  }, [url]);
   return (
     <div className="group relative shrink-0">
       {url ? (
