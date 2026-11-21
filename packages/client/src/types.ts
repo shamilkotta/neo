@@ -104,7 +104,6 @@ export type AgentSummary = Static<typeof AgentSummary>;
 export const AgentRef = Type.Object({ id: AgentId, name: Type.String() });
 export type AgentRef = Static<typeof AgentRef>;
 
-/** A message between two agents of one instance (Durable Object to Durable Object). */
 export interface AgentMessage {
   id: string;
   kind: "message" | "no-answer";
