@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import { AgentId } from "@neo/client";
 import {
   fromBase64,
@@ -171,7 +171,7 @@ export async function* writePart(
   const hasBlobs = await db.get(
     `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vfs_blobs'`,
   );
-  for (let after = ""; hasBlobs;) {
+  if (hasBlobs) for (let after = ""; ;) {
     const page = await db.all<{ key: BlobKey; size: number; hash: string }>(
       `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
       after,

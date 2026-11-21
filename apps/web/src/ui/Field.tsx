@@ -1,9 +1,7 @@
 import {
-  forwardRef,
-  type InputHTMLAttributes,
+  type ComponentProps,
   type ReactNode,
   type SelectHTMLAttributes,
-  type TextareaHTMLAttributes,
 } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "../lib/format";
@@ -11,17 +9,19 @@ import { cn } from "../lib/format";
 const BASE =
   "w-full rounded-[10px] border border-line bg-raised px-3 text-[13.5px] text-fg placeholder:text-faint outline-none transition-[border,box-shadow] duration-150 hover:border-line-strong focus:border-brand/60 focus:ring-3 focus:ring-brand/15 disabled:opacity-60";
 
-export const Input = forwardRef<
-  HTMLInputElement,
-  InputHTMLAttributes<HTMLInputElement>
->(function Input({ className, ...rest }, ref) {
+export function Input({
+  ref,
+  className,
+  ...rest
+}: ComponentProps<"input">) {
   return <input ref={ref} {...rest} className={cn(BASE, "h-9", className)} />;
-});
+}
 
-export const Textarea = forwardRef<
-  HTMLTextAreaElement,
-  TextareaHTMLAttributes<HTMLTextAreaElement>
->(function Textarea({ className, ...rest }, ref) {
+export function Textarea({
+  ref,
+  className,
+  ...rest
+}: ComponentProps<"textarea">) {
   return (
     <textarea
       ref={ref}
@@ -30,7 +30,7 @@ export const Textarea = forwardRef<
       className={cn(BASE, "resize-y py-2 leading-relaxed", className)}
     />
   );
-});
+}
 
 export function Select({
   className,

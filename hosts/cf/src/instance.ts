@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Hono } from "hono";
 import type { SharedRequest } from "@neo/kernel";
 import { ClientSignal, SOCKET_PROTOCOL } from "@neo/client";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import type {
   AgentId,
   AgentStatus,

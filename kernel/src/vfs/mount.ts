@@ -203,8 +203,8 @@ export function remoteVfs(call: SharedCall, stream: SharedStream): RemoteVfs {
     },
     readRange: (path, offset, length) =>
       run({ op: "readRange", path, offset, length }),
-    writeStream: (path, stream, options = {}) =>
-      run({ op: "writeStream", path, stream, options }),
+    writeStream: (path, body, options = {}) =>
+      run({ op: "writeStream", path, stream: body, options }),
     copyFile: (from, to, options = {}) =>
       nothing(run({ op: "copyFile", from, to, options })),
     appendFile: (path, content) =>
@@ -362,7 +362,7 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs) {
       const after = options.after ?? "";
       if (prefix <= after || entries.some((e) => e.path === prefix))
         return entries;
-      const all = [...entries, await rootEntry()].sort((a, b) =>
+      const all = [...entries, await rootEntry()].toSorted((a, b) =>
         a.path < b.path ? -1 : 1,
       );
       return options.limit && options.limit > 0
@@ -378,7 +378,7 @@ export function mount(local: Vfs, prefix: string, remote: RemoteVfs) {
         ...entries,
         await rootEntry(),
         ...(await remote.walk("/")).map(out),
-      ].sort((a, b) => (a.path < b.path ? -1 : 1));
+      ].toSorted((a, b) => (a.path < b.path ? -1 : 1));
     },
     rm: (
       path: string,

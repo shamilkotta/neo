@@ -1,4 +1,4 @@
-import { type ButtonHTMLAttributes, forwardRef, type ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../lib/format";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -17,17 +17,14 @@ const SIZE: Record<Size, string> = {
   md: "h-9 px-3.5 text-[13.5px] gap-2 rounded-[10px]",
 };
 
-export const Button = forwardRef<
-  HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & {
+export function Button({
+  ref,
+  variant = "secondary", size = "md", icon, className, children, ...rest
+}: ComponentProps<"button"> & {
     variant?: Variant;
     size?: Size;
     icon?: ReactNode;
-  }
->(function Button(
-  { variant = "secondary", size = "md", icon, className, children, ...rest },
-  ref,
-) {
+  }) {
   return (
     <button
       ref={ref}
@@ -44,19 +41,16 @@ export const Button = forwardRef<
       {children}
     </button>
   );
-});
+}
 
-export const IconButton = forwardRef<
-  HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & {
+export function IconButton({
+  ref,
+  label, size = "md", active, className, children, ...rest
+}: ComponentProps<"button"> & {
     label: string;
     size?: "sm" | "md";
     active?: boolean;
-  }
->(function IconButton(
-  { label, size = "md", active, className, children, ...rest },
-  ref,
-) {
+  }) {
   return (
     <button
       ref={ref}
@@ -74,4 +68,4 @@ export const IconButton = forwardRef<
       {children}
     </button>
   );
-});
+}

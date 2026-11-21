@@ -11,7 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { FileCard, isImage } from "../chat/Files";
 import { bytes, cn, relative } from "../lib/format";
 import { attempt } from "../lib/toast";
@@ -46,6 +46,7 @@ export function DetailsDrawer({
   return (
     <>
       <div
+        role="presentation"
         className="animate-in fixed inset-0 z-30 bg-black/40 min-[1100px]:hidden"
         onClick={() => ui.details.set(null)}
       />
@@ -76,6 +77,7 @@ export function DetailsDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
           {tab === "profile" && (
             <Profile
+              key={agent.updatedAt}
               instance={instance}
               session={session}
               agent={agent}
@@ -109,12 +111,6 @@ function Profile({
     instructions: agent.instructions ?? "",
   });
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setDraft({
-      name: agent.name,
-      instructions: agent.instructions ?? "",
-    });
-  }, [agent.updatedAt]);
   const dirty =
     draft.name !== agent.name ||
     draft.instructions !== (agent.instructions ?? "");
@@ -271,8 +267,7 @@ function describe(s: Schedule) {
 function Routines({ session }: { session: AgentSession }) {
   const version = session.schedulesVersion.use();
   const { value: schedules, error } = useLoad(
-    () => session.client.schedules(),
-    [session, version],
+    useCallback(() => session.client.schedules(), [session, version]),
   );
   if (error) return <p className="pt-2 text-[13px] text-danger">{error}</p>;
   if (!schedules)
@@ -360,8 +355,7 @@ function Routines({ session }: { session: AgentSession }) {
 function Files({ session }: { session: AgentSession }) {
   const [path, setPath] = useState("/");
   const { value: entry, error } = useLoad(
-    () => session.client.file(path),
-    [session, path],
+    useCallback(() => session.client.file(path), [session, path]),
   );
   const parts = path.split("/").filter(Boolean);
   return (
@@ -407,8 +401,8 @@ function Files({ session }: { session: AgentSession }) {
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-line bg-raised">
-            {[...entry.entries]
-              .sort((a, b) =>
+            {entry.entries
+              .toSorted((a, b) =>
                 a.kind === b.kind
                   ? a.name.localeCompare(b.name)
                   : a.kind === "directory"

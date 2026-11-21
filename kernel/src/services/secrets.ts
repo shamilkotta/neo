@@ -105,7 +105,7 @@ export class Secrets {
               values.push(v, ...v.split(" ").filter((p) => p.length >= 6));
       } catch {}
     }
-    this.cachedValues = [...new Set(values)].sort(
+    this.cachedValues = [...new Set(values)].toSorted(
       (a, b) => b.length - a.length,
     );
     return this.cachedValues;

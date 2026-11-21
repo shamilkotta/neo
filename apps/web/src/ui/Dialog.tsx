@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../lib/format";
 import { IconButton } from "./Button";
@@ -21,16 +21,18 @@ export function Dialog({
   className?: string;
   bare?: boolean;
 }) {
-  const panel = useRef<HTMLDivElement>(null);
-  const close = useRef(onClose);
-  close.current = onClose;
+  const panel = useRef<HTMLDialogElement>(null);
+  const close = useEffectEvent(onClose);
   useEffect(() => {
     if (!open) return;
-    const previous = document.activeElement as HTMLElement | null;
+    const previous =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        close.current();
+        close();
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -49,16 +51,17 @@ export function Dialog({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-start sm:pt-[12vh]">
       <div
+        role="presentation"
         className="animate-in absolute inset-0 bg-black/40 backdrop-blur-[2px] dark:bg-black/60"
         onClick={onClose}
       />
-      <div
+      <dialog
         ref={panel}
-        role="dialog"
+        open
         aria-modal
         tabIndex={-1}
         className={cn(
-          "animate-pop relative max-h-[85dvh] w-full overflow-hidden rounded-t-2xl border border-line bg-raised shadow-2xl outline-none sm:w-[440px] sm:rounded-2xl",
+          "animate-pop relative m-0 max-h-[85dvh] w-full overflow-hidden rounded-t-2xl border border-line bg-raised shadow-2xl max-w-none text-fg outline-none sm:w-[440px] sm:rounded-2xl",
           className,
         )}
       >
@@ -80,7 +83,7 @@ export function Dialog({
             <div className="px-5 pt-4 pb-5">{children}</div>
           </>
         )}
-      </div>
+      </dialog>
     </div>,
     document.body,
   );

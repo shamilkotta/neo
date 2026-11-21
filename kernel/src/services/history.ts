@@ -182,7 +182,7 @@ export class History {
       limit + 1,
     );
     const more = rows.length > limit;
-    const lines = rows.slice(0, limit).reverse().map(toLine);
+    const lines = rows.slice(0, limit).toReversed().map(toLine);
     return { lines, before: more ? (lines[0]?.messageId ?? null) : null };
   }
 }

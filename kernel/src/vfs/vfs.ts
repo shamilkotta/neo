@@ -255,7 +255,7 @@ export class Vfs {
   }
 
   private emit(paths: string[]) {
-    for (const listener of [...this.listeners]) {
+    for (const listener of Array.from(this.listeners)) {
       try {
         listener(paths);
       } catch {}
@@ -529,7 +529,7 @@ export class Vfs {
         missing.push(cursor);
         top = cursor;
       }
-      for (const dir of missing.reverse()) await this.insertDirectory(tx, dir);
+      for (const dir of missing.toReversed()) await this.insertDirectory(tx, dir);
       created.push(top);
     });
     if (created.length > 0) this.emit(created);

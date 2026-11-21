@@ -9,7 +9,7 @@ import { ConfirmHost } from "./ui/confirm";
 import { Toaster } from "./ui/Toaster";
 
 export function App() {
-  const url = useMemo(apiUrl, []);
+  const url = useMemo(() => apiUrl(), []);
   const [token, setToken] = useState(() => loadToken(url));
   return (
     <>

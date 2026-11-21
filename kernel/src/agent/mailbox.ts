@@ -762,7 +762,7 @@ function answerOf(origin: MessageOrigin) {
   return origin.source === "user" ? origin.meta?.answer : undefined;
 }
 
-function origin(row: MessageRow) {
+function originOf(row: MessageRow) {
   if (row.source === "system") return { source: row.source };
   if (row.source === "user" && row.meta === "{}") return { source: row.source };
   return parse(MessageOrigin, {
@@ -773,7 +773,7 @@ function origin(row: MessageRow) {
 
 function toMessage(row: MessageRow) {
   return {
-    ...origin(row),
+    ...originOf(row),
     id: row.id,
     text: row.text,
     attachments: parseJson(Type.Array(Attachment), row.attachments),

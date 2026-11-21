@@ -4,7 +4,7 @@ import { ASK_TOOL, askDetails } from "./tools/ask";
 import { INPUT_ENTRY, InputEntryData, type Mailbox } from "./mailbox";
 import { Attachment, parse, type TranscriptItem } from "@neo/client";
 import { Type } from "typebox";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 export type { TranscriptItem } from "@neo/client";
 
 const OUTPUT_LIMIT = 4_000;

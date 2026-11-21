@@ -26,7 +26,7 @@ import {
 import { agentId, parse, parseJson, type ScheduleInput } from "@neo/client";
 import type { ScriptStep } from "@neo/kernel/testing";
 import { Type } from "typebox";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 
 let neo: Instance;
 beforeEach(async () => {
@@ -289,10 +289,10 @@ describe("schedules", () => {
       Date.now() + 55 * 60_000,
     );
     expect((await runs(hb.id)).map((r) => r.status)).toEqual(["sent", "sent"]);
-    expect(neo.act("PATCH", `/schedules/${hb.id}`, {})).rejects.toThrow(
+    await expect(neo.act("PATCH", `/schedules/${hb.id}`, {})).rejects.toThrow(
       /enabled/,
     );
-    expect(neo.act("DELETE", `/schedules/${hb.id}`)).rejects.toThrow();
+    await expect(neo.act("DELETE", `/schedules/${hb.id}`)).rejects.toThrow();
     await neo.act("PATCH", `/schedules/${hb.id}`, { enabled: false });
     expect((await heartbeat()).nextAt).toBeNull();
   });
@@ -382,15 +382,15 @@ describe("schedules", () => {
   test("bad schedules are refused with a reason", async () => {
     const bad = (input: ScheduleInput) =>
       neo.act("POST", "/test/schedules", input);
-    expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(
+    await expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(
       /at most every 5 minutes/,
     );
-    expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(/at least 5/);
-    expect(bad({ prompt: "x", at: "2020-01-01T09:00" })).rejects.toThrow(
+    await expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(/at least 5/);
+    await expect(bad({ prompt: "x", at: "2020-01-01T09:00" })).rejects.toThrow(
       /passed/,
     );
-    expect(bad({ prompt: "x" })).rejects.toThrow(/Say when/);
-    expect(
+    await expect(bad({ prompt: "x" })).rejects.toThrow(/Say when/);
+    await expect(
       bad({ prompt: "x", inMinutes: 5, cron: "0 9 * * *" }),
     ).rejects.toThrow(/one of/);
   });

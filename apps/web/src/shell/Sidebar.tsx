@@ -30,6 +30,7 @@ export function Sidebar({
   return (
     <>
       <div
+        role="presentation"
         onClick={() => toggleSidebar(false)}
         className={cn(
           "fixed inset-0 z-30 bg-black/50 transition-opacity duration-200 min-[900px]:hidden",

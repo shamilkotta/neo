@@ -68,7 +68,7 @@ export function memoryTools(services: ToolServices) {
         limit: Type.Optional(Type.Number({ minimum: 1, maximum: 25 })),
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         const found = await services.memories.search(
           args.query,
           args.limit ?? 5,
@@ -84,7 +84,7 @@ export function memoryTools(services: ToolServices) {
         after: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       }),
       replay: "safe",
-      execute: async (args, api) => {
+      execute: async (args) => {
         const page = await services.memories.page(args.after ?? null);
         return json({
           memories: page.memories.map(view),

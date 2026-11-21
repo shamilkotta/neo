@@ -6,7 +6,7 @@ import {
   type NewAgent,
   type ProfileChange,
 } from "@neo/client";
-import Value from "typebox/value";
+import { Value } from "typebox/value";
 import { PRIMARY_AGENT_ID } from "../agent/agents";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
 

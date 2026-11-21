@@ -131,7 +131,6 @@ function Palette({
       words.every((w) => `${c.label} ${c.group}`.toLowerCase().includes(w)),
     );
   }, [commands, q]);
-  useEffect(() => setI(0), [q]);
   useEffect(() => {
     list.current
       ?.querySelector(`[data-i="${i}"]`)
@@ -150,7 +149,10 @@ function Palette({
         <input
           autoFocus
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setI(0);
+          }}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();

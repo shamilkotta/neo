@@ -114,13 +114,13 @@ export async function* dumpDatabase(
     const sizeOf =
       columns.map((c) => `coalesce(length(${quote(c)}), 0)`).join(" + ") || "0";
     const sizes = `SELECT ${sizeOf} AS n FROM ${quote(item.name)} ${order}LIMIT ? OFFSET ?`;
-    for (let offset = 0, take = 0; ; offset += take) {
+    for (let offset = 0; ; ) {
       const lengths = await db.all<{ n: number }>(sizes, ROW_BATCH, offset);
       if (lengths.length === 0) break;
-      take = 0;
+      let take = 0;
       let bytes = 0;
       for (const { n } of lengths) {
-        bytes += Number(n);
+        bytes += n;
         if (take > 0 && bytes > RECORD_BYTES) break;
         take++;
       }
@@ -133,6 +133,7 @@ export async function* dumpDatabase(
         rows: rows.map((r) => columns.map((c) => encodeValue(r[c]))),
       };
       if (take === lengths.length && lengths.length < ROW_BATCH) break;
+      offset += take;
     }
   }
 }

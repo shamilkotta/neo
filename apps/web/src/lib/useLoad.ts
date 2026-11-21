@@ -1,7 +1,7 @@
-import { type DependencyList, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./format";
 
-export function useLoad<T>(load: () => Promise<T>, deps: DependencyList) {
+export function useLoad<T>(load: () => Promise<T>) {
   const [value, setValue] = useState<T>();
   const [error, setError] = useState<string>();
   const reload = useCallback(() => {
@@ -17,7 +17,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: DependencyList) {
     return () => {
       gone = true;
     };
-  }, deps);
+  }, [load]);
   useEffect(reload, [reload]);
   return { value, error, reload };
 }

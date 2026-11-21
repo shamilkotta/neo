@@ -248,7 +248,7 @@ export function imageSize(
   const u32 = (i: number) =>
     ((at(i) << 24) | (at(i + 1) << 16) | (at(i + 2) << 8) | at(i + 3)) >>> 0;
   const tag = (i: number, s: string) =>
-    [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
+    String.fromCharCode(...b.subarray(i, i + s.length)) === s;
   if (b.length >= 24 && b[0] === 0x89 && tag(1, "PNG"))
     return { width: u32(16), height: u32(20) };
   if (b.length >= 10 && tag(0, "GIF8"))
@@ -295,7 +295,7 @@ async function sniffedType(vfs: Vfs, path: string, claimed: string) {
   const file = await vfs.open(path);
   const head = await file.read(0, 16);
   const tag = (i: number, s: string) =>
-    [...s].every((c, j) => head[i + j] === c.charCodeAt(0));
+    String.fromCharCode(...head.subarray(i, i + s.length)) === s;
   if (head[0] === 0x89 && tag(1, "PNG")) return "image/png";
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff)
     return "image/jpeg";
