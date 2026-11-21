@@ -1,19 +1,16 @@
 #!/usr/bin/env bun
 import { mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { NeoClient } from "@neo/client";
-import { serve } from "./server";
 
 const HELP = `neo: a minimal always-on agent
 
-  neo serve  [--dir ~/.neo] [--port 7420] [--hostname 127.0.0.1]
-             Run this device's instance. Open the printed URL for the web chat.
   neo status --url URL --token T
 
-Moving an instance (the target is a new instance: a fresh "neo serve", or a new /i/<name> on
-Cloudflare). A passphrase carries the secrets (provider keys); without one they are dropped.
+Moving an instance to a new, empty instance. A passphrase carries the secrets
+(provider keys); without one they are dropped.
 
   neo move   --from URL --from-token T --to URL --to-token T [--passphrase P]
              Seal, export, import on the target, retire the source. On failure the source runs again.
@@ -23,15 +20,12 @@ Cloudflare). A passphrase carries the secrets (provider keys); without one they 
   neo complete --url URL --token T     Retire a sealed, exported source.
   neo unseal   --url URL --token T     Cancel a move: the source runs again.
 
-Env: NEO_DIR, NEO_PORT, NEO_TOKEN, NEO_MASTER_KEY, NEO_TEST=1 (scripted test model).`;
+Env: NEO_URL, NEO_TOKEN, NEO_PASSPHRASE.`;
 
 const { values, positionals } = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
   options: {
-    dir: { type: "string" },
-    port: { type: "string" },
-    hostname: { type: "string" },
     url: { type: "string" },
     token: { type: "string" },
     from: { type: "string" },
@@ -58,27 +52,6 @@ async function main() {
   const passphrase = values.passphrase ?? process.env.NEO_PASSPHRASE;
   if (!command || values.help) return console.log(HELP);
   switch (command) {
-    case "serve": {
-      const dir = values.dir ?? process.env.NEO_DIR ?? join(homedir(), ".neo");
-      const running = await serve({
-        dir,
-        port: Number(values.port ?? process.env.NEO_PORT ?? 7420),
-        ...(values.hostname ? { hostname: values.hostname } : {}),
-        ...(values.token ? { token: values.token } : {}),
-        test: process.env.NEO_TEST === "1",
-      });
-      console.log(
-        `neo ${running.neo.state} on ${running.url} (data in ${dir})`,
-      );
-      console.log(`web chat: ${running.url}/#token=${running.token}`);
-      const stop = async () => {
-        await running.stop();
-        process.exit(0);
-      };
-      process.on("SIGINT", stop);
-      process.on("SIGTERM", stop);
-      return;
-    }
     case "status":
       return print(await target().status());
     case "export": {

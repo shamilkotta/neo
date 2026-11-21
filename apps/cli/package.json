@@ -1,0 +1,12 @@
+{
+  "name": "@neo/cli",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "neo": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@neo/client": "workspace:*"
+  }
+}
