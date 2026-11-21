@@ -10,11 +10,34 @@
     "run_worker_first": true,
     "not_found_handling": "single-page-application",
   },
+  "previews": {
+    "vars": {
+      "NEO_TEST": "0",
+    },
+    "r2_buckets": [
+      {
+        "binding": "BLOBS",
+        "bucket_name": "neo-preview-blobs",
+      },
+    ],
+    "durable_objects": {
+      "bindings": [
+        { "name": "INSTANCE", "class_name": "InstanceDO" },
+        { "name": "AGENT", "class_name": "AgentDO" },
+      ],
+    },
+  },
   "durable_objects": {
-    "bindings": [{ "name": "INSTANCE", "class_name": "InstanceDO" }],
+    "bindings": [
+      { "name": "INSTANCE", "class_name": "InstanceDO" },
+      { "name": "AGENT", "class_name": "AgentDO" },
+    ],
   },
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "neo-blobs" }],
   "vars": { "NEO_TEST": "0" },
   "secrets": { "required": ["NEO_MASTER_KEY", "NEO_TOKEN"] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["InstanceDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["InstanceDO", "AgentDO"] },
+  ],
+  "account_id": "364500b7193a511e00ed3c6702fe6a89",
 }

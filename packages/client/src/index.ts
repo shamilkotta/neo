@@ -1,2 +1,12 @@
 export * from "./types";
-export { NeoApiError, NeoClient, type NeoClientOptions } from "./client";
+export {
+  AgentClient,
+  NeoApiError,
+  NeoClient,
+  type NeoClientOptions,
+  type Connection,
+  type SignalHandlers,
+  SOCKET_PROTOCOL,
+  tokenProtocol,
+  tokenFromProtocols,
+} from "./client";

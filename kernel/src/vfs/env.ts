@@ -196,7 +196,9 @@ export class VfsExecutionEnv implements ExecutionEnv {
     return attempt(
       context,
       path,
-      async () => void (await this.vfs.stat(this.resolve(path))),
+      async () => {
+        await this.vfs.stat(this.resolve(path));
+      },
     );
   }
 
@@ -251,7 +253,7 @@ export class VfsExecutionEnv implements ExecutionEnv {
               limit: maxEntries + 1,
             });
             const entries = page.slice(0, maxEntries);
-            if (entries.length > 0) after = entries.at(-1)!.path;
+            after = entries.at(-1)?.path ?? after;
             done = page.length <= maxEntries;
             return { entries: entries.map(toFileInfo), done };
           }),

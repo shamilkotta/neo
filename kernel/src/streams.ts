@@ -1,3 +1,5 @@
+import { parseJson } from "@neo/client";
+import type { TSchema } from "typebox";
 
 export class TooLargeError extends Error {
   constructor(readonly limit: number) {
@@ -5,7 +7,18 @@ export class TooLargeError extends Error {
   }
 }
 
-export function emptyStream(): ReadableStream<Uint8Array> {
+export function plainBytes(bytes: Uint8Array) {
+  return bytes.buffer instanceof ArrayBuffer
+    ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    : new Uint8Array(bytes);
+}
+
+export const plainChunks = () =>
+  new TransformStream<Uint8Array, Uint8Array<ArrayBuffer>>({
+    transform: (chunk, controller) => controller.enqueue(plainBytes(chunk)),
+  });
+
+export function emptyStream() {
   return new ReadableStream({ start: (controller) => controller.close() });
 }
 
@@ -45,10 +58,7 @@ export async function readCapped(
   return { bytes, truncated };
 }
 
-export async function bytesCapped(
-  message: Request | Response,
-  limit: number,
-): Promise<Uint8Array> {
+export async function bytesCapped(message: Request | Response, limit: number) {
   const declared = Number(message.headers.get("content-length") ?? NaN);
   if (declared > limit) {
     await message.body?.cancel().catch(() => {});
@@ -57,18 +67,16 @@ export async function bytesCapped(
   return (await readCapped(message.body, limit)).bytes;
 }
 
-export async function textCapped(
-  message: Request | Response,
-  limit: number,
-): Promise<string> {
+export async function textCapped(message: Request | Response, limit: number) {
   return new TextDecoder().decode(await bytesCapped(message, limit));
 }
 
-export async function jsonCapped<T = unknown>(
+export async function jsonCapped<const S extends TSchema>(
   message: Request | Response,
   limit: number,
-): Promise<T> {
-  return JSON.parse(await textCapped(message, limit)) as T;
+  schema: S,
+) {
+  return parseJson(schema, await textCapped(message, limit));
 }
 
 export const LIMITS = {

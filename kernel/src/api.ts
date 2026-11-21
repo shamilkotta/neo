@@ -1,482 +1,346 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { watchEvents } from "@earendil-works/pi-durable";
-import { type AgentChange, DEFAULT_AGENT_ID } from "./agent/agents";
 import {
-  ATTACHMENTS_ROOT,
-  AttachmentError,
-  type AttachmentInput,
-  USER_ROOT,
-} from "./agent/attachments";
-import { MailboxError } from "./agent/mailbox";
+  AttachmentInput,
+  QuestionAnswer,
+  RecordId,
+  ScheduleInput,
+} from "@neo/client";
+import { Hono } from "hono";
+import { Type } from "typebox";
+import { ATTACHMENTS_ROOT, USER_ROOT } from "./agent/attachments";
 import { readTranscript } from "./agent/transcript";
-import { ScheduleError, type ScheduleInput } from "./agent/schedules";
-import { timingSafeEqual } from "./crypto";
-import { type Neo, NEO_VERSION, SetupError, StateError } from "./neo";
-import {
-  detectLocalProviders,
-  type ProviderConfig,
-} from "./services/providers";
-import type { SettingsShape } from "./services/settings";
-import { BundleError } from "./move/bundle";
-import { joinPath, type Vfs, VfsError, type VfsStat } from "./vfs/vfs";
+import { api, HttpError, jsonBody, pathParams, queryParams } from "./http";
+import type { NeoAgent } from "./neo";
+import { ScriptStep } from "./testing";
+import { joinPath, type Vfs, type VfsStat } from "./vfs/vfs";
 
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+const MessageBody = Type.Object({
+  text: Type.Optional(Type.String()),
+  clientId: Type.Optional(Type.String()),
+  attachments: Type.Optional(Type.Array(AttachmentInput)),
+  answer: Type.Optional(QuestionAnswer),
+});
 
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, last-event-id, x-neo-passphrase",
-  "access-control-max-age": "86400",
-};
+const ById = pathParams(Type.Object({ id: RecordId }));
+const Position = Type.Integer({ minimum: 0 });
+const TranscriptQuery = Type.Object({
+  before: Type.Optional(Position),
+  from: Type.Optional(Position),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+});
+const UploadQuery = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 255 }),
+});
+const FileQuery = Type.Object({ path: Type.String({ minLength: 1 }) });
+const RemoveQuery = Type.Object({
+  path: Type.String({ minLength: 1 }),
+  recursive: Type.Optional(Type.Boolean()),
+});
 
-const json = (value: unknown, status = 200) =>
-  Response.json(value, { status, headers: { "cache-control": "no-store" } });
+export function agentApi(neo: NeoAgent) {
+  const app = api();
+  const live = () => neo.services();
 
-function withCors(response: Response): Response {
-  const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
+  app.use(async (_c, next) => {
+    if (neo.state === "empty") throw new HttpError(404, "No such agent");
+    await next();
   });
-}
 
-async function body<T>(request: Request): Promise<T> {
-  try {
-    return (await request.json()) as T;
-  } catch {
-    throw new HttpError(400, "The body is not JSON");
-  }
-}
-
-export const preflight = () =>
-  new Response(null, { status: 204, headers: CORS });
-
-export function authorized(request: Request, token: string): boolean {
-  const given = request.headers
-    .get("authorization")
-    ?.replace(/^Bearer\s+/i, "");
-  return !!given && timingSafeEqual(given, token);
-}
-
-export const unauthorized = () =>
-  withCors(json({ error: "Unauthorized" }, 401));
-
-export async function handleApi(neo: Neo, request: Request): Promise<Response> {
-  if (request.method === "OPTIONS") return preflight();
-  return withCors(await respond(neo, request));
-}
-
-async function respond(neo: Neo, request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  const path = url.pathname;
-  try {
-    if (!path.startsWith("/v1/")) throw new HttpError(404, "Not found");
-    if (!authorized(request, neo.host.token))
-      throw new HttpError(401, "Unauthorized");
-    return await route(neo, request, url);
-  } catch (error) {
-    if (error instanceof HttpError)
-      return json({ error: error.message }, error.status);
-    if (error instanceof StateError)
-      return json({ error: error.message, state: error.state }, 409);
-    if (error instanceof SetupError)
-      return json({ error: error.message, setup: true }, 409);
-    if (
-      error instanceof MailboxError ||
-      error instanceof AttachmentError ||
-      error instanceof ScheduleError ||
-      error instanceof BundleError
-    )
-      return json({ error: error.message }, 400);
-    if (error instanceof VfsError)
-      return json(
-        { error: error.message, code: error.code },
-        error.code === "not_found" ? 404 : 400,
-      );
-    return json(
-      { error: error instanceof Error ? error.message : String(error) },
-      500,
-    );
-  }
-}
-
-async function route(neo: Neo, request: Request, url: URL): Promise<Response> {
-  const { method } = request;
-  const path = url.pathname;
-  const agentId = DEFAULT_AGENT_ID;
-  const is = (m: string, p: string) => method === m && path === p;
-  const match = (m: string, pattern: RegExp) =>
-    method === m ? pattern.exec(path) : null;
-  let m: RegExpExecArray | null;
-
-  if (is("GET", "/v1/status")) {
-    const status: Record<string, unknown> = {
-      version: NEO_VERSION,
-      host: neo.host.name,
+  app.get("/status", async (c) => {
+    const services = neo.state === "active" ? live() : undefined;
+    const self = services ? await services.self.get() : undefined;
+    return c.json({
+      agent: self
+        ? { ...self.profile, paused: self.paused }
+        : { id: neo.agentId },
       state: neo.state,
-      instanceId: neo.instanceId,
-      epoch: await neo.epoch(),
-      capabilities: neo.host.capabilities,
-      test: !!neo.host.test,
-    };
-    if (neo.state === "active") {
-      const live = neo.services();
-      const agent = await live.agents.get(agentId);
-      status.agent = { id: agent.id, name: agent.name, paused: agent.paused };
-      status.model = agent.model ?? (await neo.defaultModel()) ?? null;
-      status.turn = (await live.mailbox.currentTurn(agentId)) ?? null;
-      status.queued = (await live.mailbox.queue(agentId)).length;
-      status.latestEvent = await neo.events.latest();
-    }
-    return json(status);
-  }
-  if (is("GET", "/v1/events")) {
-    const after =
-      Number(
-        url.searchParams.get("after") ??
-          request.headers.get("last-event-id") ??
-          0,
-      ) || 0;
-    return new Response(neo.events.stream(after, request.signal), {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-store",
-        "x-accel-buffering": "no",
-      },
+      turn: (await services?.mailbox.currentTurn()) ?? null,
+      queued: services ? (await services.mailbox.queue()).length : 0,
     });
-  }
+  });
 
-  if (is("POST", "/v1/move/seal")) {
-    await neo.seal();
-    return json({ state: neo.state });
-  }
-  if (is("POST", "/v1/move/unseal")) {
-    await neo.unseal();
-    return json({ state: neo.state });
-  }
-  if (is("POST", "/v1/move/export")) {
-    const { passphrase } = await body<{ passphrase?: string }>(request);
-    return new Response(await neo.exportBundle(passphrase || undefined), {
-      headers: {
-        "content-type": "application/x-neo-bundle",
-        "cache-control": "no-store",
-      },
-    });
-  }
-  if (is("POST", "/v1/move/import")) {
-    if (!request.body)
-      throw new HttpError(400, "The bundle is the request body");
-    return json(
-      await neo.importBundle(
-        request.body,
-        request.headers.get("x-neo-passphrase") || undefined,
-      ),
+  app.get("/agent", async (c) => {
+    const self = await live().self.get();
+    return c.json({ agent: { ...self.profile, paused: self.paused } });
+  });
+
+  app.post("/uploads", queryParams(UploadQuery), async (c) => {
+    const upload = await neo.upload(
+      c.req.valid("query").name,
+      c.req.raw.body ?? new Blob([]).stream(),
     );
-  }
-  if (is("POST", "/v1/move/complete")) {
-    await neo.markMoved();
-    return json({ state: neo.state });
-  }
+    return c.json({ upload }, 201);
+  });
 
-  const live = neo.services();
-
-  if (is("POST", "/v1/uploads")) {
-    const name = url.searchParams.get("name");
-    if (!name) throw new HttpError(400, "name is required");
-    const upload = await neo.upload(name, request.body ?? new Blob([]).stream());
-    return json({ upload }, 201);
-  }
-  if (is("POST", "/v1/messages")) {
-    const input = await body<{
-      text?: string;
-      clientId?: string;
-      attachments?: AttachmentInput[];
-    }>(request);
-    const files = attachmentsOf(input);
+  app.post("/messages", jsonBody(MessageBody), async (c) => {
+    const input = c.req.valid("json");
+    if (input.answer) {
+      if (input.text !== undefined || input.attachments?.length)
+        throw new HttpError(400, "An answer has no text or attachments");
+      return c.json(
+        { message: await neo.answer(input.answer, input.clientId) },
+        202,
+      );
+    }
+    const files = input.attachments ?? [];
     if (typeof input.text !== "string" && !files.length)
       throw new HttpError(400, "text is required");
-    const message = await neo.send(agentId, {
+    const message = await neo.send({
+      source: "user",
       text: input.text ?? "",
       ...(input.clientId ? { clientId: input.clientId } : {}),
       ...(files.length ? { files } : {}),
       steer: true,
     });
-    return json({ message }, 202);
-  }
-  if (is("GET", "/v1/transcript")) {
-    const before = url.searchParams.get("before");
-    const limit = url.searchParams.get("limit");
-    return json(
-      await readTranscript(await neo.conversation(agentId), live.mailbox, {
-        ...(before ? { before: Number(before) } : {}),
-        ...(limit ? { limit: Number(limit) } : {}),
-      }),
-    );
-  }
-  if (is("GET", "/v1/live")) {
-    const conversation = await neo.conversation(agentId);
+    return c.json({ message }, 202);
+  });
+
+  app.get("/transcript", queryParams(TranscriptQuery), async (c) =>
+    c.json(
+      await readTranscript(
+        await neo.conversation(),
+        live().mailbox,
+        c.req.valid("query"),
+      ),
+    ),
+  );
+
+  app.get("/live", async (c) => {
+    const { harness, mailbox } = live();
+    const conversation = await neo.conversation();
     const stream = await watchEvents(
-      live.harness,
+      harness,
       conversation.id,
       BACKGROUND_CONTEXT,
     );
     const { generation, tools, compactions, run } = stream.snapshot;
     await stream.stop();
-    return json({
-      turn: (await live.mailbox.currentTurn(agentId)) ?? null,
+    return c.json({
+      turn: (await mailbox.currentTurn()) ?? null,
       run: run ?? null,
       generation: generation ?? null,
       tools,
       compactions,
     });
-  }
-  if ((m = match("GET", /^\/v1\/turns\/([\w-]+)$/))) {
-    const turn = await live.mailbox.turn(m[1]!);
+  });
+
+  app.get("/turns/:id", ById, async (c) => {
+    const { mailbox } = live();
+    const turn = await mailbox.turn(c.req.valid("param").id);
     if (!turn) throw new HttpError(404, "No such turn");
-    return json({ turn, messages: await live.mailbox.turnMessages(turn.id) });
-  }
-  if (is("POST", "/v1/stop"))
-    return json({ stopped: await live.mailbox.stop(agentId) });
-  if (is("POST", "/v1/pause")) {
-    await neo.pause(agentId);
-    return json({ paused: true });
-  }
-  if (is("POST", "/v1/resume")) {
-    await neo.resume(agentId);
-    return json({ paused: false });
-  }
+    return c.json({ turn, messages: await mailbox.turnMessages(turn.id) });
+  });
 
-  if (is("GET", "/v1/queue"))
-    return json({ queue: await live.mailbox.queue(agentId) });
-  if (is("PUT", "/v1/queue/order")) {
-    const input = await body<{ order?: string[] }>(request);
-    if (!Array.isArray(input.order))
-      throw new HttpError(400, "order is a list of message ids");
-    return json({ queue: await live.mailbox.reorder(agentId, input.order) });
-  }
-  if ((m = match("PATCH", /^\/v1\/queue\/([\w-]+)$/))) {
-    const input = await body<{ text?: string }>(request);
-    if (typeof input.text !== "string")
-      throw new HttpError(400, "text is required");
-    return json({
-      message: await live.mailbox.edit(agentId, m[1]!, input.text),
+  app.post("/stop", async (c) =>
+    c.json({ stopped: await live().mailbox.stop() }),
+  );
+  app.post("/pause", async (c) => {
+    await neo.pause();
+    return c.json({ paused: true });
+  });
+  app.post("/resume", async (c) => {
+    await neo.resume();
+    return c.json({ paused: false });
+  });
+
+  app.get("/queue", async (c) =>
+    c.json({ queue: await live().mailbox.queue() }),
+  );
+  app.put(
+    "/queue/order",
+    jsonBody(Type.Object({ order: Type.Array(Type.String()) })),
+    async (c) =>
+      c.json({
+        queue: await live().mailbox.reorder(c.req.valid("json").order),
+      }),
+  );
+  app.patch(
+    "/queue/:id",
+    ById,
+    jsonBody(Type.Object({ text: Type.String() })),
+    async (c) =>
+      c.json({
+        message: await live().mailbox.edit(
+          c.req.valid("param").id,
+          c.req.valid("json").text,
+        ),
+      }),
+  );
+  app.delete("/queue/:id", ById, async (c) => {
+    const id = c.req.valid("param").id;
+    await live().mailbox.cancel(id);
+    return c.json({ cancelled: id });
+  });
+  app.post("/queue/:id/steer", ById, async (c) => {
+    const id = c.req.valid("param").id;
+    await live().mailbox.steer(id);
+    return c.json({ steered: id });
+  });
+
+  app.get("/schedules", async (c) =>
+    c.json({ schedules: await live().schedules.list() }),
+  );
+  app.patch(
+    "/schedules/:id",
+    ById,
+    jsonBody(Type.Object({ enabled: Type.Boolean() })),
+    async (c) => {
+      const schedule = await live().schedules.update(
+        c.req.valid("param").id,
+        { enabled: c.req.valid("json").enabled },
+        await neo.timezone(),
+      );
+      if (!schedule) throw new HttpError(404, "No such schedule");
+      await neo.schedulesChanged();
+      return c.json({ schedule });
+    },
+  );
+
+  app.get("/files", queryParams(FileQuery), async (c) => {
+    const { vfs } = live();
+    const file = userFile(c.req.valid("query").path);
+    if (file.relative === "/") await vfs.mkdir(USER_ROOT, { recursive: true });
+    const stat = await vfs.stat(file.path);
+    if (stat.kind !== "directory") return fileResponse(vfs, stat);
+    const entries = await vfs.readdir(stat.path, { limit: 1000 });
+    return c.json({
+      path: file.relative,
+      entries: entries.map((e) => ({ ...e, path: outsidePath(e.path) })),
     });
-  }
-  if ((m = match("DELETE", /^\/v1\/queue\/([\w-]+)$/))) {
-    await live.mailbox.cancel(agentId, m[1]!);
-    return json({ cancelled: m[1] });
-  }
-  if ((m = match("POST", /^\/v1\/queue\/([\w-]+)\/steer$/))) {
-    await live.mailbox.steer(agentId, m[1]!);
-    return json({ steered: m[1] });
-  }
+  });
+  app.delete("/files", queryParams(RemoveQuery), async (c) => {
+    const { path, recursive } = c.req.valid("query");
+    const file = userFile(path);
+    if (file.relative === "/") throw new HttpError(400, "path is a folder");
+    await live().vfs.rm(file.path, { recursive: recursive ?? false });
+    return c.json({ removed: file.relative });
+  });
 
-  if (is("GET", "/v1/schedules"))
-    return json({ schedules: await live.schedules.list(agentId) });
-  if ((m = match("PATCH", /^\/v1\/schedules\/([\w-]+)$/))) {
-    const input = await body<{ enabled?: boolean }>(request);
-    if (typeof input.enabled !== "boolean")
-      throw new HttpError(400, "enabled is required");
-    const schedule = await live.schedules.update(
-      agentId,
-      m[1]!,
-      { enabled: input.enabled },
-      await live.settings.get("timezone"),
-    );
-    if (!schedule) throw new HttpError(404, "No such schedule");
-    await neo.schedulesChanged(agentId);
-    return json({ schedule });
-  }
-
-  if (is("GET", "/v1/agent"))
-    return json({ agent: await live.agents.get(agentId) });
-  if (is("PATCH", "/v1/agent")) {
-    const change = await body<AgentChange>(request);
-    await live.agents.update(agentId, change);
-    await neo.events.emit("agent.changed", {}, agentId);
-    return json({ agent: await live.agents.get(agentId) });
-  }
-  if (is("GET", "/v1/settings"))
-    return json({ settings: await live.settings.all() });
-  if (is("PUT", "/v1/settings")) {
-    const before = await live.settings.get("timezone");
-    const settings = await live.settings.update(
-      await body<Partial<SettingsShape>>(request),
-    );
-    if (settings.timezone !== before) await neo.timezoneChanged();
-    await neo.events.emit("settings.changed", {});
-    return json({ settings });
-  }
-
-  if (is("GET", "/v1/providers"))
-    return json({ providers: await live.providers.list() });
-  if (is("GET", "/v1/providers/detect"))
-    return json({
-      found: neo.host.capabilities.sockets ? await detectLocalProviders() : [],
-    });
-  if ((m = match("PUT", /^\/v1\/providers\/([\w-]+)$/))) {
-    const config = await body<ProviderConfig>(request);
-    await live.providers.put({ ...config, id: m[1]! });
-    await neo.events.emit("providers.changed", {});
-    return json({ providers: await live.providers.list() });
-  }
-  if ((m = match("DELETE", /^\/v1\/providers\/([\w-]+)$/))) {
-    await live.providers.remove(m[1]!);
-    await neo.events.emit("providers.changed", {});
-    return json({ providers: await live.providers.list() });
-  }
-  if (is("GET", "/v1/models"))
-    return json({
-      models: await live.providers.available(),
-      default: (await neo.defaultModel()) ?? null,
-    });
-
-  if (path === "/v1/files") {
-    const given = url.searchParams.get("path");
-    if (!given) throw new HttpError(400, "path is required");
-    const relative = joinPath("/", given);
-    const filePath = relative === "/" ? USER_ROOT : USER_ROOT + relative;
-    const outside = (p: string) => p.slice(USER_ROOT.length) || "/";
-    if (method === "GET") {
-      if (relative === "/") await live.vfs.mkdir(USER_ROOT, { recursive: true });
-      const stat = await live.vfs.stat(filePath);
-      if (stat.kind === "directory")
-        return json({
-          path: relative,
-          entries: (await live.vfs.readdir(stat.path, { limit: 1000 })).map(
-            (e) => ({ ...e, path: outside(e.path) }),
-          ),
-        });
-      return fileResponse(live.vfs, stat);
-    }
-    if (method === "DELETE") {
-      if (relative === "/") throw new HttpError(400, "path is a folder");
-      await live.vfs.rm(filePath, {
-        recursive: url.searchParams.get("recursive") === "1",
-      });
-      return json({ removed: relative });
-    }
-  }
-  if (is("GET", "/v1/attachments")) {
-    const given = url.searchParams.get("path");
-    if (!given) throw new HttpError(400, "path is required");
-    const filePath = joinPath("/", given);
-    if (!filePath.startsWith(`${ATTACHMENTS_ROOT}/`))
+  app.get("/attachments", queryParams(FileQuery), async (c) => {
+    const { vfs } = live();
+    const path = joinPath("/", c.req.valid("query").path);
+    if (!path.startsWith(`${ATTACHMENTS_ROOT}/`))
       throw new HttpError(404, "Not an attachment");
-    const stat = await live.vfs.stat(filePath);
+    const stat = await vfs.stat(path);
     if (stat.kind !== "file") throw new HttpError(404, "Not an attachment");
-    return fileResponse(live.vfs, stat);
-  }
+    return fileResponse(vfs, stat);
+  });
 
-  if (neo.host.test && is("POST", "/v1/test/script")) {
-    const input = await body<{
-      steps: Parameters<NonNullable<typeof neo.host.test>["script"]>[0];
-      append?: boolean;
-    }>(request);
-    neo.host.test.script(input.steps, { append: input.append ?? false });
-    return json({ pending: neo.host.test.pending() });
-  }
-  if (neo.host.test && is("POST", "/v1/test/release")) {
-    const input = await body<{ gate: string }>(request);
-    neo.host.test.release(input.gate);
-    return json({ released: input.gate });
-  }
-  if (neo.host.test && is("GET", "/v1/test/seen"))
-    return json({ seen: neo.host.test.seen });
-  if (neo.host.test && is("POST", "/v1/test/messages")) {
-    const input = await body<{
-      text?: string;
-      attachments?: AttachmentInput[];
-    }>(request);
-    const files = attachmentsOf(input);
-    if (typeof input.text !== "string")
-      throw new HttpError(400, "text is required");
-    return json(
-      {
-        message: await neo.send(agentId, {
-          text: input.text,
-          ...(files.length ? { files } : {}),
-          steer: false,
-        }),
-      },
-      202,
-    );
-  }
-  if (neo.host.test && is("GET", "/v1/test/memories"))
-    return json({ memories: await live.memories.list(agentId) });
-  if (neo.host.test && is("POST", "/v1/test/schedules")) {
-    const input = await body<ScheduleInput>(request);
-    const schedule = await live.schedules.create(
-      agentId,
-      input,
+  if (neo.host.test) app.route("/test", testApi(neo, neo.host.test));
+  return app;
+}
+
+type TestHooks = NonNullable<NeoAgent["host"]["test"]>;
+
+function testApi(neo: NeoAgent, test: TestHooks) {
+  const app = new Hono();
+  const live = () => neo.services();
+
+  app.post(
+    "/script",
+    jsonBody(
+      Type.Object({
+        steps: Type.Array(ScriptStep),
+        append: Type.Optional(Type.Boolean()),
+      }),
+    ),
+    (c) => {
+      const input = c.req.valid("json");
+      test.script(input.steps, { append: input.append ?? false });
+      return c.json({ pending: test.pending() });
+    },
+  );
+  app.post("/release", jsonBody(Type.Object({ gate: Type.String() })), (c) => {
+    const { gate } = c.req.valid("json");
+    test.release(gate);
+    return c.json({ released: gate });
+  });
+  app.get("/seen", (c) => c.json({ seen: test.seen }));
+  app.post(
+    "/messages",
+    jsonBody(
+      Type.Object({
+        text: Type.String(),
+        attachments: Type.Optional(Type.Array(AttachmentInput)),
+      }),
+    ),
+    async (c) => {
+      const input = c.req.valid("json");
+      const files = input.attachments ?? [];
+      const message = await neo.send({
+        source: "user",
+        text: input.text,
+        ...(files.length ? { files } : {}),
+        steer: false,
+      });
+      return c.json({ message }, 202);
+    },
+  );
+  app.get("/memories", async (c) =>
+    c.json({ memories: await live().memories.list() }),
+  );
+  app.post("/schedules", jsonBody(ScheduleInput), async (c) => {
+    const schedule = await live().schedules.create(
+      c.req.valid("json"),
       "agent",
-      await live.settings.get("timezone"),
+      await neo.timezone(),
     );
-    await neo.schedulesChanged(agentId);
-    return json({ schedule }, 201);
-  }
-  if (
-    neo.host.test &&
-    (m = match("PATCH", /^\/v1\/test\/schedules\/([\w-]+)$/))
-  ) {
-    const schedule = await live.schedules.update(
-      agentId,
-      m[1]!,
-      await body<ScheduleInput>(request),
-      await live.settings.get("timezone"),
+    await neo.schedulesChanged();
+    return c.json({ schedule }, 201);
+  });
+  app.patch("/schedules/:id", ById, jsonBody(ScheduleInput), async (c) => {
+    const schedule = await live().schedules.update(
+      c.req.valid("param").id,
+      c.req.valid("json"),
+      await neo.timezone(),
     );
     if (!schedule) throw new HttpError(404, "No such schedule");
-    await neo.schedulesChanged(agentId);
-    return json({ schedule });
-  }
-  if (
-    neo.host.test &&
-    (m = match("POST", /^\/v1\/test\/schedules\/([\w-]+)\/due$/))
-  ) {
-    const id =
-      m[1] === "heartbeat"
-        ? (await live.schedules.system(agentId, "heartbeat"))?.id
-        : m[1];
-    const ago = Number(url.searchParams.get("ago") ?? 1);
-    if (!id || !(await live.schedules.dueNow(agentId, id, ago)))
-      throw new HttpError(404, "No such schedule");
-    return json({ due: id });
-  }
-  if (
-    neo.host.test &&
-    (m = match("GET", /^\/v1\/test\/schedules\/([\w-]+)\/runs$/))
-  ) {
+    await neo.schedulesChanged();
+    return c.json({ schedule });
+  });
+  app.post(
+    "/schedules/:id/due",
+    ById,
+    queryParams(
+      Type.Object({ ago: Type.Optional(Type.Integer({ minimum: 0 })) }),
+    ),
+    async (c) => {
+      const { schedules } = live();
+      const id = c.req.valid("param").id;
+      const scheduleId =
+        id === "heartbeat" ? (await schedules.system("heartbeat"))?.id : id;
+      const ago = c.req.valid("query").ago ?? 1;
+      if (!scheduleId || !(await schedules.dueNow(scheduleId, ago)))
+        throw new HttpError(404, "No such schedule");
+      return c.json({ due: scheduleId });
+    },
+  );
+  app.get("/schedules/:id/runs", ById, async (c) => {
     const runs = await neo.host.db.all(
       `SELECT status, reason FROM neo_schedule_runs WHERE schedule_id = ? ORDER BY due_at DESC`,
-      m[1]!,
+      c.req.valid("param").id,
     );
-    return json({ runs });
-  }
-  if (neo.host.test && is("POST", "/v1/test/wake")) {
+    return c.json({ runs });
+  });
+  app.post("/wake", async (c) => {
     await neo.wake();
-    return json({ woke: true });
-  }
-
-  throw new HttpError(404, "Not found");
+    return c.json({ woke: true });
+  });
+  return app;
 }
 
-function attachmentsOf(input: { attachments?: unknown }): AttachmentInput[] {
-  if (input.attachments === undefined) return [];
-  if (!Array.isArray(input.attachments))
-    throw new HttpError(400, "attachments is a list of { id, mimeType? }");
-  return input.attachments as AttachmentInput[];
+function userFile(given: string) {
+  const relative = joinPath("/", given);
+  return {
+    relative,
+    path: relative === "/" ? USER_ROOT : USER_ROOT + relative,
+  };
 }
 
-async function fileResponse(vfs: Vfs, stat: VfsStat): Promise<Response> {
+const outsidePath = (path: string) => path.slice(USER_ROOT.length) || "/";
+
+async function fileResponse(vfs: Vfs, stat: VfsStat) {
   return new Response(await vfs.readStream(stat.path), {
     headers: {
       "content-type": "application/octet-stream",

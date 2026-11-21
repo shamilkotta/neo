@@ -8,7 +8,10 @@
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",
-    "@neo/kernel": "workspace:*"
+    "@neo/client": "workspace:*",
+    "@neo/kernel": "workspace:*",
+    "hono": "^4.13.19",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "wrangler": "^4.152.0",
@@ -17,7 +20,8 @@
   "scripts": {
     "build": "bun run --filter @neo/web build",
     "dev": "bun run build && wrangler dev",
-    "deploy": "bun run build && wrangler deploy",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler preview",
     "types": "wrangler types --strict-vars=false"
   }
 }
