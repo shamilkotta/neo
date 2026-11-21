@@ -20,16 +20,26 @@ export function Face({
       width={size}
       height={size}
       aria-hidden
-      className={cn("shrink-0", activity === "paused" && "opacity-55 grayscale", className)}
+      className={cn(
+        "shrink-0",
+        activity === "paused" && "opacity-55 grayscale",
+        className,
+      )}
     >
       <g transform="rotate(-8 20 20)">
         <rect x="2" y="2" width="36" height="36" rx="13" fill={color} />
-        <g className={working ? "animate-look" : undefined} style={{ transformOrigin: "20px 20px" }}>
+        <g
+          className={working ? "animate-look" : undefined}
+          style={{ transformOrigin: "20px 20px" }}
+        >
           {[14, 26].map((x) => (
             <g
               key={x}
               className="animate-blink"
-              style={{ transformOrigin: `${x}px 19px`, transformBox: "view-box" }}
+              style={{
+                transformOrigin: `${x}px 19px`,
+                transformBox: "view-box",
+              }}
             >
               <ellipse cx={x} cy="19" rx="3.4" ry="4.6" fill="#0a0a0c" />
               <circle cx={x + 1.2} cy="17.2" r="1.2" fill="#fff" />
@@ -56,7 +66,10 @@ export function Avatar({
   className?: string;
 }) {
   return (
-    <span className={cn("relative inline-flex shrink-0", className)} style={{ width: size, height: size }}>
+    <span
+      className={cn("relative inline-flex shrink-0", className)}
+      style={{ width: size, height: size }}
+    >
       <Face color={agentColor(id)} size={size} activity={activity} />
       {activity === "working" && (
         <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-ok ring-2 ring-panel">

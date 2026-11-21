@@ -1,5 +1,13 @@
 import { NeoApiError } from "@neo/client";
-import { ArrowUp, FileText, ImagePlus, Plus, Square, Upload, X } from "lucide-react";
+import {
+  ArrowUp,
+  FileText,
+  ImagePlus,
+  Plus,
+  Square,
+  Upload,
+  X,
+} from "lucide-react";
 import {
   type ClipboardEvent,
   forwardRef,
@@ -33,7 +41,9 @@ export const Composer = forwardRef<
     onNeedsSetup: () => void;
   }
 >(function Composer({ session, name, onNeedsSetup }, ref) {
-  const [text, setText] = useState(() => sessionStorage.getItem(draftKey(session.id)) ?? "");
+  const [text, setText] = useState(
+    () => sessionStorage.getItem(draftKey(session.id)) ?? "",
+  );
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -46,7 +56,8 @@ export const Composer = forwardRef<
     if (!list?.length) return;
     setFiles((f) => {
       const next = [...f, ...Array.from(list)];
-      if (next.length > MAX_FILES) toast(`Up to ${MAX_FILES} files per message`);
+      if (next.length > MAX_FILES)
+        toast(`Up to ${MAX_FILES} files per message`);
       return next.slice(0, MAX_FILES);
     });
     input.current?.focus();
@@ -103,11 +114,17 @@ export const Composer = forwardRef<
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) {
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.nativeEvent.isComposing &&
+      !matchMedia("(pointer: coarse)").matches
+    ) {
       e.preventDefault();
       void submit();
     }
-    if (e.key === "Escape" && running && empty) void attempt(() => session.client.stop());
+    if (e.key === "Escape" && running && empty)
+      void attempt(() => session.client.stop());
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -124,7 +141,14 @@ export const Composer = forwardRef<
         {files.length > 0 && (
           <div className="flex gap-2 overflow-x-auto px-3 pt-3">
             {files.map((f, i) => (
-              <Pending key={`${f.name}-${f.size}-${i}`} file={f} busy={sending} onRemove={() => setFiles((all) => all.filter((_, j) => j !== i))} />
+              <Pending
+                key={`${f.name}-${f.size}-${i}`}
+                file={f}
+                busy={sending}
+                onRemove={() =>
+                  setFiles((all) => all.filter((_, j) => j !== i))
+                }
+              />
             ))}
           </div>
         )}
@@ -158,7 +182,13 @@ export const Composer = forwardRef<
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
-            placeholder={paused ? `${name} is paused, messages will wait` : running ? "Queue a follow-up…" : `Message ${name}`}
+            placeholder={
+              paused
+                ? `${name} is paused, messages will wait`
+                : running
+                  ? "Queue a follow-up…"
+                  : `Message ${name}`
+            }
             className="block max-h-[280px] min-h-8 flex-1 resize-none bg-transparent px-1.5 py-[5px] text-[14.5px] leading-[22px] outline-none placeholder:text-faint focus-visible:outline-none"
           />
           {running && empty ? (
@@ -180,7 +210,11 @@ export const Composer = forwardRef<
               onClick={() => void submit()}
               className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition-[transform,opacity] active:scale-90 disabled:opacity-20"
             >
-              {sending ? <Spinner /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
+              {sending ? (
+                <Spinner />
+              ) : (
+                <ArrowUp className="size-4" strokeWidth={2.4} />
+              )}
             </button>
           )}
         </div>
@@ -189,18 +223,35 @@ export const Composer = forwardRef<
   );
 });
 
-function Pending({ file, busy, onRemove }: { file: File; busy: boolean; onRemove: () => void }) {
-  const url = useMemo(() => (file.type.startsWith("image/") ? URL.createObjectURL(file) : null), [file]);
+function Pending({
+  file,
+  busy,
+  onRemove,
+}: {
+  file: File;
+  busy: boolean;
+  onRemove: () => void;
+}) {
+  const url = useMemo(
+    () => (file.type.startsWith("image/") ? URL.createObjectURL(file) : null),
+    [file],
+  );
   useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url]);
   return (
     <div className="group relative shrink-0">
       {url ? (
-        <img src={url} alt={file.name} className="size-16 rounded-xl border border-line object-cover" />
+        <img
+          src={url}
+          alt={file.name}
+          className="size-16 rounded-xl border border-line object-cover"
+        />
       ) : (
         <div className="flex h-16 w-44 items-center gap-2 rounded-xl border border-line bg-sunken px-2.5">
           <FileText className="size-5 shrink-0 text-brand" />
           <div className="min-w-0">
-            <div className="truncate text-[12.5px] font-medium">{file.name}</div>
+            <div className="truncate text-[12.5px] font-medium">
+              {file.name}
+            </div>
             <div className="text-[11.5px] text-muted">{bytes(file.size)}</div>
           </div>
         </div>
@@ -232,7 +283,8 @@ export function DropOverlay({ visible }: { visible: boolean }) {
       </div>
       <div className="text-[15px] font-semibold">Drop files to attach</div>
       <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
-        <ImagePlus className="size-3.5" /> Images, documents, anything up to 10 files
+        <ImagePlus className="size-3.5" /> Images, documents, anything up to 10
+        files
       </div>
     </div>
   );

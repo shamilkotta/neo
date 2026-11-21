@@ -1,4 +1,11 @@
-import { type AgentId, type Connection, type InstanceTopic, NeoClient, type ServerSignal, type Status } from "@neo/client";
+import {
+  type AgentId,
+  type Connection,
+  type InstanceTopic,
+  NeoClient,
+  type ServerSignal,
+  type Status,
+} from "@neo/client";
 import { errorText } from "../lib/format";
 import { puller } from "../lib/pull";
 import { createStore } from "../lib/store";

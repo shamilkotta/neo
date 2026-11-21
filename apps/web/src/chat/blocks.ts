@@ -1,4 +1,9 @@
-import type { Attachment, InputMessage, TranscriptItem, Turn } from "@neo/client";
+import type {
+  Attachment,
+  InputMessage,
+  TranscriptItem,
+  Turn,
+} from "@neo/client";
 import { type Action, actionOf } from "./actions";
 import type { Ask } from "./Question";
 
@@ -13,7 +18,13 @@ export type Segment =
 
 export type Block =
   | { kind: "day"; key: string; at: number }
-  | { kind: "input"; key: string; message: InputMessage; steered: boolean; turn?: Turn }
+  | {
+      kind: "input";
+      key: string;
+      message: InputMessage;
+      steered: boolean;
+      turn?: Turn;
+    }
   | { kind: "reply"; key: string; turnId: string | null; segments: Segment[] }
   | { kind: "note"; key: string; text: string };
 
@@ -28,7 +39,12 @@ export function toBlocks(
     if (i.type === "tool") results.set(i.toolCallId, i);
     if (i.type === "input")
       for (const m of i.messages)
-        if (m.answer) answers.set(m.answer.questionId, { messageId: m.id, answers: m.answer.answers, at: m.at });
+        if (m.answer)
+          answers.set(m.answer.questionId, {
+            messageId: m.id,
+            answers: m.answer.answers,
+            at: m.at,
+          });
   }
   const blocks: Block[] = [];
   let reply: (Block & { kind: "reply" }) | null = null;
@@ -46,22 +62,43 @@ export function toBlocks(
           lastDay = day;
           blocks.push({ kind: "day", key: `day-${m.id}`, at: m.at });
         }
-        blocks.push({ kind: "input", key: m.id, message: m, steered: item.steered, turn });
+        blocks.push({
+          kind: "input",
+          key: m.id,
+          message: m,
+          steered: item.steered,
+          turn,
+        });
       }
       continue;
     }
     if (item.type === "assistant") {
       if (!item.text && item.toolCalls.length === 0 && !item.error) continue;
       if (!reply || reply.turnId !== item.turnId) {
-        reply = { kind: "reply", key: `r-${item.entryId}`, turnId: item.turnId, segments: [] };
+        reply = {
+          kind: "reply",
+          key: `r-${item.entryId}`,
+          turnId: item.turnId,
+          segments: [],
+        };
         blocks.push(reply);
       }
-      if (item.text) push({ kind: "text", key: `t-${item.entryId}`, text: item.text });
+      if (item.text)
+        push({ kind: "text", key: `t-${item.entryId}`, text: item.text });
       for (const call of item.toolCalls) {
         const result = results.get(call.id);
         if (result?.ask)
-          push({ kind: "ask", key: call.id, ask: { ...result.ask, answer: result.ask.answer ?? answers.get(result.ask.questionId) ?? null } });
-        else if (result?.file) push({ kind: "file", key: call.id, file: result.file });
+          push({
+            kind: "ask",
+            key: call.id,
+            ask: {
+              ...result.ask,
+              answer:
+                result.ask.answer ?? answers.get(result.ask.questionId) ?? null,
+            },
+          });
+        else if (result?.file)
+          push({ kind: "file", key: call.id, file: result.file });
         else if (result && !result.isError) {
           const action = actionOf(call.name, call.args, result.output, names);
           if (action) push({ kind: "action", key: call.id, action });
@@ -73,10 +110,18 @@ export function toBlocks(
     }
     if (item.type === "compaction") {
       reply = null;
-      blocks.push({ kind: "note", key: `n-${item.entryId}`, text: "Earlier conversation summarized" });
+      blocks.push({
+        kind: "note",
+        key: `n-${item.entryId}`,
+        text: "Earlier conversation summarized",
+      });
     } else if (item.type === "reset") {
       reply = null;
-      blocks.push({ kind: "note", key: `n-${item.entryId}`, text: "New context" });
+      blocks.push({
+        kind: "note",
+        key: `n-${item.entryId}`,
+        text: "New context",
+      });
     }
   }
   return blocks;

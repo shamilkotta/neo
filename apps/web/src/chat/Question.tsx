@@ -7,7 +7,13 @@ import { Spinner } from "../ui/Avatar";
 
 export type Ask = NonNullable<(TranscriptItem & { type: "tool" })["ask"]>;
 
-export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask }) {
+export function QuestionCard({
+  client,
+  ask,
+}: {
+  client: AgentClient;
+  ask: Ask;
+}) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sent, setSent] = useState<Record<string, string>>();
   const [busy, setBusy] = useState(false);
@@ -44,13 +50,18 @@ export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask })
         ) : (
           <MessageCircleQuestion className="size-3.5 text-brand" />
         )}
-        {answered ? "Answered" : single ? "Question for you" : `${ask.questions.length} questions for you`}
+        {answered
+          ? "Answered"
+          : single
+            ? "Question for you"
+            : `${ask.questions.length} questions for you`}
         {busy && <Spinner className="ml-auto text-faint" />}
       </div>
       <div className="flex flex-col gap-5 p-4">
         {ask.questions.map((q) => {
           const chosen = answered?.[q.id] ?? drafts[q.id];
-          const custom = answered && !q.options?.some((o) => o.label === answered[q.id]);
+          const custom =
+            answered && !q.options?.some((o) => o.label === answered[q.id]);
           return (
             <div key={q.id} className="flex flex-col gap-2.5">
               <div className="text-[14px] font-medium">{q.question}</div>
@@ -79,15 +90,21 @@ export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask })
                         <span
                           className={cn(
                             "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
-                            on ? "border-brand bg-brand text-white" : "border-line-strong",
+                            on
+                              ? "border-brand bg-brand text-white"
+                              : "border-line-strong",
                           )}
                         >
                           {on && <Check className="size-2.5" strokeWidth={3} />}
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-[13.5px] font-medium">{o.label}</span>
+                          <span className="block text-[13.5px] font-medium">
+                            {o.label}
+                          </span>
                           {o.description && (
-                            <span className="block text-[12.5px] text-muted">{o.description}</span>
+                            <span className="block text-[12.5px] text-muted">
+                              {o.description}
+                            </span>
                           )}
                         </span>
                       </button>
@@ -104,10 +121,20 @@ export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask })
               ) : (
                 <input
                   className="h-9 rounded-xl border border-line bg-transparent px-3 text-[13.5px] outline-none placeholder:text-faint focus:border-brand/50"
-                  placeholder={q.options?.length ? "Or type your own answer" : "Type your answer"}
-                  value={q.options?.some((o) => o.label === drafts[q.id]) ? "" : (drafts[q.id] ?? "")}
+                  placeholder={
+                    q.options?.length
+                      ? "Or type your own answer"
+                      : "Type your answer"
+                  }
+                  value={
+                    q.options?.some((o) => o.label === drafts[q.id])
+                      ? ""
+                      : (drafts[q.id] ?? "")
+                  }
                   disabled={busy}
-                  onChange={(e) => setDrafts({ ...drafts, [q.id]: e.target.value })}
+                  onChange={(e) =>
+                    setDrafts({ ...drafts, [q.id]: e.target.value })
+                  }
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && ready) void submit(drafts);
                   }}
@@ -118,7 +145,12 @@ export function QuestionCard({ client, ask }: { client: AgentClient; ask: Ask })
         })}
         {!answered && (
           <div className="flex justify-end">
-            <Button variant="primary" size="sm" disabled={!ready || busy} onClick={() => void submit(drafts)}>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!ready || busy}
+              onClick={() => void submit(drafts)}
+            >
               Send answer
             </Button>
           </div>

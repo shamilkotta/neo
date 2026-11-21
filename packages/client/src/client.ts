@@ -340,8 +340,7 @@ export class AgentClient extends Http {
     ).blob();
   transcript = (
     options: { before?: number; from?: number; limit?: number } = {},
-  ) =>
-    this.call("GET", `/transcript${query(options)}`, TranscriptPage);
+  ) => this.call("GET", `/transcript${query(options)}`, TranscriptPage);
   turn = (id: string) =>
     this.call(
       "GET",

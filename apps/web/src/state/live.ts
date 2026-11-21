@@ -29,7 +29,9 @@ export function applyLive(current: LiveTurn, event: unknown): LiveTurn {
       let text = current.text;
       for (const c of e.changes)
         if (c.type === "text_delta" && c.delta !== undefined) text += c.delta;
-      return text === current.text ? current : { ...current, active: true, text };
+      return text === current.text
+        ? current
+        : { ...current, active: true, text };
     }
     case "message_end":
       return { ...current, text: "" };

@@ -44,7 +44,9 @@ async function download(client: AgentClient, file: Attachment) {
 }
 
 const ext = (name: string) =>
-  name.includes(".") ? name.split(".").pop()!.slice(0, 4).toUpperCase() : "FILE";
+  name.includes(".")
+    ? name.split(".").pop()!.slice(0, 4).toUpperCase()
+    : "FILE";
 
 export const FileCard = memo(function FileCard({
   client,
@@ -109,10 +111,15 @@ export const FileCard = memo(function FileCard({
           </span>
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium" title={file.path}>
+          <span
+            className="block truncate text-[13px] font-medium"
+            title={file.path}
+          >
             {file.name}
           </span>
-          <span className="block text-[12px] text-muted">{bytes(file.size)}</span>
+          <span className="block text-[12px] text-muted">
+            {bytes(file.size)}
+          </span>
         </span>
         <Download className="size-4 text-faint transition-colors group-hover:text-fg" />
       </button>
@@ -140,7 +147,11 @@ function Lightbox({
       className="animate-in fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
       onClick={onClose}
     >
-      <img src={url} alt={name} className="animate-pop max-h-full max-w-full rounded-lg shadow-2xl" />
+      <img
+        src={url}
+        alt={name}
+        className="animate-pop max-h-full max-w-full rounded-lg shadow-2xl"
+      />
       <IconButton
         label="Close"
         onClick={onClose}

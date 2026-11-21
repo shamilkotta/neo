@@ -39,10 +39,25 @@ export function App() {
 }
 
 export function Logo({ className }: { className?: string }) {
-  return <span className={cn("font-brand leading-none text-fg tracking-normal [font-feature-settings:normal]", className)}>neo</span>;
+  return (
+    <span
+      className={cn(
+        "font-brand leading-none text-fg tracking-normal [font-feature-settings:normal]",
+        className,
+      )}
+    >
+      neo
+    </span>
+  );
 }
 
-function Connect({ url, onToken }: { url: string; onToken: (token: string) => void }) {
+function Connect({
+  url,
+  onToken,
+}: {
+  url: string;
+  onToken: (token: string) => void;
+}) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -55,7 +70,11 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
       await new NeoClient({ url, token }).status();
       onToken(token);
     } catch (e) {
-      setError(errorText(e) === "Unauthorized" ? "That token didn't work. Check it and try again." : errorText(e));
+      setError(
+        errorText(e) === "Unauthorized"
+          ? "That token didn't work. Check it and try again."
+          : errorText(e),
+      );
     }
     setBusy(false);
   };
@@ -72,12 +91,16 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
         <h1 className="flex items-baseline gap-1.5 text-[26px] font-semibold tracking-tight">
           Welcome to <Logo className="text-[38px] font-normal" />
         </h1>
-        <p className="mt-1.5 text-center text-[14px] text-muted">Your always-on agent. Connect to your instance to continue.</p>
+        <p className="mt-1.5 text-center text-[14px] text-muted">
+          Your always-on agent. Connect to your instance to continue.
+        </p>
         <div className="mt-8 w-full">
           <div
             className={cn(
               "flex items-center gap-2 rounded-2xl border bg-raised p-1.5 pl-3.5 shadow-sm transition-[border,box-shadow] focus-within:ring-4 focus-within:ring-brand/12",
-              error ? "border-danger/50" : "border-line-strong focus-within:border-brand/50",
+              error
+                ? "border-danger/50"
+                : "border-line-strong focus-within:border-brand/50",
             )}
           >
             <KeyRound className="size-4 shrink-0 text-faint" />
@@ -98,9 +121,17 @@ function Connect({ url, onToken }: { url: string; onToken: (token: string) => vo
               {busy ? <Spinner /> : <ArrowRight className="size-4" />}
             </button>
           </div>
-          {error && <p className="animate-in mt-2 px-1 text-[12.5px] text-danger">{error}</p>}
+          {error && (
+            <p className="animate-in mt-2 px-1 text-[12.5px] text-danger">
+              {error}
+            </p>
+          )}
           <p className="mt-4 px-1 text-center text-[12.5px] leading-relaxed text-muted">
-            It's the <code className="rounded bg-sunken px-1 py-0.5 font-mono text-[11.5px]">NEO_TOKEN</code> secret of your deployment.
+            It's the{" "}
+            <code className="rounded bg-sunken px-1 py-0.5 font-mono text-[11.5px]">
+              NEO_TOKEN
+            </code>{" "}
+            secret of your deployment.
             <br />
             <span className="text-faint">{url}</span>
           </p>

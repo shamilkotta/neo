@@ -7,16 +7,33 @@ import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { Field, Input, Textarea } from "../ui/Field";
 
-export function NewAgentDialog({ instance, onCreated }: { instance: Instance; onCreated: (id: string) => void }) {
+export function NewAgentDialog({
+  instance,
+  onCreated,
+}: {
+  instance: Instance;
+  onCreated: (id: string) => void;
+}) {
   const open = ui.newAgent.use();
   return (
-    <Dialog open={open} onClose={() => ui.newAgent.set(false)} title="New agent" description="Each agent has its own chat, memory, files and routines.">
+    <Dialog
+      open={open}
+      onClose={() => ui.newAgent.set(false)}
+      title="New agent"
+      description="Each agent has its own chat, memory, files and routines."
+    >
       {open && <Form instance={instance} onCreated={onCreated} />}
     </Dialog>
   );
 }
 
-function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: string) => void }) {
+function Form({
+  instance,
+  onCreated,
+}: {
+  instance: Instance;
+  onCreated: (id: string) => void;
+}) {
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,7 +47,9 @@ function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: str
         const agent = await attempt(() =>
           instance.root.createAgent({
             name: name.trim(),
-            ...(instructions.trim() ? { instructions: instructions.trim() } : {}),
+            ...(instructions.trim()
+              ? { instructions: instructions.trim() }
+              : {}),
           }),
         );
         setBusy(false);
@@ -42,10 +61,24 @@ function Form({ instance, onCreated }: { instance: Instance; onCreated: (id: str
     >
       <div className="flex items-center gap-3">
         <Avatar id={name || "new"} name={name || "?"} size={44} />
-        <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Researcher" className="h-10 text-[15px]" />
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name, e.g. Researcher"
+          className="h-10 text-[15px]"
+        />
       </div>
-      <Field label="Instructions" hint="Optional. You can change these any time.">
-        <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="What should it focus on? How should it talk?" />
+      <Field
+        label="Instructions"
+        hint="Optional. You can change these any time."
+      >
+        <Textarea
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={4}
+          placeholder="What should it focus on? How should it talk?"
+        />
       </Field>
       <div className="flex justify-end gap-2 pt-1">
         <Button onClick={() => ui.newAgent.set(false)}>Cancel</Button>
