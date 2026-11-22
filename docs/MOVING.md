@@ -1,30 +1,26 @@
 # Moving an instance
 
-> On branch `v2` the Bun host and its `neo` CLI are out of scope; moves go Cloudflare → Cloudflare through the API below (`NeoClient`). The CLI examples come back with the Bun host.
-
 An instance (chats, memories, files, schedules, providers, and a turn that is running) can move
-between hosts: Bun ↔ Bun, Bun ↔ Cloudflare, Cloudflare ↔ Cloudflare. It keeps its id. Each move
+between deployments (Cloudflare → Cloudflare for now). It keeps its id. Each move
 raises its `epoch` by one.
 
 Run the CLI from the repo root:
 
 ```bash
-neo=(bun run hosts/bun/src/cli.ts)
+neo=(bun run neo)
 $neo --help
 ```
 
 ## Terms
 
 - **Token**: an instance's API password (the `#token=` in its web chat URL).
-  - Bun: `<dir>/token` (`~/.neo/token` by default), or `--token` / `NEO_TOKEN` given to `serve`.
-  - Cloudflare: the Worker's `NEO_TOKEN` secret.
+  The Worker's `NEO_TOKEN` secret.
 - **Passphrase**: any text you choose for one move. It encrypts the secrets (provider keys) inside
   the bundle. Use the same one to import. It isn't stored, and isn't needed after the import.
   Without one, the move works but the secrets are dropped (add the keys again).
 - **Bundle**: a `.neo` file (gzipped). It holds the whole instance: the coordinator and every agent (one part each, with its files), and `/shared`.
 - **Target**: where the instance goes. It must be either:
-  - a **new** instance (no chats, providers, memories or files): a fresh `neo serve --dir <new dir>`,
-    or a newly deployed Worker on Cloudflare (one instance per Worker); or
+  - a **new** instance (no chats, providers, memories or files): a newly deployed Worker (one instance per Worker); or
   - the host it **moved away from** (state `moved`): the instance comes back to the same URL.
 
   Any other target refuses the import (409) and stays as it was.
@@ -100,13 +96,12 @@ the target is running: you'd have two copies.
 
 ## Examples
 
-Cloudflare → this machine:
+One Worker to another:
 
 ```bash
-bun run neo serve --dir ~/.neo-cf --port 7420        # terminal 1: a new local instance
 $neo move \
-  --from https://<worker>/i --from-token <cf token> \
-  --to http://127.0.0.1:7420 --to-token "$(cat ~/.neo-cf/token)" \
+  --from https://<old worker>/i --from-token <old token> \
+  --to https://<new worker>/i --to-token <new token> \
   --passphrase <any text>
 ```
 
@@ -115,9 +110,9 @@ Back to Cloudflare (same URL): swap `--from` and `--to`, and their tokens.
 Step by step, keeping a bundle file:
 
 ```bash
-$neo export   --url https://<worker>/i --token <cf token> --out ~/main.neo --passphrase P
-$neo import   --url http://127.0.0.1:7420 --token <local token> --passphrase P ~/main.neo
-$neo complete --url https://<worker>/i --token <cf token>
+$neo export   --url https://<old worker>/i --token <old token> --out ~/main.neo --passphrase P
+$neo import   --url https://<new worker>/i --token <new token> --passphrase P ~/main.neo
+$neo complete --url https://<old worker>/i --token <old token>
 ```
 
 ## API

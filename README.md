@@ -4,7 +4,7 @@ A minimal, always-on personal agent, and a team of them: each agent is its own C
 Object (its own SQLite, chat, memory, schedules and files); a coordinator Durable Object holds what they
 share (the agent list, providers and keys, the model, settings, `/shared`). Agents talk to each other
 directly. Any model provider; the whole instance moves as one bundle. See [PLAN.md](PLAN.md) and
-[docs/MULTI-AGENT.md](docs/MULTI-AGENT.md). (On branch `v2` the Bun host is out of scope.)
+[docs/MULTI-AGENT.md](docs/MULTI-AGENT.md).
 
 Layout: `kernel/` (the core), `hosts/cf` (where it runs), `apps/web` (the web chat), `apps/cli` (the `neo` CLI: status and moves),
 `packages/client` (the API types and a typed client for every app), `e2e/` (one suite for every host).
