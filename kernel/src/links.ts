@@ -27,6 +27,11 @@ export interface AgentInit {
   profile: AgentProfile;
 }
 
+export interface AgentCreator {
+  by: AgentId;
+  idempotencyKey: string;
+}
+
 export interface CoordinatorLink {
   init(agentId: AgentId): Promise<AgentInit | undefined>;
   config(): Promise<AgentConfig>;
@@ -34,10 +39,10 @@ export interface CoordinatorLink {
     agentId: AgentId,
     topics: AgentTopic[],
     status: AgentStatus | undefined,
-  ): Promise<boolean>;
+  ): Promise<{ watched: boolean }>;
   live(agentId: AgentId, events: unknown[]): Promise<void>;
   agents(): Promise<AgentSummary[]>;
-  createAgent(by: string, input: NewAgent, key: string): Promise<AgentProfile>;
+  createAgent(input: NewAgent, creator: AgentCreator): Promise<AgentProfile>;
   updateProfile(agentId: AgentId, change: ProfileChange): Promise<AgentProfile>;
   shared: SharedCall;
   sharedStream: SharedStream;

@@ -283,6 +283,7 @@ export class NeoAgent {
         this.watched = await this.host
           .coordinator(home.instance)
           .changed(home.agentId, batch, status)
+          .then(({ watched }) => watched)
           .catch(() => this.watched);
       }
     })().finally(() => {
@@ -778,8 +779,11 @@ export class NeoAgent {
           ...teamTools({
             me,
             agents: () => this.link().agents(),
-            create: async (input, key) =>
-              this.link().createAgent(this.agentId, input, key),
+            create: async (input, idempotencyKey) =>
+              this.link().createAgent(input, {
+                by: this.agentId,
+                idempotencyKey,
+              }),
             updateSelf: (change) =>
               this.link().updateProfile(this.agentId, change),
             messaging: () => messaging,

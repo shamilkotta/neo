@@ -14,7 +14,7 @@ import { json, refuse } from "./shared";
 export interface TeamServices {
   me(): Promise<{ id: string; name: string }>;
   agents(): Promise<AgentSummary[]>;
-  create(input: NewAgent, key: string): Promise<AgentProfile>;
+  create(input: NewAgent, idempotencyKey: string): Promise<AgentProfile>;
   updateSelf(change: ProfileChange): Promise<AgentProfile>;
   messaging(): Messaging;
   interrupt(agentId: AgentId): Promise<{ stopped: boolean; cancelled: number }>;

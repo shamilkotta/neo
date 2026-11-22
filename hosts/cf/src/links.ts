@@ -12,8 +12,8 @@ export function coordinatorLink(env: Env, instance: string): CoordinatorLink {
       stub().agentChanged(instance, agentId, topics, status),
     live: (agentId, events) => stub().agentLive(instance, agentId, events),
     agents: () => stub().agentList(instance),
-    createAgent: (by, input, key) =>
-      stub().agentCreate(instance, by, input, key),
+    createAgent: (input, creator) =>
+      stub().agentCreate(instance, input, creator),
     updateProfile: (agentId, change) =>
       stub().agentUpdate(instance, agentId, change),
     shared: (request) => stub().sharedCall(instance, request),

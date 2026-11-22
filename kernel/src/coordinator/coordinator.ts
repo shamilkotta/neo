@@ -9,6 +9,7 @@ import type {
   SettingsShape,
 } from "@neo/client";
 import type { CoordinatorPorts } from "../host";
+import type { AgentCreator } from "../links";
 import {
   BUNDLE_FORMAT,
   BUNDLE_VERSION,
@@ -212,7 +213,7 @@ export class NeoCoordinator {
     )
       this.changes.touch("agents");
     this.host.clients.send({ type: "agent", agentId, topics }, agentId);
-    return this.host.clients.watching(agentId);
+    return { watched: this.host.clients.watching(agentId) };
   }
 
   agentLive(agentId: AgentId, events: unknown[]) {
@@ -270,9 +271,9 @@ export class NeoCoordinator {
     this.changes.touch("providers");
   }
 
-  async createAgent(input: NewAgent, by: string | null = null, key?: string) {
+  async createAgent(input: NewAgent, creator?: AgentCreator) {
     this.requireActive();
-    const profile = await this.services().registry.create(input, by, key);
+    const profile = await this.services().registry.create(input, creator);
     await this.cell(profile.id).provision(this.initOf(profile));
     this.changes.touch("agents");
     return profile;

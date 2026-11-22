@@ -9,6 +9,7 @@ import {
 import { Value } from "typebox/value";
 import { PRIMARY_AGENT_ID } from "../agent/agents";
 import type { SqliteDatabase, SqliteExecutor } from "../sql";
+import type { AgentCreator } from "../links";
 
 export const REGISTRY_SCHEMA = async (tx: SqliteExecutor) => {
   await tx.exec(`CREATE TABLE neo_agents (
@@ -19,7 +20,7 @@ export const REGISTRY_SCHEMA = async (tx: SqliteExecutor) => {
     instructions TEXT,
     is_primary INTEGER NOT NULL DEFAULT 0,
     created_by TEXT,
-    create_key TEXT UNIQUE,
+    idempotency_key TEXT UNIQUE,
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'deleting')),
     status TEXT,
     created_at INTEGER NOT NULL,
@@ -41,7 +42,7 @@ interface Row {
   instructions: string | null;
   is_primary: number;
   created_by: string | null;
-  create_key: string | null;
+  idempotency_key: string | null;
   state: "active" | "deleting";
   status: string | null;
   created_at: number;
@@ -94,11 +95,11 @@ export class Registry {
     return rows.map((r) => r.id);
   }
 
-  async create(input: NewAgent, by: string | null, key?: string) {
-    if (key) {
+  async create(input: NewAgent, creator?: AgentCreator) {
+    if (creator) {
       const made = await this.db.get<Row>(
-        `SELECT * FROM neo_agents WHERE create_key = ?`,
-        key,
+        `SELECT * FROM neo_agents WHERE idempotency_key = ?`,
+        creator.idempotencyKey,
       );
       if (made) return toProfile(made);
     }
@@ -114,15 +115,15 @@ export class Registry {
     const id = await this.freeId(fields.name);
     const time = this.now();
     await this.db.run(
-      `INSERT INTO neo_agents (id, name, title, description, instructions, created_by, create_key, created_at, updated_at)
+      `INSERT INTO neo_agents (id, name, title, description, instructions, created_by, idempotency_key, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       fields.name,
       fields.title ?? null,
       fields.description ?? null,
       fields.instructions ?? null,
-      by,
-      key ?? null,
+      creator?.by ?? null,
+      creator?.idempotencyKey ?? null,
       time,
       time,
     );
