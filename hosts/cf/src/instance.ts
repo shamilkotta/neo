@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { Hono } from "hono";
-import type { SharedRequest } from "@neo/kernel";
+import type { AgentCreator, SharedRequest } from "@neo/kernel";
 import { ClientSignal, SOCKET_PROTOCOL } from "@neo/client";
 import { Value } from "typebox/value";
 import type {
@@ -120,14 +120,9 @@ export class InstanceDO extends DurableObject<Env> {
     return (await this.host.named(instance)).services().registry.list();
   }
 
-  async agentCreate(
-    instance: string,
-    by: string,
-    input: NewAgent,
-    key: string,
-  ) {
+  async agentCreate(instance: string, input: NewAgent, creator: AgentCreator) {
     await this.ready;
-    return (await this.host.named(instance)).createAgent(input, by, key);
+    return (await this.host.named(instance)).createAgent(input, creator);
   }
 
   async agentUpdate(instance: string, agentId: AgentId, change: ProfileChange) {
