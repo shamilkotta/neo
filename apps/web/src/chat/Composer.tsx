@@ -239,9 +239,12 @@ function Pending({
     () => (file.type.startsWith("image/") ? URL.createObjectURL(file) : null),
     [file],
   );
-  useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url);
-  }, [url]);
+  useEffect(
+    () => () => {
+      if (url) URL.revokeObjectURL(url);
+    },
+    [url],
+  );
   return (
     <div className="group relative shrink-0">
       {url ? (

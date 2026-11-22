@@ -1,5 +1,10 @@
 export type ActionKind =
-  "agent" | "message" | "stop" | "routine" | "memory" | "profile";
+  | "agent"
+  | "message"
+  | "stop"
+  | "routine"
+  | "memory"
+  | "profile";
 
 export interface Action {
   kind: ActionKind;

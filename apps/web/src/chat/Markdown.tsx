@@ -36,9 +36,8 @@ export const render = (text: string) =>
   });
 
 function onClick(e: MouseEvent<HTMLDivElement>) {
-  const button = e.target instanceof Element
-    ? e.target.closest("[data-copy]")
-    : null;
+  const button =
+    e.target instanceof Element ? e.target.closest("[data-copy]") : null;
   if (!button) return;
   const code = button.closest(".codeblock")?.querySelector("code")?.textContent;
   if (code == null) return;

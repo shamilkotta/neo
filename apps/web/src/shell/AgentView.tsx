@@ -180,7 +180,7 @@ function Empty({
   id: string;
   onPick: (t: string) => void;
 }) {
-  const hour = new Date().getHours();
+  const [hour] = useState(() => new Date().getHours());
   const greeting =
     hour < 5
       ? "Up late"

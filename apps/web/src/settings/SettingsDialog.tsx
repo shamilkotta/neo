@@ -400,10 +400,7 @@ function Providers({ instance }: { instance: Instance }) {
                 <Button
                   size="sm"
                   onClick={async () => {
-                    await attempt(
-                      () => instance.root.putProvider(p),
-                      "Added",
-                    );
+                    await attempt(() => instance.root.putProvider(p), "Added");
                     done();
                   }}
                 >

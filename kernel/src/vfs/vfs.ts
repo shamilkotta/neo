@@ -529,7 +529,8 @@ export class Vfs {
         missing.push(cursor);
         top = cursor;
       }
-      for (const dir of missing.toReversed()) await this.insertDirectory(tx, dir);
+      for (const dir of missing.toReversed())
+        await this.insertDirectory(tx, dir);
       created.push(top);
     });
     if (created.length > 0) this.emit(created);

@@ -44,10 +44,7 @@ function png(
 ): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(24 + padding);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
-  bytes.set(
-    new TextEncoder().encode("IHDR"),
-    12,
-  );
+  bytes.set(new TextEncoder().encode("IHDR"), 12);
   new DataView(bytes.buffer).setUint32(16, width);
   new DataView(bytes.buffer).setUint32(20, height);
   return bytes;

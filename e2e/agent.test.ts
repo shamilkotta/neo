@@ -385,7 +385,9 @@ describe("schedules", () => {
     await expect(bad({ prompt: "x", cron: "* * * * *" })).rejects.toThrow(
       /at most every 5 minutes/,
     );
-    await expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(/at least 5/);
+    await expect(bad({ prompt: "x", everyMinutes: 1 })).rejects.toThrow(
+      /at least 5/,
+    );
     await expect(bad({ prompt: "x", at: "2020-01-01T09:00" })).rejects.toThrow(
       /passed/,
     );
