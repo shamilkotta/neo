@@ -44,11 +44,14 @@ export function Workspace({
     agents.find((a) => a.primary) ??
     agents[0];
 
-  const choose = useCallback((id: string) => {
-    setSelected(id);
-    history.replaceState(null, "", `#agent=${encodeURIComponent(id)}`);
-    closeSidebarOnMobile();
-  }, [setSelected]);
+  const choose = useCallback(
+    (id: string) => {
+      setSelected(id);
+      history.replaceState(null, "", `#agent=${encodeURIComponent(id)}`);
+      closeSidebarOnMobile();
+    },
+    [setSelected],
+  );
 
   useShortcuts(agents, current?.id, choose);
 

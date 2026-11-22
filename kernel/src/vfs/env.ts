@@ -193,13 +193,9 @@ export class VfsExecutionEnv implements ExecutionEnv {
   }
 
   flushFile(path: string, context: Context) {
-    return attempt(
-      context,
-      path,
-      async () => {
-        await this.vfs.stat(this.resolve(path));
-      },
-    );
+    return attempt(context, path, async () => {
+      await this.vfs.stat(this.resolve(path));
+    });
   }
 
   renameFile(sourcePath: string, destinationPath: string, context: Context) {

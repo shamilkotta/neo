@@ -114,7 +114,7 @@ export async function* dumpDatabase(
     const sizeOf =
       columns.map((c) => `coalesce(length(${quote(c)}), 0)`).join(" + ") || "0";
     const sizes = `SELECT ${sizeOf} AS n FROM ${quote(item.name)} ${order}LIMIT ? OFFSET ?`;
-    for (let offset = 0; ; ) {
+    for (let offset = 0; ;) {
       const lengths = await db.all<{ n: number }>(sizes, ROW_BATCH, offset);
       if (lengths.length === 0) break;
       let take = 0;

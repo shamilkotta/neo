@@ -171,27 +171,29 @@ export async function* writePart(
   const hasBlobs = await db.get(
     `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vfs_blobs'`,
   );
-  if (hasBlobs) for (let after = ""; ;) {
-    const page = await db.all<{ key: BlobKey; size: number; hash: string }>(
-      `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
-      after,
-    );
-    const last = page.at(-1);
-    if (!last) break;
-    for (const blob of page) {
-      const stream = await blobs.get(blob.key);
-      if (!stream) throw new Error(`A file's content is missing (${blob.key})`);
-      count++;
-      yield { t: "blob", ...blob };
-      for await (const piece of rechunk(stream, BLOB_PIECE)) {
+  if (hasBlobs)
+    for (let after = ""; ;) {
+      const page = await db.all<{ key: BlobKey; size: number; hash: string }>(
+        `SELECT key, size, hash FROM vfs_blobs WHERE key > ? ORDER BY key LIMIT 100`,
+        after,
+      );
+      const last = page.at(-1);
+      if (!last) break;
+      for (const blob of page) {
+        const stream = await blobs.get(blob.key);
+        if (!stream)
+          throw new Error(`A file's content is missing (${blob.key})`);
         count++;
-        yield { t: "blob-data", data: toBase64(piece) };
+        yield { t: "blob", ...blob };
+        for await (const piece of rechunk(stream, BLOB_PIECE)) {
+          count++;
+          yield { t: "blob-data", data: toBase64(piece) };
+        }
+        count++;
+        yield { t: "blob-end" };
       }
-      count++;
-      yield { t: "blob-end" };
+      after = last.key;
     }
-    after = last.key;
-  }
   yield { t: "part-end", records: count };
 }
 

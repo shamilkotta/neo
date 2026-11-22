@@ -19,12 +19,17 @@ const SIZE: Record<Size, string> = {
 
 export function Button({
   ref,
-  variant = "secondary", size = "md", icon, className, children, ...rest
+  variant = "secondary",
+  size = "md",
+  icon,
+  className,
+  children,
+  ...rest
 }: ComponentProps<"button"> & {
-    variant?: Variant;
-    size?: Size;
-    icon?: ReactNode;
-  }) {
+  variant?: Variant;
+  size?: Size;
+  icon?: ReactNode;
+}) {
   return (
     <button
       ref={ref}
@@ -45,12 +50,17 @@ export function Button({
 
 export function IconButton({
   ref,
-  label, size = "md", active, className, children, ...rest
+  label,
+  size = "md",
+  active,
+  className,
+  children,
+  ...rest
 }: ComponentProps<"button"> & {
-    label: string;
-    size?: "sm" | "md";
-    active?: boolean;
-  }) {
+  label: string;
+  size?: "sm" | "md";
+  active?: boolean;
+}) {
   return (
     <button
       ref={ref}

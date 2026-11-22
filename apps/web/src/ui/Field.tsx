@@ -9,11 +9,7 @@ import { cn } from "../lib/format";
 const BASE =
   "w-full rounded-[10px] border border-line bg-raised px-3 text-[13.5px] text-fg placeholder:text-faint outline-none transition-[border,box-shadow] duration-150 hover:border-line-strong focus:border-brand/60 focus:ring-3 focus:ring-brand/15 disabled:opacity-60";
 
-export function Input({
-  ref,
-  className,
-  ...rest
-}: ComponentProps<"input">) {
+export function Input({ ref, className, ...rest }: ComponentProps<"input">) {
   return <input ref={ref} {...rest} className={cn(BASE, "h-9", className)} />;
 }
 
